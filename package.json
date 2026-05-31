@@ -1,0 +1,24 @@
+{
+  "name": "taxai-lithuania",
+  "private": true,
+  "version": "8.0.0",
+  "type": "module",
+  "description": "TAXAI — Forensic Tax Intelligence for the Republic of Lithuania (Palantir-themed).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "start": "concurrently \"npm run server\" \"npm run dev\""
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "vite": "^5.4.2"
+  }
+}
