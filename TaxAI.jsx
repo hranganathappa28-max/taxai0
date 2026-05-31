@@ -7122,6 +7122,25 @@ function buildSampleSAFT() {
 // ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
+// Animated count-up number for the home hero (respects reduced-motion)
+function CountUp({ to, dur = 1500, suffix = "" }) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (typeof prefersReducedMotion === "function" && prefersReducedMotion()) { setN(to); return; }
+    let raf, start;
+    const tick = (ts) => {
+      if (!start) start = ts;
+      const p = Math.min(1, (ts - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setN(Math.round(to * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [to, dur]);
+  return <>{n}{suffix}</>;
+}
+
 function TAXAI({ onExit, initialView } = {}) {
   const [view, setView] = useState(initialView || "home");
   const [lang, setLang] = useState("lt");
@@ -7637,17 +7656,44 @@ function TAXAI({ onExit, initialView } = {}) {
               </div>
             </div>
           </div>
-          <div style={{ maxWidth: 980, margin: "0 auto", padding: "56px 56px 72px" }}>
-            <SEC n="01" en="Begin with a question" lt="Pradėkite klausimu" />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
-              {suggestions.map((s, i) => <button key={i} onClick={() => send(s.q)} style={{ padding: "26px 24px", textAlign: "left", background: "transparent", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}`, cursor: "pointer", transition: "background .25s" }} onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", fontWeight: 600, letterSpacing: ".14em", marginBottom: 10, textTransform: "uppercase" }}>/ {String(i + 1).padStart(2, "0")} · {s.l}</div>
-                <div style={{ fontSize: 17, color: "#fff", fontFamily: "var(--f)", fontWeight: 400, lineHeight: 1.35 }}>{s.q}</div>
-              </button>)}
+          <div style={{ maxWidth: 1040, margin: "0 auto", padding: "0" }}>
+            {/* live animated intelligence band */}
+            <PageBanner variant="network" height={130}
+              label={lang === "lt" ? "01 — Gyva žvalgyba" : "01 — Live intelligence"}
+              title={<>{lang === "lt" ? "Įkelkite. Analizuokite. " : "Upload. Analyze. "}<em style={{ fontStyle: "italic" }}>{lang === "lt" ? "Suprasite." : "Understand."}</em></>}
+              sub={lang === "lt" ? "Deterministinis variklis randa neatitikimus; AI sukuria jūsų sektoriui pritaikytas taisykles." : "A deterministic engine finds the breaches; AI designs rules tailored to your sector."} />
+
+            {/* animated count-up metrics */}
+            <div style={{ padding: "52px 56px 8px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
+                {[[300, "", lang === "lt" ? "SAF-T taisyklės" : "SAF-T rules"], [7, "", lang === "lt" ? "Forensikos varikliai" : "Forensic engines"], [AGENTS.length, "", lang === "lt" ? "Agentai" : "Agents"], [20, "+", lang === "lt" ? "Oficialūs šaltiniai" : "Official sources"]].map(([to, suf, k], i) =>
+                  <div key={i} style={{ padding: "30px 24px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
+                    <div style={{ fontSize: 46, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: 1 }}><CountUp to={to} suffix={suf} /></div>
+                    <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase", marginTop: 12 }}>{k}</div>
+                  </div>)}
+              </div>
             </div>
-            {/* live metric strip */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", borderLeft: `1px solid ${PL_LINE}`, borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}`, marginTop: 0 }}>
-              {[["300", lang === "lt" ? "SAF-T taisyklės" : "SAF-T rules"], ["7", lang === "lt" ? "Forensikos varikliai" : "Forensic engines"], [String(AGENTS.length), lang === "lt" ? "Agentai" : "Agents"], ["20+", lang === "lt" ? "Oficialūs šaltiniai" : "Official sources"]].map(([n, k], i) => <div key={i} style={{ padding: "26px 22px", borderRight: `1px solid ${PL_LINE}` }}><div style={{ fontSize: 40, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: 1 }}>{n}</div><div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase", marginTop: 10 }}>{k}</div></div>)}
+
+            {/* how it works — animated pipeline */}
+            <div style={{ padding: "20px 56px 72px" }}>
+              <SEC n="02" en="How it works" lt="Kaip tai veikia" />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
+                {[
+                  ["01", lang === "lt" ? "Įkelkite SAF-T" : "Upload SAF-T", lang === "lt" ? "XML iš jūsų ERP — apdorojama jūsų naršyklėje." : "XML from your ERP — parsed right in your browser."],
+                  ["02", lang === "lt" ? "300 taisyklių" : "300 rules", lang === "lt" ? "Deterministinis variklis pažymi kiekvieną neatitikimą su įrodymais." : "A deterministic engine flags every breach with cited evidence."],
+                  ["03", lang === "lt" ? "7 varikliai + AI" : "7 engines + AI", lang === "lt" ? "Forensinė analizė ir jūsų sektoriui pritaikytos taisyklės." : "Forensic analysis plus rules adapted to your sector."],
+                  ["04", lang === "lt" ? "Ataskaita" : "Report", lang === "lt" ? "Eksportuokite forensinę ataskaitą ir CSV vienu paspaudimu." : "Export a forensic report and CSV in one click."],
+                ].map(([n, title, desc], i) =>
+                  <div key={i} style={{ padding: "26px 24px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}`, transition: "background .25s" }} onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }} onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                    <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", fontWeight: 600, letterSpacing: ".14em", marginBottom: 14 }}>/ {n}</div>
+                    <div style={{ fontSize: 19, color: "#fff", fontFamily: "var(--f)", marginBottom: 8 }}>{title}</div>
+                    <div style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6 }}>{desc}</div>
+                  </div>)}
+              </div>
+              <div style={{ display: "flex", gap: 14, marginTop: 34, flexWrap: "wrap" }}>
+                <button onClick={() => setView("saftview")} style={bP} onMouseEnter={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#000"; }}>{lang === "lt" ? "Analizuoti SAF-T" : "Analyze SAF-T"} →</button>
+                <button onClick={() => setView("chat")} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>{lang === "lt" ? "Klausti agento" : "Ask an agent"}</button>
+              </div>
             </div>
           </div>
         </div>}
