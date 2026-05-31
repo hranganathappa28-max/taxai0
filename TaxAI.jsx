@@ -6480,11 +6480,870 @@ async function runPersonalizedRules(data, runResult, ctx, kpiBundle, callAI) {
 }
 
 
+
+// ═══ i.SAF ENGINE — monthly VAT register: parse + reconcile vs SAF-T ═══
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · i.SAF ENGINE  (monthly VAT invoice register: parse + reconcile)
+// ────────────────────────────────────────────────────────────────────
+// i.SAF (Order VA-55) is the monthly register of issued (sales) and
+// received (purchase) VAT invoices that every VAT-registered LT entity
+// files. This module (1) parses an i.SAF XML and (2) reconciles it
+// against the full SAF-T ledger — the same discrepancy hunt VMI's i.MAS
+// performs — all deterministically. NOTE: field extraction is tolerant
+// (multiple candidate tag names); confirm against the official i.SAF XSD
+// before relying on it in production.
+// ════════════════════════════════════════════════════════════════════
+
+const _num = (s) => {
+  if (s == null || s === "") return 0;
+  const n = parseFloat(String(s).replace(/\s/g, "").replace(",", "."));
+  return isNaN(n) ? 0 : n;
+};
+// (_r2 reused from the adaptive-rules engine above)
+
+// In a browser this uses DOMParser; the test harness injects a shim.
+function parseISAF(xmlStr, DOMParserImpl) {
+  try {
+    const DP = DOMParserImpl || (typeof DOMParser !== "undefined" ? DOMParser : null);
+    if (!DP) return { _parseError: "No XML parser available" };
+    const doc = new DP().parseFromString(xmlStr, "text/xml");
+    const perr = doc.querySelector && doc.querySelector("parsererror");
+    if (perr) return { _parseError: (perr.textContent || "XML parse error").slice(0, 200) };
+
+    const txt = (parent, ...tags) => {
+      if (!parent) return "";
+      for (const tag of tags) {
+        const els = parent.getElementsByTagName(tag);
+        for (let i = 0; i < els.length; i++) {
+          const v = (els[i].textContent || "").trim();
+          if (v) return v;
+        }
+      }
+      return "";
+    };
+    // direct child text only (avoids picking a nested same-named tag)
+    const childTxt = (parent, ...tags) => {
+      if (!parent) return "";
+      for (const tag of tags) {
+        for (let i = 0; i < parent.childNodes.length; i++) {
+          const c = parent.childNodes[i];
+          if (c.nodeType === 1 && (c.localName === tag || c.tagName === tag)) {
+            const v = (c.textContent || "").trim();
+            if (v) return v;
+          }
+        }
+      }
+      return "";
+    };
+
+    const root = doc.documentElement;
+    const registrationNumber = txt(root, "RegistrationNumber", "RegistrationCode");
+    const fileDate = txt(root, "FileDateCreated", "FileDate", "DateCreated");
+    const periodFrom = txt(root, "SelectionStartDate", "PeriodStart", "TaxPeriodStart");
+    const periodTo = txt(root, "SelectionEndDate", "PeriodEnd", "TaxPeriodEnd");
+
+    const readInvoice = (el, side) => {
+      // counterparty block (Supplier for purchases, Customer for sales) — tolerant
+      const partyEl = el.getElementsByTagName(side === "sales" ? "CustomerInfo" : "SupplierInfo")[0]
+        || el.getElementsByTagName("PartyInfo")[0] || el;
+      const counterpartyVat = txt(partyEl, "VATRegistrationNumber", "VATNumber", "PartyVATNumber", "VAT");
+      const counterpartyReg = txt(partyEl, "RegistrationNumber", "PartyID", "RegistrationCode");
+      const counterpartyName = txt(partyEl, "Name", "PartyName");
+      const counterpartyCountry = txt(partyEl, "Country", "CountryCode");
+
+      // VAT detail lines: sum TaxableValue / TaxAmount; collect VAT codes
+      let taxable = 0, vat = 0;
+      const vatCodes = [];
+      const details = el.getElementsByTagName("VATDetail");
+      if (details.length) {
+        for (let i = 0; i < details.length; i++) {
+          taxable += _num(txt(details[i], "TaxableValue", "TaxableAmount", "NetAmount"));
+          vat += _num(txt(details[i], "TaxAmount", "VATAmount"));
+          const code = txt(details[i], "VATCode", "TaxCode");
+          if (code) vatCodes.push(code);
+        }
+      } else {
+        // fallback to document totals
+        taxable = _num(txt(el, "TaxableValue", "NetTotal", "TaxableAmount"));
+        vat = _num(txt(el, "TaxAmount", "TaxPayable", "VATAmount"));
+        const code = txt(el, "VATCode", "TaxCode");
+        if (code) vatCodes.push(code);
+      }
+
+      const status = txt(el, "RegistrationStatus", "DocumentStatus", "Status");
+      const special = txt(el, "SpecialTaxation");
+      return {
+        side,
+        invoiceNo: childTxt(el, "InvoiceNo", "InvoiceID", "DocumentNo", "DocumentNumber") || txt(el, "InvoiceNo", "InvoiceID"),
+        invoiceDate: txt(el, "InvoiceDate", "DocumentDate", "Date"),
+        invoiceType: txt(el, "InvoiceType", "K_TYPE", "DocumentType"),
+        counterpartyVat, counterpartyReg, counterpartyName, counterpartyCountry,
+        taxable: _r2(taxable),
+        vat: _r2(vat),
+        vatCodes,
+        special: (special || "").toUpperCase() === "T",
+        cancelled: /AN|CANCEL|ANUL/i.test(status),
+      };
+    };
+
+    const collect = (blockTag, side) => {
+      const block = doc.getElementsByTagName(blockTag)[0];
+      if (!block) return [];
+      const invs = block.getElementsByTagName("Invoice");
+      const out = [];
+      for (let i = 0; i < invs.length; i++) out.push(readInvoice(invs[i], side));
+      return out;
+    };
+
+    const sales = collect("SalesInvoices", "sales");
+    const purchases = collect("PurchaseInvoices", "purchases");
+
+    return {
+      header: { registrationNumber, fileDate, periodFrom, periodTo },
+      sales,
+      purchases,
+      counts: { sales: sales.length, purchases: purchases.length },
+    };
+  } catch (e) {
+    return { _parseError: e.message };
+  }
+}
+
+// ─── Reconciliation: i.SAF (declared) vs SAF-T (booked) ──────────────
+function reconcileISAF(isaf, saft, opts = {}) {
+  const absTol = opts.absTol ?? 0.02;       // €0.02 absolute tolerance
+  const relTol = opts.relTol ?? 0.005;      // 0.5% relative tolerance
+  const close = (a, b) => Math.abs(a - b) <= Math.max(absTol, Math.abs(b) * relTol);
+
+  const findings = [];
+  const add = (id, side, severity, title, detail, evidence) =>
+    findings.push({ id, side, severity, title, detail, evidence: evidence || null });
+
+  const norm = (s) => String(s || "").trim().toUpperCase();
+
+  const saftSales = (saft?.sales?.items || []).filter((x) => x.invoiceNo);
+  const saftPurch = (saft?.purchases?.items || []).filter((x) => x.invoiceNo);
+  const saftSalesMap = new Map(saftSales.map((x) => [norm(x.invoiceNo), x]));
+  const saftPurchMap = new Map(saftPurch.map((x) => [norm(x.invoiceNo), x]));
+
+  // duplicate invoice numbers within i.SAF
+  const dupCheck = (arr, side) => {
+    const seen = new Map();
+    for (const inv of arr) {
+      const k = norm(inv.invoiceNo);
+      seen.set(k, (seen.get(k) || 0) + 1);
+    }
+    const dups = [...seen.entries()].filter(([, c]) => c > 1).map(([k, c]) => `${k} ×${c}`);
+    if (dups.length) add(`ISAF-${side === "sales" ? "S" : "P"}-DUP`, side, "Reject",
+      `Duplicate invoice numbers in i.SAF ${side}`, `${dups.length} invoice number(s) appear more than once in the register.`, dups.slice(0, 10));
+  };
+  dupCheck(isaf.sales || [], "sales");
+  dupCheck(isaf.purchases || [], "purchases");
+
+  // per-side line reconciliation
+  const reconcileSide = (isafArr, saftMap, side) => {
+    const S = side === "sales" ? "S" : "P";
+    let matched = 0, vatMismatch = 0, netMismatch = 0, missingInLedger = 0;
+    const missInLedgerEv = [], vatEv = [], netEv = [];
+
+    for (const inv of isafArr) {
+      const k = norm(inv.invoiceNo);
+      const booked = saftMap.get(k);
+      if (!booked) {
+        missingInLedger++;
+        missInLedgerEv.push(`${inv.invoiceNo} · ${inv.counterpartyName || inv.counterpartyVat || "?"} · VAT €${inv.vat}`);
+        continue;
+      }
+      matched++;
+      const bookedVat = booked.documentTotals?.taxPayable || 0;
+      const bookedNet = booked.documentTotals?.netTotal || 0;
+      if (!close(inv.vat, bookedVat)) {
+        vatMismatch++;
+        vatEv.push(`${inv.invoiceNo}: i.SAF €${inv.vat} vs ledger €${_r2(bookedVat)} (Δ €${_r2(inv.vat - bookedVat)})`);
+      }
+      if (!close(inv.taxable, bookedNet)) {
+        netMismatch++;
+        netEv.push(`${inv.invoiceNo}: i.SAF net €${inv.taxable} vs ledger €${_r2(bookedNet)} (Δ €${_r2(inv.taxable - bookedNet)})`);
+      }
+      if (inv.cancelled && (inv.vat !== 0 || inv.taxable !== 0)) {
+        add(`ISAF-${S}-CANC`, side, "Warn", `Cancelled invoice still carries amounts (${side})`,
+          `Invoice ${inv.invoiceNo} is marked cancelled but reports non-zero VAT/taxable.`, [`${inv.invoiceNo}: net €${inv.taxable}, VAT €${inv.vat}`]);
+      }
+      if (!inv.counterpartyVat && !inv.counterpartyReg) {
+        add(`ISAF-${S}-PARTY`, side, "Warn", `Missing counterparty identifier (${side})`,
+          `Invoice ${inv.invoiceNo} has neither a VAT number nor a registration code for the counterparty.`, [`${inv.invoiceNo}`]);
+      }
+    }
+
+    // booked in ledger but NOT declared in i.SAF
+    const isafKeys = new Set(isafArr.map((x) => norm(x.invoiceNo)));
+    const missingInRegister = [];
+    for (const [k, b] of saftMap.entries()) {
+      if (!isafKeys.has(k)) missingInRegister.push(`${b.invoiceNo} · VAT €${_r2(b.documentTotals?.taxPayable || 0)}`);
+    }
+
+    if (missingInLedger > 0) {
+      add(`ISAF-${S}-MISSING-LEDGER`, side,
+        side === "purchases" ? "Block" : "Reject",
+        side === "sales" ? "Sales declared in i.SAF but absent from the ledger" : "Input VAT claimed in i.SAF but no purchase invoice in the ledger",
+        `${missingInLedger} invoice(s) appear in the i.SAF ${side} register but cannot be matched in the SAF-T ledger.`,
+        missInLedgerEv.slice(0, 10));
+    }
+    if (missingInRegister.length > 0) {
+      add(`ISAF-${S}-MISSING-REGISTER`, side,
+        side === "sales" ? "Block" : "Warn",
+        side === "sales" ? "Sales in the ledger but NOT declared in i.SAF (under-declared output VAT)" : "Purchases in the ledger but not declared in i.SAF",
+        `${missingInRegister.length} invoice(s) exist in the SAF-T ledger but are missing from the i.SAF ${side} register.`,
+        missingInRegister.slice(0, 10));
+    }
+    if (vatMismatch > 0) add(`ISAF-${S}-VAT`, side, "Reject", `VAT amount mismatches (${side})`,
+      `${vatMismatch} matched invoice(s) have a VAT amount in i.SAF that differs from the ledger beyond tolerance.`, vatEv.slice(0, 10));
+    if (netMismatch > 0) add(`ISAF-${S}-NET`, side, "Warn", `Taxable-amount mismatches (${side})`,
+      `${netMismatch} matched invoice(s) have a taxable amount in i.SAF that differs from the ledger beyond tolerance.`, netEv.slice(0, 10));
+
+    return { isafCount: isafArr.length, saftCount: saftMap.size, matched, vatMismatch, netMismatch,
+      missingInLedger, missingInRegister: missingInRegister.length };
+  };
+
+  const salesSummary = reconcileSide(isaf.sales || [], saftSalesMap, "sales");
+  const purchSummary = reconcileSide(isaf.purchases || [], saftPurchMap, "purchases");
+
+  // aggregate VAT position comparison
+  const sum = (arr, f) => _r2((arr || []).reduce((s, x) => s + (f(x) || 0), 0));
+  const outputISAF = sum(isaf.sales, (x) => x.vat);
+  const inputISAF = sum(isaf.purchases, (x) => x.vat);
+  const outputSAFT = sum(saftSales, (x) => x.documentTotals?.taxPayable);
+  const inputSAFT = sum(saftPurch, (x) => x.documentTotals?.taxPayable);
+  const vat = {
+    outputISAF, outputSAFT, outputDelta: _r2(outputISAF - outputSAFT),
+    inputISAF, inputSAFT, inputDelta: _r2(inputISAF - inputSAFT),
+    netISAF: _r2(outputISAF - inputISAF), netSAFT: _r2(outputSAFT - inputSAFT),
+    netDelta: _r2((outputISAF - inputISAF) - (outputSAFT - inputSAFT)),
+  };
+  if (!close(vat.netISAF, vat.netSAFT)) {
+    add("ISAF-NET-POSITION", "vat", "Reject", "Net VAT position differs between i.SAF and the ledger",
+      `i.SAF implies a net VAT of €${vat.netISAF} while the SAF-T ledger implies €${vat.netSAFT} (Δ €${vat.netDelta}). This is the headline figure VMI cross-checks against your FR0600.`,
+      [`output Δ €${vat.outputDelta}`, `input Δ €${vat.inputDelta}`]);
+  }
+
+  const bySeverity = { Block: 0, Reject: 0, Warn: 0 };
+  findings.forEach((f) => { if (bySeverity[f.severity] != null) bySeverity[f.severity]++; });
+
+  return {
+    findings,
+    bySeverity,
+    summary: { sales: salesSummary, purchases: purchSummary, vat },
+    period: isaf.header || {},
+  };
+}
+
+
+// ═══ VERIFICATION & CONFIDENCE LAYER — grounds AI claims in computed facts ═══
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · VERIFICATION & CONFIDENCE LAYER
+// ────────────────────────────────────────────────────────────────────
+// Takes any AI-generated narrative and checks it, claim by claim,
+// against the DETERMINISTIC facts already computed (rule findings,
+// KPIs, forensic risk metrics, the metric registry, reconciliation).
+// The checking itself is deterministic: numeric claims are matched to
+// computed values within tolerance. Each claim is labelled:
+//   • verified    — a figure in the claim matches a computed value
+//   • unsupported — the claim asserts a figure with NO matching value
+//   • review      — interpretive / legal / qualitative (not machine-checkable)
+// Produces a transparent "defensibility" score so a professional can
+// see what is grounded and what to verify before relying on it.
+// No competitor or third-party names appear anywhere by design.
+// ════════════════════════════════════════════════════════════════════
+
+// Flatten every known deterministic value into a searchable fact index.
+function buildGroundingFacts({ kpis, runResult, intel, metrics, reconResult } = {}) {
+  const facts = [];
+  const push = (value, label, group, isPct = false) => {
+    if (value == null || value === "" || (typeof value === "number" && !isFinite(value))) return;
+    const n = typeof value === "number" ? value : parseFloat(String(value).replace(/\s/g, "").replace(",", "."));
+    if (isNaN(n)) return;
+    facts.push({ value: n, label, group, isPct });
+  };
+
+  if (kpis) {
+    push(kpis.revenue, "Revenue", "kpi");
+    push(kpis.costs, "Costs", "kpi");
+    push(kpis.grossResult, "Gross result", "kpi");
+    push(kpis.grossMarginPct, "Gross margin", "kpi", true);
+    push(kpis.netMarginPct, "Net margin", "kpi", true);
+    push(kpis.totalAssets, "Total assets", "kpi");
+    push(kpis.currentAssets, "Current assets", "kpi");
+    push(kpis.fixedAssets, "Fixed assets", "kpi");
+    push(kpis.equity, "Equity", "kpi");
+    push(kpis.liabilities, "Liabilities", "kpi");
+    push(kpis.workingCapital, "Working capital", "kpi");
+    push(kpis.currentRatio, "Current ratio", "kpi");
+    push(kpis.debtToEquity, "Debt-to-equity", "kpi");
+    push(kpis.receivables, "Receivables", "kpi");
+    push(kpis.payables, "Payables", "kpi");
+    push(kpis.dso, "DSO (days)", "kpi");
+    push(kpis.dpo, "DPO (days)", "kpi");
+    push(kpis.salesVat, "Output VAT", "kpi");
+    push(kpis.inputVat, "Input VAT", "kpi");
+    push(kpis.netVatPosition, "Net VAT position", "kpi");
+    push(kpis.vatRecoveryRatePct, "VAT recovery rate", "kpi", true);
+    push(kpis.estimatedCit, "Estimated CIT", "kpi");
+    push(kpis.estimatedCitRatePct, "CIT rate", "kpi", true);
+    push(kpis.effectiveTaxRatePct, "Effective tax rate", "kpi", true);
+    push(kpis.transactionCount, "Transaction count", "kpi");
+    push(kpis.invoiceCount, "Invoice count", "kpi");
+    push(kpis.customerCount, "Customer count", "kpi");
+    push(kpis.supplierCount, "Supplier count", "kpi");
+    push(kpis.periodDays, "Period (days)", "kpi");
+  }
+  if (runResult) {
+    push(runResult.summary?.total, "Total findings", "rule");
+    push(runResult.bySeverity?.Block, "Block findings", "rule");
+    push(runResult.bySeverity?.Reject, "Reject findings", "rule");
+    push(runResult.bySeverity?.Warn, "Warn findings", "rule");
+    push(runResult.summary?.rulesExecuted, "Rules executed", "rule");
+  }
+  if (intel) {
+    push(intel.risk?.score, "Risk score", "forensic");
+    push(intel.summary?.cycles, "Circular flows", "forensic");
+    push(intel.summary?.outliers, "Statistical outliers", "forensic");
+    push(intel.summary?.duplicates, "Duplicate parties", "forensic");
+    push(intel.summary?.shells, "Shell indicators", "forensic");
+    push(intel.summary?.velocitySpikes, "Velocity anomalies", "forensic");
+    push(intel.summary?.backdated, "Backdated entries", "forensic");
+    push(intel.summary?.vatRateIssues, "VAT-rate issues", "forensic");
+    if (intel.benford?.applicable) { push(intel.benford.mad, "Benford MAD", "forensic"); push(intel.benford.chi2, "Benford chi-squared", "forensic"); }
+    if (intel.graph?.concentration) push(intel.graph.concentration.hhi, "Concentration HHI", "forensic");
+  }
+  if (metrics && metrics.values) {
+    Object.entries(metrics.values).forEach(([k, v]) => {
+      if (typeof v === "number") push(v, "Metric: " + k, "metric", /pct|share|ratio|rate/i.test(k));
+    });
+  }
+  if (reconResult && reconResult.summary?.vat) {
+    const v = reconResult.summary.vat;
+    push(v.outputISAF, "i.SAF output VAT", "recon"); push(v.outputSAFT, "Ledger output VAT", "recon");
+    push(v.inputISAF, "i.SAF input VAT", "recon"); push(v.inputSAFT, "Ledger input VAT", "recon");
+    push(v.netISAF, "i.SAF net VAT", "recon"); push(v.netSAFT, "Ledger net VAT", "recon");
+    push(v.netDelta, "Net VAT delta", "recon");
+    push(reconResult.findings?.length, "Reconciliation discrepancies", "recon");
+  }
+  return facts;
+}
+
+// Extract numeric tokens from a piece of text (handles €, %, thousands
+// separators, and both decimal styles). Returns {value, isPct, raw}.
+function extractNumbers(text) {
+  const out = [];
+  // percentages first (e.g. 12.3%, 12,3 %, 12 proc.)
+  const pctRe = /(-?\d{1,3}(?:[.,]\d+)?)\s*(?:%|proc\.?|percent)/gi;
+  let m;
+  while ((m = pctRe.exec(text)) !== null) {
+    const v = parseFloat(m[1].replace(",", "."));
+    if (!isNaN(v)) out.push({ value: v, isPct: true, raw: m[0] });
+  }
+  // money / plain numbers: 1,234.56 · 1.234,56 · €1234 · 1.2 (skip those already captured as %)
+  const numRe = /(?:€\s*)?(-?\d{1,3}(?:[ .,]\d{3})*(?:[.,]\d+)?|-?\d+(?:[.,]\d+)?)(?:\s*(?:€|eur|tūkst|k|m|mln))?/gi;
+  while ((m = numRe.exec(text)) !== null) {
+    // skip if this span is part of a percentage match
+    const span = m[0];
+    if (/%|proc|percent/i.test(text.slice(m.index, m.index + span.length + 6))) continue;
+    let raw = m[1];
+    // normalise thousands/decimals: if both separators present, the last one is the decimal
+    let norm = raw;
+    const hasDot = raw.includes("."), hasComma = raw.includes(",");
+    if (hasDot && hasComma) {
+      if (raw.lastIndexOf(",") > raw.lastIndexOf(".")) norm = raw.replace(/\./g, "").replace(",", ".");
+      else norm = raw.replace(/,/g, "");
+    } else if (hasComma) {
+      // comma as decimal if it looks like one (one comma, <=2 trailing digits) else thousands
+      norm = (/,\d{1,2}$/.test(raw)) ? raw.replace(/\s/g, "").replace(",", ".") : raw.replace(/[,\s]/g, "");
+    } else {
+      norm = raw.replace(/\s/g, "");
+    }
+    let v = parseFloat(norm);
+    if (isNaN(v)) continue;
+    // scale suffixes
+    if (/\b(m|mln)\b/i.test(span)) v *= 1e6;
+    else if (/\b(k|tūkst)\b/i.test(span)) v *= 1e3;
+    // ignore bare years (1900-2100) and tiny ordinals that are clearly not figures
+    if (Number.isInteger(v) && v >= 1900 && v <= 2100 && !/€|eur/i.test(span)) continue;
+    // ignore legal-article / statute references (e.g. "Article 96", "96 str.", "VA-127", "section 12")
+    const before = text.slice(Math.max(0, m.index - 14), m.index);
+    const after = text.slice(m.index + span.length, m.index + span.length + 8);
+    if (/(article|art\.?|straipsn|str\.?|section|sec\.?|paragraph|punkt|dalis|order|directive|direktyv)\s*$/i.test(before)) continue;
+    if (/^\s*(str\.?|straipsn|punkt|dalis)/i.test(after)) continue;
+    if (!/€|eur/i.test(span) && Number.isInteger(v) && v < 500 && /\b(VA|VAT|PVM|GPM|PM|art|str)\b/i.test(before)) continue;
+    out.push({ value: v, isPct: false, raw: span.trim() });
+  }
+  return out;
+}
+
+// Does a claimed number match any computed fact (within tolerance)?
+function matchFact(num, facts) {
+  const absTol = 0.6, relTol = 0.012; // ~1.2% or €0.60
+  let best = null;
+  for (const f of facts) {
+    if (num.isPct && !f.isPct) continue;       // percentages match percentage facts
+    if (!num.isPct && f.isPct) {
+      // a plain number could still equal a pct value (e.g. "12.3") — allow loose match
+    }
+    const tol = Math.max(absTol, Math.abs(f.value) * relTol);
+    if (Math.abs(num.value - f.value) <= tol) {
+      if (!best || Math.abs(num.value - f.value) < Math.abs(num.value - best.value)) best = f;
+    }
+  }
+  return best;
+}
+
+// Split narrative text into checkable claims (sentences / list items),
+// skipping markdown headers and trivial fragments.
+function splitClaims(text) {
+  if (!text) return [];
+  const cleaned = text
+    .replace(/```[\s\S]*?```/g, " ")        // drop code blocks
+    .replace(/^#{1,6}\s.*$/gm, " ")          // drop headers
+    .replace(/\*\*|\*|`|_/g, "")             // drop md emphasis
+    .replace(/^\s*[-•]\s*/gm, "\n");         // bullets → line breaks
+  const parts = cleaned
+    .split(/(?<=[.!?])\s+(?=[A-ZĄČĘĖĮŠŲŪŽ0-9“"])|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 25 && /[a-zA-ZąčęėįšųūžĄČĘĖĮŠŲŪŽ]/.test(s));
+  return parts;
+}
+
+// Keywords that mark a claim as interpretive / legal (→ human review, not auto-verifiable).
+const LEGAL_HINT = /\b(article|str\.?|straipsn|law|įstatym|order|VA-\d|directive|direktyv|VMI|PVM|GPM|reglament|regulation|should|turėtų|recommend|rekomend|advis|patart|may be|gali būti|likely|tikėtina|risk of|rizika|consider|apsvarst|suggest|siūl)\b/i;
+
+// Main verification pass.
+function verifyNarrative(text, facts) {
+  const claims = splitClaims(text).map((c) => {
+    const nums = extractNumbers(c);
+    if (nums.length) {
+      const matches = nums.map(n => ({ n, hit: matchFact(n, facts) }));
+      const matched = matches.filter(m => m.hit);
+      if (matched.length) {
+        const conf = Math.min(0.97, 0.62 + 0.33 * (matched.length / nums.length));
+        return { text: c, status: "verified", confidence: Math.round(conf * 100),
+          grounding: matched.slice(0, 2).map(m => m.hit.label).join(", "),
+          numbers: nums.map(n => n.raw) };
+      }
+      // has figures but none match anything computed → flag
+      return { text: c, status: "unsupported", confidence: 28,
+        grounding: null, numbers: nums.map(n => n.raw) };
+    }
+    // no figures → interpretive; legal hint nudges confidence note
+    const legal = LEGAL_HINT.test(c);
+    return { text: c, status: "review", confidence: legal ? 55 : 50,
+      grounding: legal ? "legal / interpretive" : "qualitative", numbers: [] };
+  });
+
+  const counts = { verified: 0, unsupported: 0, review: 0 };
+  claims.forEach(c => { counts[c.status]++; });
+  const total = claims.length || 1;
+  // defensibility: verified=full credit, review=partial, unsupported=none
+  const raw = (counts.verified * 1 + counts.review * 0.6 + counts.unsupported * 0) / total;
+  const score = Math.round(raw * 100);
+  const band = score >= 80 ? "High" : score >= 60 ? "Moderate" : score >= 40 ? "Guarded" : "Low";
+  return { claims, counts, score, band, factCount: facts.length };
+}
+
+
+// ═══ PROVENANCE · RATE PACKS · CONFORMANCE (Step 2) ═══
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · PROVENANCE, RULE PACKS & CONFORMANCE  (Step 2)
+// ────────────────────────────────────────────────────────────────────
+// Three audit-grade additions, all deterministic:
+//  1) PROVENANCE — every rule category carries its legal/schema basis
+//     (authority + reference) and a verification status, so each finding
+//     is traceable to the source it enforces.
+//  2) RATE PACKS — dated, sourced rate sets (VAT / CIT / thresholds) with
+//     effective dates and a changelog, resolvable by period. Rates are
+//     verified against the 2026 reform; sources are named for audit.
+//  3) CONFORMANCE — a built-in test suite that runs the rule engine
+//     against labelled fixtures and reports expected-vs-actual, producing
+//     a conformance score so correctness can be demonstrated, not assumed.
+// No third-party product names appear anywhere by design.
+// ════════════════════════════════════════════════════════════════════
+
+// ─── 1) PROVENANCE ──────────────────────────────────────────────────
+// Category-level basis (defensible at the category level). Rule-level
+// overrides can be added in RULE_PROVENANCE_OVERRIDES keyed by rule id.
+// status: "schema" = structurally derivable from the XSD (high certainty);
+//         "regulatory" = grounded in a named order/article;
+//         "review" = basis named but should be confirmed by a specialist.
+const CATEGORY_PROVENANCE = {
+  Header:    { authority: "VMI", reference: "SAF-T XSD v2.01 · Order VA-127 (file & header structure)", status: "schema" },
+  Accounts:  { authority: "VMI / AVNT", reference: "SAF-T XSD v2.01 (MasterFiles/GeneralLedgerAccounts) · chart-of-accounts integrity", status: "schema" },
+  Customers: { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/Customers) · PVMĮ 71 str. (VAT identifiers)", status: "regulatory" },
+  Suppliers: { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/Suppliers) · PVMĮ 71 str. (VAT identifiers)", status: "regulatory" },
+  TaxTable:  { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/TaxTable) · PVMĮ 19 str. (VAT rates)", status: "regulatory" },
+  UOMTable:  { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/UOMTable)", status: "schema" },
+  AnalysisTable: { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/AnalysisTypeTable)", status: "schema" },
+  MovementTable: { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/MovementTypeTable)", status: "schema" },
+  Products:  { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/Products)", status: "schema" },
+  Assets:    { authority: "VMI / AVNT", reference: "SAF-T XSD v2.01 (MasterFiles/Assets) · PMĮ 18 str. (depreciation)", status: "regulatory" },
+  Owners:    { authority: "VMI", reference: "SAF-T XSD v2.01 (MasterFiles/Owners)", status: "schema" },
+  GL:        { authority: "VMI / AVNT", reference: "SAF-T XSD v2.01 (GeneralLedgerEntries) · double-entry & posting integrity", status: "schema" },
+  Sales:     { authority: "VMI", reference: "SAF-T XSD v2.01 (SourceDocuments/SalesInvoices) · PVMĮ 58, 79 str.", status: "regulatory" },
+  Purchases: { authority: "VMI", reference: "SAF-T XSD v2.01 (SourceDocuments/PurchaseInvoices) · PVMĮ 64 str. (deduction)", status: "regulatory" },
+  Payments:  { authority: "VMI", reference: "SAF-T XSD v2.01 (SourceDocuments/Payments)", status: "schema" },
+  Movements: { authority: "VMI", reference: "SAF-T XSD v2.01 (SourceDocuments/MovementOfGoods) · i.VAZ alignment", status: "regulatory" },
+  AssetTx:   { authority: "VMI / AVNT", reference: "SAF-T XSD v2.01 (AssetTransactions) · PMĮ 18 str.", status: "regulatory" },
+  CrossRef:  { authority: "VMI", reference: "SAF-T XSD v2.01 cross-file referential integrity", status: "schema" },
+};
+const RULE_PROVENANCE_OVERRIDES = {
+  "A-001": { reference: "SAF-T XSD v2.01 §file prologue — UTF-8 XML declaration", status: "schema" },
+  "A-002": { reference: "SAF-T XSD v2.01 — root <AuditFile>, namespace vmi.lt/cms/saf-t", status: "schema" },
+  "A-003": { reference: "SAF-T XSD v2.01 — AuditFileVersion = 2.01", status: "schema" },
+};
+function provenanceFor(rule) {
+  const base = CATEGORY_PROVENANCE[rule.category] || { authority: "VMI", reference: "SAF-T XSD v2.01", status: "review" };
+  const ov = RULE_PROVENANCE_OVERRIDES[rule.id] || {};
+  return { authority: ov.authority || base.authority, reference: ov.reference || base.reference, status: ov.status || base.status };
+}
+
+// ─── 2) RATE PACKS (dated, sourced, with changelog) ─────────────────
+// Verified against the 2026 Lithuanian tax reform. Each pack is the set
+// of rates in force during [effectiveFrom, effectiveTo]. resolveRatePack
+// returns the pack covering a given date.
+const RATE_PACKS = [
+  {
+    id: "LT-2024", label: "Lithuania · 2024", effectiveFrom: "2024-01-01", effectiveTo: "2024-12-31",
+    vat: { standard: 21, reduced: [9, 5], notes: "21% standard; 9% (transport, accommodation, heating, etc.); 5% (some)." },
+    cit: { standard: 15, small: 6, smallThreshold: 300000, newCompanyZeroYears: 1, bankSurcharge: 5, bankThreshold: 2000000 },
+    vatRegistrationThreshold: 45000,
+    source: "PVMĮ 19 str.; PMĮ 5 str. (2024 redakcija)",
+    changelog: "Baseline pack.",
+  },
+  {
+    id: "LT-2025", label: "Lithuania · 2025", effectiveFrom: "2025-01-01", effectiveTo: "2025-12-31",
+    vat: { standard: 21, reduced: [9, 5], notes: "21% standard; 9% reduced (transport, accommodation, culture, heating concession); 5% (some)." },
+    cit: { standard: 16, small: 6, smallThreshold: 300000, newCompanyZeroYears: 1, bankSurcharge: 5, bankThreshold: 2000000 },
+    vatRegistrationThreshold: 45000,
+    source: "PVMĮ 19 str.; PMĮ 5 str. (2025 redakcija)",
+    changelog: "CIT standard 15% → 16% (defence funding).",
+  },
+  {
+    id: "LT-2026", label: "Lithuania · 2026", effectiveFrom: "2026-01-01", effectiveTo: null,
+    vat: { standard: 21, reduced: [12, 5], notes: "21% standard; NEW 12% (passenger transport, accommodation, restaurant/catering, culture & sport tickets); NEW 5% super-reduced (books & publications, medicines & medical devices); heating/hot water/firewood → 21%." },
+    cit: { standard: 17, small: 7, smallThreshold: 300000, newCompanyZeroYears: 2, bankSurcharge: 5, bankThreshold: 2000000 },
+    vatRegistrationThreshold: 45000,
+    lossCarryforwardCapPct: 70,
+    source: "Seimas 2026 reform (2025-06 enactment); PVMĮ 19 str. (2026 red.); PMĮ 5 str. (2026 red.)",
+    changelog: "9% reduced rate ABOLISHED → split into 12% and 5%; heating to 21%; CIT 16%→17%, small 6%→7%; new-company 0% extended to 2 years; loss carryforward capped at 70% of profit.",
+  },
+];
+function resolveRatePack(dateStr) {
+  const d = (dateStr && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) ? dateStr.slice(0, 10) : null;
+  if (!d) return RATE_PACKS[RATE_PACKS.length - 1];
+  for (const p of RATE_PACKS) {
+    if (d >= p.effectiveFrom && (!p.effectiveTo || d <= p.effectiveTo)) return p;
+  }
+  // before first / after last
+  if (d < RATE_PACKS[0].effectiveFrom) return RATE_PACKS[0];
+  return RATE_PACKS[RATE_PACKS.length - 1];
+}
+
+// ─── 3) CONFORMANCE TEST HARNESS ────────────────────────────────────
+// Each fixture is a minimal SAF-T XML with a known defect, plus the rule
+// id(s) it MUST trigger (and optionally ids it must NOT trigger). The
+// runner parses each fixture, runs the engine, and checks expectations.
+// Built-in fixtures make the suite usable out of the box; teams can add
+// their own labelled files later.
+function buildConformanceFixtures() {
+  const wrap = (inner, opts = {}) => {
+    const decl = opts.noDecl ? "" : `<?xml version="1.0" encoding="${opts.enc || "UTF-8"}"?>\n`;
+    const ns = opts.badNs ? "http://example.org/notvmi" : "https://www.vmi.lt/cms/saf-t";
+    const ver = opts.version != null ? opts.version : "2.01";
+    const root = opts.noAuditFile ? "NotAuditFile" : "AuditFile";
+    return `${decl}<${root} xmlns="${ns}"><Header><AuditFileVersion>${ver}</AuditFileVersion><AuditFileCountry>LT</AuditFileCountry></Header>${inner}</${root}>`;
+  };
+  return [
+    { id: "FX-01", name: "Missing XML declaration", expectFail: ["A-001"],
+      xml: wrap("", { noDecl: true }) },
+    { id: "FX-02", name: "Wrong encoding (ISO-8859-1)", expectFail: ["A-001"],
+      xml: wrap("", { enc: "ISO-8859-1" }) },
+    { id: "FX-03", name: "Non-VMI namespace", expectFail: ["A-002"],
+      xml: wrap("", { badNs: true }) },
+    { id: "FX-04", name: "Root not <AuditFile>", expectFail: ["A-002"],
+      xml: wrap("", { noAuditFile: true }) },
+    { id: "FX-05", name: "Wrong AuditFileVersion (1.0)", expectFail: ["A-003"],
+      xml: wrap("", { version: "1.0" }) },
+    { id: "FX-06", name: "Clean header (control — no header failures)", expectPass: ["A-001", "A-002", "A-003"],
+      xml: wrap("") },
+  ];
+}
+// runner: deps = { parse(xml)->data, run(data)->{byRule} }
+function runConformance(deps, fixtures) {
+  const fx = fixtures || buildConformanceFixtures();
+  const results = fx.map((f) => {
+    let data, err = null;
+    try { data = deps.parse(f.xml); } catch (e) { err = e.message; }
+    let byRule = {};
+    if (data) { try { byRule = (deps.run(data) || {}).byRule || {}; } catch (e) { err = e.message; } }
+    const checks = [];
+    (f.expectFail || []).forEach((rid) => checks.push({ rule: rid, want: "fail", got: byRule[rid] ? "fail" : "pass", pass: !!byRule[rid] }));
+    (f.expectPass || []).forEach((rid) => checks.push({ rule: rid, want: "pass", got: byRule[rid] ? "fail" : "pass", pass: !byRule[rid] }));
+    const passed = !err && checks.every((c) => c.pass);
+    return { id: f.id, name: f.name, passed, error: err, checks };
+  });
+  const total = results.length, passedN = results.filter((r) => r.passed).length;
+  const score = total ? Math.round((passedN / total) * 100) : 0;
+  return { results, total, passed: passedN, score };
+}
+
+
+// ═══ GROUNDED LEGAL RESEARCH (Step 3) — retrieval + citation grounding ═══
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · GROUNDED LEGAL RESEARCH  (Step 3)
+// ────────────────────────────────────────────────────────────────────
+// Turns the embedded legal corpus into a citeable research source:
+//  1) retrieveSources(query)  — deterministic ranking of statute entries
+//     relevant to a question (builds on the existing keyword scorer).
+//  2) groundCitations(answer, sources) — checks an AI answer against the
+//     retrieved statutes: which provisions are actually referenced, and
+//     whether every article the answer cites resolves to a real corpus
+//     entry. Produces a "sources used" list + a grounding ratio so a
+//     reader can click through to the exact article text.
+// The retrieval + grounding are deterministic; the AI only phrases the
+// answer from provided provisions. No third-party names appear by design.
+// ════════════════════════════════════════════════════════════════════
+
+// Rank corpus entries for a query. `corpus` = the LEGAL_DB array.
+function retrieveSources(query, corpus, maxResults = 6) {
+  const q = String(query || "").toLowerCase().replace(/[^\wąčęėįšųūž\s%-]/gi, " ");
+  const terms = [...new Set(q.split(/\s+/).filter(t => t.length > 1))];
+  if (!terms.length) return [];
+  const scored = corpus.map((doc) => {
+    let score = 0;
+    const kw = (doc.keywords || "").toLowerCase();
+    const hay = `${kw} ${(doc.text || "")} ${(doc.textEn || "")} ${(doc.article || "")} ${(doc.law || "")}`.toLowerCase();
+    terms.forEach((term) => {
+      if (hay.includes(term)) score += 2;
+      if (kw.includes(term)) score += 3;
+      if ((doc.article || "").toLowerCase().includes(term)) score += 5;
+      if ((doc.law || "").toLowerCase() === term) score += 4;
+    });
+    return { ...doc, score };
+  }).filter((d) => d.score > 0).sort((a, b) => b.score - a.score).slice(0, maxResults);
+  return scored;
+}
+
+// Build the grounded-answer prompt: the model must answer ONLY from the
+// supplied provisions and tag each statement with the provision id in
+// square brackets, e.g. [pvm-19-1].
+function buildGroundedResearchPrompt(lang) {
+  const en = `You are a Lithuanian tax-law research assistant. Answer the user's question USING ONLY the legal provisions provided in the [SOURCES] block.
+Rules:
+- Cite every substantive statement with the provision id in square brackets, e.g. [pvm-19-1]. Use only ids that appear in [SOURCES].
+- If the provisions do not cover the question, say so plainly and do not invent law.
+- Quote exact article numbers; do not paraphrase the rule into a different number.
+- Be concise and practical. End with a one-line note that this is informational, not legal advice.`;
+  const lt = `Esate Lietuvos mokesčių teisės tyrimų asistentas. Atsakykite TIK pagal [SOURCES] bloke pateiktas teisės nuostatas.
+Taisyklės:
+- Kiekvieną teiginį pagrįskite nuostatos identifikatoriumi laužtiniuose skliaustuose, pvz. [pvm-19-1]. Naudokite tik [SOURCES] esančius id.
+- Jei nuostatos neapima klausimo — aiškiai tai pasakykite, nesugalvokite teisės.
+- Cituokite tikslius straipsnių numerius; nekeiskite jų.
+- Atsakykite glaustai ir praktiškai. Pabaigoje pridėkite eilutę, kad tai informacinio pobūdžio informacija, ne teisinė konsultacija.`;
+  return lang === "lt" ? lt : en;
+}
+
+// Serialise retrieved sources into the prompt context block.
+function sourcesBlock(sources) {
+  if (!sources || !sources.length) return "\n[SOURCES]\n(none found in corpus)\n[END SOURCES]\n";
+  return "\n[SOURCES]\n" + sources.map((s) =>
+    `[${s.id}] ${s.law} ${s.article}: "${s.text}"${s.penalty ? ` (Sanction: ${s.penalty})` : ""}`
+  ).join("\n") + "\n[END SOURCES]\n";
+}
+
+// After the AI answers, determine which provisions it actually used and
+// whether each cited id resolves to a real corpus entry.
+function groundCitations(answer, sources, corpus) {
+  const text = String(answer || "");
+  const byId = {};
+  (corpus || []).forEach((d) => { byId[d.id] = d; });
+  // ids the answer explicitly cited in [brackets]
+  const citedIds = [...new Set((text.match(/\[([a-z0-9][a-z0-9-]{2,})\]/gi) || []).map((m) => m.slice(1, -1).toLowerCase()))];
+  const resolved = [], unresolved = [];
+  citedIds.forEach((id) => { (byId[id] ? resolved : unresolved).push(id); });
+  // also surface retrieved sources whose article number appears verbatim in the answer (implicit use)
+  const usedSet = new Set(resolved);
+  (sources || []).forEach((s) => {
+    if (usedSet.has(s.id)) return;
+    const art = (s.article || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const artNum = (art.match(/\d+[\d\s-]*str\.?/) || [])[0];
+    if (artNum && text.toLowerCase().includes(artNum)) usedSet.add(s.id);
+  });
+  // the sources to display = those cited/used, preserving retrieval order, else top retrieved
+  const used = (sources || []).filter((s) => usedSet.has(s.id));
+  const display = used.length ? used : (sources || []).slice(0, 3);
+  const citeTotal = citedIds.length;
+  const grounded = citeTotal ? resolved.length : (used.length ? used.length : 0);
+  const ratio = citeTotal ? Math.round((resolved.length / citeTotal) * 100) : (sources && sources.length ? 100 : 0);
+  return {
+    citedIds, resolved, unresolved,
+    sources: display,
+    citeTotal, groundedCount: resolved.length,
+    ratio,                       // % of cited ids that resolve to the corpus
+    hasUnresolved: unresolved.length > 0,
+  };
+}
+
+// Replace [id] markers with human-friendly inline markers [n] mapped to a
+// numbered source list. Returns { text, map:[{n,id,...}] }.
+function numberCitations(answer, sources, corpus) {
+  const byId = {}; (corpus || []).forEach((d) => { byId[d.id] = d; });
+  const order = [];
+  const idToN = {};
+  const text = String(answer || "").replace(/\[([a-z0-9][a-z0-9-]{2,})\]/gi, (m, id) => {
+    const key = id.toLowerCase();
+    if (!byId[key]) return m; // leave unresolved ids visible as-is
+    if (!(key in idToN)) { order.push(byId[key]); idToN[key] = order.length; }
+    return `⟦${idToN[key]}⟧`;
+  });
+  return { text, map: order.map((d, i) => ({ n: i + 1, ...d })) };
+}
+
+
+// ═══ KPI INTELLIGENCE — benchmarks + targets (Step 5) ═══
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · KPI INTELLIGENCE — benchmarks + targets  (Step 5)
+// ────────────────────────────────────────────────────────────────────
+// Turns the deterministic KPIs into an advanced, easy-to-read dashboard:
+//  • KPI_META   — per-metric label, unit, format, direction (higher- or
+//    lower-is-better), category, and which benchmark series it maps to.
+//  • SECTOR_BENCHMARKS — illustrative {low, median, high} bands per sector
+//    for the comparable ratios. These are clearly-labelled baselines meant
+//    to be replaced by real aggregated data; the framework is the product.
+//  • scoreKpi() — positions a value against its sector band and the user's
+//    target, returning a verdict + a 0..1 position for the gauge.
+// Deterministic throughout; no third-party names by design.
+// ════════════════════════════════════════════════════════════════════
+
+// direction: "up" = higher is better, "down" = lower is better, "flat" = context-only
+// fmt: "eur" | "pct" | "ratio" | "days" | "int"
+const KPI_META = [
+  // Profitability
+  { key: "revenue", en: "Revenue", lt: "Pajamos", fmt: "eur", dir: "up", cat: "profitability", bench: null },
+  { key: "grossResult", en: "Gross result", lt: "Bendrasis rezultatas", fmt: "eur", dir: "up", cat: "profitability", bench: null },
+  { key: "grossMarginPct", en: "Gross margin", lt: "Bendrasis pelningumas", fmt: "pct", dir: "up", cat: "profitability", bench: "grossMargin" },
+  { key: "netMarginPct", en: "Net margin", lt: "Grynasis pelningumas", fmt: "pct", dir: "up", cat: "profitability", bench: "netMargin" },
+  // Liquidity & leverage
+  { key: "currentRatio", en: "Current ratio", lt: "Einamasis santykis", fmt: "ratio", dir: "up", cat: "liquidity", bench: "currentRatio" },
+  { key: "debtToEquity", en: "Debt-to-equity", lt: "Skola / nuosavybė", fmt: "ratio", dir: "down", cat: "liquidity", bench: "debtToEquity" },
+  { key: "workingCapital", en: "Working capital", lt: "Apyvartinis kapitalas", fmt: "eur", dir: "up", cat: "liquidity", bench: null },
+  // Working capital cycle
+  { key: "dso", en: "Days sales outstanding", lt: "Gautinų dienos (DSO)", fmt: "days", dir: "down", cat: "cycle", bench: "dso" },
+  { key: "dpo", en: "Days payables outstanding", lt: "Mokėtinų dienos (DPO)", fmt: "days", dir: "up", cat: "cycle", bench: "dpo" },
+  // Tax
+  { key: "netVatPosition", en: "Net VAT position", lt: "Grynoji PVM pozicija", fmt: "eur", dir: "flat", cat: "tax", bench: null },
+  { key: "vatRecoveryRatePct", en: "VAT recovery rate", lt: "PVM susigrąžinimas", fmt: "pct", dir: "flat", cat: "tax", bench: "vatRecovery" },
+  { key: "effectiveTaxRatePct", en: "Effective tax rate", lt: "Efektyvus mok. tarifas", fmt: "pct", dir: "down", cat: "tax", bench: "effTax" },
+  // Concentration / operations
+  { key: "topSupplierConcentrationPct", en: "Top-1 supplier share", lt: "Top-1 tiekėjo dalis", fmt: "pct", dir: "down", cat: "ops", bench: "supplierConc" },
+  { key: "top3SupplierConcentrationPct", en: "Top-3 supplier share", lt: "Top-3 tiekėjų dalis", fmt: "pct", dir: "down", cat: "ops", bench: null },
+];
+
+const KPI_CATS = [
+  { key: "profitability", en: "Profitability", lt: "Pelningumas" },
+  { key: "liquidity", en: "Liquidity & leverage", lt: "Likvidumas ir svertas" },
+  { key: "cycle", en: "Working-capital cycle", lt: "Apyvartinio kapitalo ciklas" },
+  { key: "tax", en: "Tax", lt: "Mokesčiai" },
+  { key: "ops", en: "Concentration", lt: "Koncentracija" },
+];
+
+// Illustrative sector bands {low, median, high}. Replace with aggregated data.
+const SECTOR_BENCHMARKS = {
+  _default:      { grossMargin:{low:18,median:32,high:50}, netMargin:{low:2,median:7,high:14}, currentRatio:{low:1.0,median:1.5,high:2.5}, debtToEquity:{low:0.3,median:1.0,high:2.0}, dso:{low:20,median:45,high:75}, dpo:{low:20,median:40,high:65}, vatRecovery:{low:40,median:75,high:100}, effTax:{low:5,median:12,high:18}, supplierConc:{low:10,median:25,high:45} },
+  Logistics:     { grossMargin:{low:8,median:16,high:28}, netMargin:{low:2,median:5,high:9}, currentRatio:{low:1.0,median:1.3,high:1.9}, debtToEquity:{low:0.5,median:1.4,high:2.6}, dso:{low:30,median:50,high:80}, dpo:{low:25,median:45,high:70}, vatRecovery:{low:60,median:85,high:100}, effTax:{low:6,median:12,high:18}, supplierConc:{low:15,median:30,high:55} },
+  Construction:  { grossMargin:{low:10,median:20,high:32}, netMargin:{low:2,median:6,high:11}, currentRatio:{low:1.0,median:1.4,high:2.1}, debtToEquity:{low:0.4,median:1.2,high:2.3}, dso:{low:40,median:70,high:110}, dpo:{low:30,median:55,high:90}, vatRecovery:{low:55,median:80,high:100}, effTax:{low:6,median:12,high:18}, supplierConc:{low:12,median:28,high:50} },
+  Retail:        { grossMargin:{low:15,median:28,high:42}, netMargin:{low:1,median:4,high:8}, currentRatio:{low:0.9,median:1.3,high:1.9}, debtToEquity:{low:0.3,median:0.9,high:1.8}, dso:{low:5,median:15,high:35}, dpo:{low:25,median:45,high:70}, vatRecovery:{low:45,median:70,high:95}, effTax:{low:6,median:12,high:18}, supplierConc:{low:10,median:22,high:40} },
+  Manufacturing: { grossMargin:{low:18,median:30,high:45}, netMargin:{low:3,median:8,high:14}, currentRatio:{low:1.1,median:1.7,high:2.6}, debtToEquity:{low:0.3,median:0.9,high:1.7}, dso:{low:30,median:55,high:85}, dpo:{low:25,median:45,high:70}, vatRecovery:{low:55,median:80,high:100}, effTax:{low:6,median:12,high:18}, supplierConc:{low:12,median:26,high:46} },
+  ProfServices:  { grossMargin:{low:35,median:55,high:75}, netMargin:{low:8,median:18,high:30}, currentRatio:{low:1.1,median:1.8,high:3.0}, debtToEquity:{low:0.1,median:0.5,high:1.2}, dso:{low:25,median:45,high:75}, dpo:{low:15,median:30,high:55}, vatRecovery:{low:30,median:55,high:85}, effTax:{low:6,median:12,high:18}, supplierConc:{low:15,median:35,high:60} },
+  Hospitality:   { grossMargin:{low:55,median:68,high:80}, netMargin:{low:2,median:8,high:16}, currentRatio:{low:0.7,median:1.1,high:1.7}, debtToEquity:{low:0.5,median:1.3,high:2.5}, dso:{low:2,median:10,high:25}, dpo:{low:20,median:40,high:65}, vatRecovery:{low:35,median:60,high:90}, effTax:{low:6,median:12,high:18}, supplierConc:{low:10,median:24,high:44} },
+  RealEstate:    { grossMargin:{low:40,median:60,high:80}, netMargin:{low:10,median:25,high:45}, currentRatio:{low:0.8,median:1.4,high:2.6}, debtToEquity:{low:0.6,median:1.6,high:3.5}, dso:{low:5,median:20,high:45}, dpo:{low:15,median:35,high:60}, vatRecovery:{low:40,median:65,high:95}, effTax:{low:6,median:12,high:18}, supplierConc:{low:15,median:32,high:55} },
+  Agriculture:   { grossMargin:{low:12,median:24,high:40}, netMargin:{low:2,median:7,high:14}, currentRatio:{low:1.0,median:1.6,high:2.6}, debtToEquity:{low:0.4,median:1.1,high:2.2}, dso:{low:15,median:35,high:65}, dpo:{low:20,median:40,high:65}, vatRecovery:{low:55,median:80,high:100}, effTax:{low:4,median:9,high:16}, supplierConc:{low:12,median:28,high:50} },
+  Healthcare:    { grossMargin:{low:25,median:42,high:60}, netMargin:{low:3,median:10,high:18}, currentRatio:{low:1.0,median:1.6,high:2.6}, debtToEquity:{low:0.2,median:0.8,high:1.6}, dso:{low:20,median:45,high:80}, dpo:{low:20,median:40,high:65}, vatRecovery:{low:20,median:45,high:80}, effTax:{low:6,median:12,high:18}, supplierConc:{low:12,median:28,high:50} },
+  Finance:       { grossMargin:{low:40,median:60,high:80}, netMargin:{low:10,median:25,high:45}, currentRatio:{low:1.0,median:1.5,high:2.6}, debtToEquity:{low:1.0,median:3.0,high:6.0}, dso:{low:10,median:30,high:60}, dpo:{low:10,median:30,high:55}, vatRecovery:{low:10,median:30,high:60}, effTax:{low:8,median:16,high:22}, supplierConc:{low:15,median:35,high:60} },
+  Energy:        { grossMargin:{low:15,median:30,high:50}, netMargin:{low:3,median:10,high:20}, currentRatio:{low:0.9,median:1.4,high:2.3}, debtToEquity:{low:0.5,median:1.4,high:2.8}, dso:{low:25,median:45,high:75}, dpo:{low:25,median:45,high:70}, vatRecovery:{low:55,median:80,high:100}, effTax:{low:6,median:12,high:18}, supplierConc:{low:15,median:35,high:60} },
+};
+
+function sectorBenchmarks(sector) {
+  return SECTOR_BENCHMARKS[sector] || SECTOR_BENCHMARKS._default;
+}
+function availableSectors() { return Object.keys(SECTOR_BENCHMARKS).filter((s) => s !== "_default"); }
+
+function formatKpi(val, fmt) {
+  if (val == null || (typeof val === "number" && !isFinite(val))) return "—";
+  if (fmt === "eur") return (val < 0 ? "-€" : "€") + Math.abs(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (fmt === "pct") return (Math.round(val * 10) / 10) + "%";
+  if (fmt === "days") return Math.round(val) + " d";
+  if (fmt === "ratio") return (Math.round(val * 100) / 100).toString();
+  return Math.round(val).toLocaleString();
+}
+
+// clamp helper
+const _clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+// Position a value against its band → {pos 0..1 across low..high, tier, favorable}
+function positionInBand(val, band, dir) {
+  if (!band) return null;
+  const span = band.high - band.low || 1;
+  const pos = _clamp((val - band.low) / span, 0, 1);
+  // tier relative to median
+  let tier;
+  if (dir === "down") {
+    tier = val <= band.low ? "best" : val <= band.median ? "good" : val <= band.high ? "watch" : "poor";
+  } else if (dir === "up") {
+    tier = val >= band.high ? "best" : val >= band.median ? "good" : val >= band.low ? "watch" : "poor";
+  } else {
+    tier = (val >= band.low && val <= band.high) ? "good" : "watch";
+  }
+  return { pos, tier };
+}
+
+// Evaluate a KPI: value vs sector band vs target.
+function scoreKpi(meta, kpis, sector, targets) {
+  const val = kpis ? kpis[meta.key] : null;
+  const band = meta.bench ? sectorBenchmarks(sector)[meta.bench] : null;
+  const inBand = (val != null && band) ? positionInBand(val, band, meta.dir) : null;
+  const target = targets && targets[meta.key] != null ? Number(targets[meta.key]) : null;
+
+  let targetStatus = null, targetPct = null;
+  if (target != null && val != null) {
+    if (meta.dir === "down") {
+      targetStatus = val <= target ? "met" : (val <= target * 1.1 ? "near" : "off");
+      targetPct = target > 0 ? Math.round(_clamp(target / val, 0, 1) * 100) : (val <= target ? 100 : 0);
+    } else { // up / flat treated as up toward target
+      targetStatus = val >= target ? "met" : (val >= target * 0.9 ? "near" : "off");
+      targetPct = target !== 0 ? Math.round(_clamp(val / target, 0, 1) * 100) : (val >= target ? 100 : 0);
+    }
+  }
+  return { key: meta.key, val, band, inBand, target, targetStatus, targetPct };
+}
+
+// Portfolio summary across all benched KPIs.
+function summarizeKpis(kpis, sector, targets) {
+  let aboveMedian = 0, benched = 0, targetsSet = 0, targetsMet = 0;
+  KPI_META.forEach((m) => {
+    const s = scoreKpi(m, kpis, sector, targets);
+    if (s.inBand) { benched++; if (s.inBand.tier === "best" || s.inBand.tier === "good") aboveMedian++; }
+    if (s.target != null) { targetsSet++; if (s.targetStatus === "met") targetsMet++; }
+  });
+  return { aboveMedian, benched, targetsSet, targetsMet };
+}
+
 // ═══ MARKDOWN ═══
 function Md({ text }) {
   if (!text) return null;
+  // turn ⟦n⟧ citation markers into small superscript reference chips
+  const cite = (s) => String(s).split(/(⟦\d+⟧)/).map((p, k) => {
+    const m = /^⟦(\d+)⟧$/.exec(p);
+    return m ? <sup key={k} style={{ fontSize: 9, fontFamily: "var(--m)", color: "#7cc4ff", fontWeight: 700, padding: "0 1px" }}>[{m[1]}]</sup> : p;
+  });
   return <div>{text.split("\n").map((line, i) => {
-    const b = s => s.split(/(\*\*[^*]+\*\*)/).map((p, j) => p.startsWith("**") && p.endsWith("**") ? <strong key={j} style={{ color: "#ffffff", fontWeight: 800 }}>{p.slice(2, -2)}</strong> : p);
+    const b = s => s.split(/(\*\*[^*]+\*\*)/).map((p, j) => p.startsWith("**") && p.endsWith("**") ? <strong key={j} style={{ color: "#ffffff", fontWeight: 800 }}>{cite(p.slice(2, -2))}</strong> : <span key={j}>{cite(p)}</span>);
     if (line.startsWith("### ")) return <h4 key={i} style={{ fontSize: 17, fontWeight: 600, color: "#ffffff", margin: "16px 0 6px", fontFamily: "var(--f)", letterSpacing: "-.01em" }}>{line.slice(4)}</h4>;
     if (line.startsWith("## ")) return <h3 key={i} style={{ fontSize: 22, fontWeight: 500, color: "#fff", margin: "18px 0 8px", fontFamily: "var(--f)", letterSpacing: "-.015em" }}>{line.slice(3)}</h3>;
     if (line.startsWith("# ")) return <h2 key={i} style={{ fontSize: 28, fontWeight: 400, color: "#fff", margin: "20px 0 10px", fontFamily: "var(--f)", letterSpacing: "-.02em" }}>{line.slice(2)}</h2>;
@@ -6623,8 +7482,11 @@ function useVoice(cb) { const [on, setOn] = useState(false); const [lang, setLan
 
 // ═══ EXPORT ═══
 function exportCSV(findings, fileName) {
-  const header = "Severity,Level,Category,Title,Detail,Status\n";
-  const rows = findings.map(f => `"${f.severity}","L${f.level}","${f.category}","${f.title.replace(/"/g, '""')}","${f.detail.replace(/"/g, '""')}","${f.status || 'open'}"`).join("\n");
+  const header = "Severity,Level,Category,Title,Detail,Status,Authority,Basis,BasisStatus\n";
+  const rows = findings.map(f => {
+    const pv = provenanceFor(f);
+    return `"${f.severity}","L${f.level}","${f.category}","${f.title.replace(/"/g, '""')}","${f.detail.replace(/"/g, '""')}","${f.status || 'open'}","${pv.authority}","${pv.reference.replace(/"/g, '""')}","${pv.status}"`;
+  }).join("\n");
   const blob = new Blob([header + rows], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href = url; a.download = fileName || "taxai-findings.csv"; a.click();
@@ -6856,268 +7718,6 @@ function HomeHeroCanvas() {
   return <canvas ref={ref} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", filter: "grayscale(1) contrast(1.08)" }} />;
 }
 
-// ═══════════════════════════════════════════════════
-// DEMO DATASET — a realistic synthetic Lithuanian SAF-T file with planted
-// forensic signals (round-trip cycle, round-number bias, a December velocity
-// spike, backdated postings, a near-duplicate supplier, an out-of-period VAT
-// rate). It flows through the SAME parser + 300-rule engine + 7 forensic
-// engines as a real upload, so the whole app lights up for evaluation.
-// Nothing here is real data; it exists purely so a fresh deployment is usable
-// without a private SAF-T file on hand.
-// ═══════════════════════════════════════════════════
-function buildSampleSAFT() {
-  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const r2 = (n) => Math.round(n * 100) / 100;
-  // Deterministic PRNG so the demo is identical every run (reproducible).
-  let seed = 20260531;
-  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
-
-  const customers = [
-    { id: "C001", name: "UAB Baltijos Logistika", reg: "302511111", vat: "LT100001111118", iban: "LT121000011101001111" },
-    { id: "C002", name: "MB Vilniaus Prekyba", reg: "304622222", vat: "LT100002222217", iban: "LT121000011101002222" },
-    { id: "C003", name: "UAB Kauno Statyba", reg: "300733333", vat: "LT100003333316", iban: "LT121000011101003333" },
-    { id: "C004", name: "AB Energijos Tinklai", reg: "110844444", vat: "LT100004444415", iban: "LT121000011101004444" },
-    { id: "C005", name: "UAB Šiaurės Maistas", reg: "302955555", vat: "LT100005555514", iban: "LT121000011101005555" },
-  ];
-  const suppliers = [
-    { id: "S001", name: "UAB Tiekimas Plus", reg: "305066666", vat: "LT100006666613", iban: "LT127300010102000666" },
-    { id: "S002", name: "UAB Biuro Sprendimai", reg: "302177777", vat: "LT100007777712", iban: "LT127300010102000777" },
-    { id: "S003", name: "UAB Transporto Linija", reg: "300288888", vat: "LT100008888811", iban: "LT127300010102000888" },
-    // Planted: near-duplicate name + SHARED bank account with S001 (collusion/shell signal)
-    { id: "S004", name: "UAB Tiekimas Pluss", reg: "305099999", vat: "LT100009999910", iban: "LT127300010102000666" },
-  ];
-
-  const accounts = [
-    ["271", "Sąskaitos bankuose", "GL", 0, 184250],
-    ["443", "Pirkėjų skolos", "GL", 0, 96400],
-    ["443100", "Pardavimo pajamos", "GL", 0, 612300],
-    ["4430", "Tiekėjų skolos", "GL", 51200, 0],
-    ["605", "Pardavimo savikaina", "GL", 318900, 0],
-    ["6310", "Veiklos sąnaudos", "GL", 142700, 0],
-    ["2311", "Atsargos", "GL", 44800, 0],
-    ["443200", "Mokėtinas PVM", "GL", 0, 38420],
-  ];
-
-  // ── Build sales invoices ──
-  const sales = [];
-  let invSeq = 1000;
-  const monthsWeights = [6, 6, 7, 7, 8, 8, 9, 8, 9, 10, 11, 34]; // December spike (planted velocity anomaly)
-  for (let m = 0; m < 12; m++) {
-    const count = monthsWeights[m];
-    for (let i = 0; i < count; i++) {
-      invSeq++;
-      const cust = pick(customers);
-      const day = 1 + Math.floor(rnd() * 27);
-      const date = `2026-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      // Planted round-number bias: ~30% of invoices are clean round thousands
-      let net;
-      if (rnd() < 0.3) net = pick([1000, 2000, 5000, 10000, 15000, 25000]);
-      else net = r2(400 + rnd() * 18000);
-      const vatPct = 21;
-      const vat = r2(net * vatPct / 100);
-      const gross = r2(net + vat);
-      sales.push({ no: `SF-2026-${invSeq}`, date, sysDate: date + "T10:15:00", cust, net, vat, vatPct, gross, type: "FT" });
-    }
-  }
-  // Planted: out-of-period VAT rate (9% reduced no longer valid for general goods in 2026)
-  {
-    invSeq++; const cust = customers[0];
-    const net = 8400, vatPct = 9, vat = r2(net * 0.09), gross = r2(net + vat);
-    sales.push({ no: `SF-2026-${invSeq}`, date: "2026-03-12", sysDate: "2026-03-12T11:00:00", cust, net, vat, vatPct, gross, type: "FT" });
-  }
-  // Planted: backdated postings (document date far before system entry — >30d lag)
-  for (let i = 0; i < 6; i++) {
-    invSeq++; const cust = pick(customers);
-    const net = r2(3000 + rnd() * 9000), vat = r2(net * 0.21), gross = r2(net + vat);
-    sales.push({ no: `SF-2026-${invSeq}`, date: "2026-09-30", sysDate: "2026-11-14T23:40:00", cust, net, vat, vatPct: 21, gross, type: "FT" });
-  }
-
-  // ── Purchase invoices ──
-  const purchases = [];
-  let pSeq = 5000;
-  for (let m = 0; m < 12; m++) {
-    for (let i = 0; i < 5; i++) {
-      pSeq++;
-      const sup = pick(suppliers);
-      const day = 1 + Math.floor(rnd() * 27);
-      const date = `2026-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      let net;
-      if (rnd() < 0.28) net = pick([1000, 2000, 5000, 8000]);
-      else net = r2(300 + rnd() * 9000);
-      const vat = r2(net * 0.21), gross = r2(net + vat);
-      purchases.push({ no: `PF-${pSeq}`, date, sysDate: date + "T09:30:00", sup, net, vat, gross });
-    }
-  }
-
-  // ── GL transactions: include a planted ROUND-TRIP money cycle ──
-  // Company → S001 → C003 → (back to) Company, similar amounts (round-tripping).
-  const cycleAmt = 50000;
-  const glTx = [
-    { id: "T-CYC-1", date: "2026-07-05", desc: "Payment to supplier S001", dr: "4430", cr: "271", amt: cycleAmt, party: "S001" },
-    { id: "T-CYC-2", date: "2026-07-09", desc: "Onward transfer", dr: "605", cr: "271", amt: r2(cycleAmt * 0.98), party: "S004" },
-    { id: "T-CYC-3", date: "2026-07-14", desc: "Receipt from customer C003", dr: "271", cr: "443", amt: r2(cycleAmt * 0.965), party: "C003" },
-  ];
-
-  // ── Compose XML ──
-  const salesXml = sales.map((s) => `
-        <Invoice>
-          <InvoiceNo>${esc(s.no)}</InvoiceNo>
-          <CustomerID>${s.cust.id}</CustomerID>
-          <AccountID>443</AccountID>
-          <InvoiceDate>${s.date}</InvoiceDate>
-          <InvoiceType>${s.type}</InvoiceType>
-          <SystemEntryDate>${s.sysDate}</SystemEntryDate>
-          <GLPostingDate>${s.date}</GLPostingDate>
-          <Line>
-            <RecordID>1</RecordID>
-            <AccountID>443100</AccountID>
-            <CreditAmount><Amount>${s.net}</Amount></CreditAmount>
-            <Tax><TaxType>PVM</TaxType><TaxCode>PVM1</TaxCode><TaxPercentage>${s.vatPct}</TaxPercentage><TaxableAmount>${s.net}</TaxableAmount><TaxAmount><Amount>${s.vat}</Amount></TaxAmount></Tax>
-          </Line>
-          <DocumentTotals><NetTotal>${s.net}</NetTotal><TaxPayable>${s.vat}</TaxPayable><GrossTotal>${s.gross}</GrossTotal></DocumentTotals>
-        </Invoice>`).join("");
-
-  const purchasesXml = purchases.map((p) => `
-        <Invoice>
-          <InvoiceNo>${esc(p.no)}</InvoiceNo>
-          <SupplierID>${p.sup.id}</SupplierID>
-          <AccountID>4430</AccountID>
-          <InvoiceDate>${p.date}</InvoiceDate>
-          <InvoiceType>FT</InvoiceType>
-          <SystemEntryDate>${p.sysDate}</SystemEntryDate>
-          <GLPostingDate>${p.date}</GLPostingDate>
-          <Line>
-            <RecordID>1</RecordID>
-            <AccountID>605</AccountID>
-            <DebitAmount><Amount>${p.net}</Amount></DebitAmount>
-            <Tax><TaxType>PVM</TaxType><TaxCode>PVM1</TaxCode><TaxPercentage>21</TaxPercentage><TaxableAmount>${p.net}</TaxableAmount><TaxAmount><Amount>${p.vat}</Amount></TaxAmount></Tax>
-          </Line>
-          <DocumentTotals><NetTotal>${p.net}</NetTotal><TaxPayable>${p.vat}</TaxPayable><GrossTotal>${p.gross}</GrossTotal></DocumentTotals>
-        </Invoice>`).join("");
-
-  const glXml = glTx.map((t) => `
-      <Journal>
-        <JournalID>BANK</JournalID>
-        <Description>Bank movements</Description>
-        <Type>BANK</Type>
-        <Transaction>
-          <TransactionID>${t.id}</TransactionID>
-          <Period>${parseInt(t.date.slice(5, 7), 10)}</Period>
-          <PeriodYear>2026</PeriodYear>
-          <TransactionDate>${t.date}</TransactionDate>
-          <Description>${esc(t.desc)}</Description>
-          <SystemEntryDate>${t.date}T12:00:00</SystemEntryDate>
-          <GLPostingDate>${t.date}</GLPostingDate>
-          ${t.party.startsWith("C") ? `<CustomerID>${t.party}</CustomerID>` : `<SupplierID>${t.party}</SupplierID>`}
-          <Line>
-            <RecordID>1</RecordID>
-            <AccountID>${t.dr}</AccountID>
-            <SystemEntryDate>${t.date}T12:00:00</SystemEntryDate>
-            <Description>${esc(t.desc)}</Description>
-            <DebitAmount><Amount>${t.amt}</Amount></DebitAmount>
-          </Line>
-          <Line>
-            <RecordID>2</RecordID>
-            <AccountID>${t.cr}</AccountID>
-            <SystemEntryDate>${t.date}T12:00:00</SystemEntryDate>
-            <Description>${esc(t.desc)}</Description>
-            <CreditAmount><Amount>${t.amt}</Amount></CreditAmount>
-          </Line>
-        </Transaction>
-      </Journal>`).join("");
-
-  const custXml = customers.map((c) => `
-      <Customer>
-        <RegistrationNumber>${c.reg}</RegistrationNumber>
-        <Name>${esc(c.name)}</Name>
-        <TaxRegistrationNumber>${c.vat}</TaxRegistrationNumber>
-        <CustomerID>${c.id}</CustomerID>
-        <AccountID>443</AccountID>
-        <BankAccountNumber>${c.iban}</BankAccountNumber>
-        <Address><City>Vilnius</City><Country>LT</Country></Address>
-      </Customer>`).join("");
-
-  const supXml = suppliers.map((s) => `
-      <Supplier>
-        <RegistrationNumber>${s.reg}</RegistrationNumber>
-        <Name>${esc(s.name)}</Name>
-        <TaxRegistrationNumber>${s.vat}</TaxRegistrationNumber>
-        <SupplierID>${s.id}</SupplierID>
-        <AccountID>4430</AccountID>
-        <IBANNumber>${s.iban}</IBANNumber>
-        <Address><City>Kaunas</City><Country>LT</Country></Address>
-      </Supplier>`).join("");
-
-  const acctXml = accounts.map(([id, desc, type, db, cr]) => `
-      <Account>
-        <AccountID>${id}</AccountID>
-        <AccountDescription>${esc(desc)}</AccountDescription>
-        <AccountType>${type}</AccountType>
-        <OpeningDebitBalance>0.00</OpeningDebitBalance>
-        <OpeningCreditBalance>0.00</OpeningCreditBalance>
-        <ClosingDebitBalance>${r2(db).toFixed(2)}</ClosingDebitBalance>
-        <ClosingCreditBalance>${r2(cr).toFixed(2)}</ClosingCreditBalance>
-      </Account>`).join("");
-
-  const totalSalesNet = r2(sales.reduce((a, s) => a + s.net, 0));
-  const totalSalesVat = r2(sales.reduce((a, s) => a + s.vat, 0));
-  const totalPurchNet = r2(purchases.reduce((a, p) => a + p.net, 0));
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<AuditFile xmlns="urn:lt:vmi:saf-t:001">
-  <Header>
-    <AuditFileVersion>2.01</AuditFileVersion>
-    <AuditFileCountry>LT</AuditFileCountry>
-    <AuditFileDateCreated>2026-05-31</AuditFileDateCreated>
-    <SoftwareCompanyName>TAXAI Demo</SoftwareCompanyName>
-    <SoftwareID>TAXAI-SAMPLE</SoftwareID>
-    <SoftwareVersion>1.0</SoftwareVersion>
-    <Company>
-      <RegistrationNumber>300100200</RegistrationNumber>
-      <Name>UAB Demonstracinė Bendrovė</Name>
-      <TaxRegistrationNumber>LT100010102013</TaxRegistrationNumber>
-      <Address><City>Vilnius</City><Country>LT</Country></Address>
-      <IBANNumber>LT121000011101099999</IBANNumber>
-    </Company>
-    <DefaultCurrencyCode>EUR</DefaultCurrencyCode>
-    <TaxAccountingBasis>F</TaxAccountingBasis>
-    <FiscalYearFrom>2026-01-01</FiscalYearFrom>
-    <FiscalYearTo>2026-12-31</FiscalYearTo>
-    <DataType>F</DataType>
-    <Entity>UAB</Entity>
-  </Header>
-  <MasterFiles>
-    <GeneralLedgerAccounts>${acctXml}
-    </GeneralLedgerAccounts>${custXml}${supXml}
-    <TaxTable>
-      <TaxTableEntry>
-        <TaxType>PVM</TaxType>
-        <Description>Pridėtinės vertės mokestis</Description>
-        <TaxCodeDetails><TaxCode>PVM1</TaxCode><Description>Standartinis 21%</Description><TaxPercentage>21</TaxPercentage><Country>LT</Country></TaxCodeDetails>
-        <TaxCodeDetails><TaxCode>PVM2</TaxCode><Description>Lengvatinis 9%</Description><TaxPercentage>9</TaxPercentage><Country>LT</Country></TaxCodeDetails>
-      </TaxTableEntry>
-    </TaxTable>
-  </MasterFiles>
-  <GeneralLedgerEntries>
-    <NumberOfEntries>${glTx.length}</NumberOfEntries>
-    <TotalDebit>${r2(glTx.reduce((a, t) => a + t.amt, 0)).toFixed(2)}</TotalDebit>
-    <TotalCredit>${r2(glTx.reduce((a, t) => a + t.amt, 0)).toFixed(2)}</TotalCredit>${glXml}
-  </GeneralLedgerEntries>
-  <SourceDocuments>
-    <SalesInvoices>
-      <NumberOfEntries>${sales.length}</NumberOfEntries>
-      <TotalDebit>0.00</TotalDebit>
-      <TotalCredit>${totalSalesNet.toFixed(2)}</TotalCredit>${salesXml}
-    </SalesInvoices>
-    <PurchaseInvoices>
-      <NumberOfEntries>${purchases.length}</NumberOfEntries>
-      <TotalDebit>${totalPurchNet.toFixed(2)}</TotalDebit>
-      <TotalCredit>0.00</TotalCredit>${purchasesXml}
-    </PurchaseInvoices>
-  </SourceDocuments>
-</AuditFile>`;
-}
 
 // ═══════════════════════════════════════════════════
 // MAIN APP
@@ -7139,6 +7739,483 @@ function CountUp({ to, dur = 1500, suffix = "" }) {
     return () => cancelAnimationFrame(raf);
   }, [to, dur]);
   return <>{n}{suffix}</>;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// KPI DASHBOARD — benchmarked, goal-aware, easy to read.
+// Each metric shows its value, position within the sector band (a gauge),
+// the sector median, an editable target, and a plain-language verdict.
+// ────────────────────────────────────────────────────────────────────
+function KpiDashboard({ lang, kpis, sector, setSector, targets, setTarget }) {
+  const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
+  const L = (en, lt) => (lang === "lt" ? lt : en);
+  const [editing, setEditing] = useState(null);
+  const [draft, setDraft] = useState("");
+  if (!kpis) return null;
+
+  const TIER = {
+    best:  { c: "#69db7c", en: "Top of range", lt: "Diapazono viršuje" },
+    good:  { c: "#9ae6a4", en: "Above median", lt: "Virš medianos" },
+    watch: { c: "#ffd43b", en: "Below median", lt: "Žemiau medianos" },
+    poor:  { c: "#ff8a8a", en: "Off benchmark", lt: "Už ribų" },
+  };
+  const TGT = {
+    met:  { c: "#69db7c", en: "On target", lt: "Pasiektas tikslas" },
+    near: { c: "#ffd43b", en: "Near target", lt: "Beveik tikslas" },
+    off:  { c: "#ff8a8a", en: "Off target", lt: "Nepasiektas" },
+  };
+  const summary = summarizeKpis(kpis, sector, targets);
+
+  const startEdit = (key) => { setEditing(key); setDraft(targets[key] != null ? String(targets[key]) : ""); };
+  const commit = (key) => { const v = parseFloat(draft.replace(",", ".")); setTarget(key, isNaN(v) ? null : v); setEditing(null); };
+
+  // gauge: low─median─high track, company marker, optional target flag
+  const Gauge = ({ s, meta }) => {
+    if (!s.band || !s.inBand) return <div style={{ height: 28 }} />;
+    const tier = TIER[s.inBand.tier];
+    const pos = Math.round(s.inBand.pos * 100);
+    const medPos = Math.round(((s.band.median - s.band.low) / ((s.band.high - s.band.low) || 1)) * 100);
+    let tgtPos = null;
+    if (s.target != null) tgtPos = Math.round(Math.max(0, Math.min(1, (s.target - s.band.low) / ((s.band.high - s.band.low) || 1))) * 100);
+    return (
+      <div style={{ marginTop: 10 }}>
+        <div style={{ position: "relative", height: 6, background: "rgba(255,255,255,0.07)", borderRadius: 3 }}>
+          {/* favorable side shading omitted for clarity; median tick + markers below */}
+          <div style={{ position: "absolute", left: `calc(${medPos}% - 1px)`, top: -3, width: 2, height: 12, background: "rgba(255,255,255,0.4)" }} title={L("sector median", "sektoriaus mediana")} />
+          {tgtPos != null && <div style={{ position: "absolute", left: `calc(${tgtPos}% - 5px)`, top: -10, fontSize: 9, color: "#7cc4ff" }} title={L("your target", "jūsų tikslas")}>▼</div>}
+          <div style={{ position: "absolute", left: `calc(${pos}% - 5px)`, top: -3.5, width: 11, height: 11, borderRadius: "50%", background: tier.c, border: "2px solid #0b0b0d", boxShadow: `0 0 0 1px ${tier.c}` }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5, fontSize: 9, color: "#7a7a76", fontFamily: "var(--m)" }}>
+          <span>{formatKpi(s.band.low, meta.fmt)}</span>
+          <span>{L("med", "med")} {formatKpi(s.band.median, meta.fmt)}</span>
+          <span>{formatKpi(s.band.high, meta.fmt)}</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {/* header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 10 }}><span style={{ width: 22, height: 1, background: "#8c8c88" }} />{L("KPI Intelligence", "KPI žvalgyba")}</div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", textTransform: "uppercase", letterSpacing: ".08em" }}>{L("Benchmark sector", "Lyginimo sektorius")}</span>
+          <select value={sector} onChange={(e) => setSector(e.target.value)} style={{ background: "var(--bg2)", color: "#fff", border: `1px solid ${PL_LINE}`, fontFamily: "var(--m)", fontSize: 12, padding: "6px 10px", cursor: "pointer" }}>
+            {availableSectors().map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* summary band */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}`, marginBottom: 22 }}>
+        {[
+          [L("At or above median", "Ties mediana ar virš"), `${summary.aboveMedian}/${summary.benched}`, summary.aboveMedian >= summary.benched / 2 ? "#69db7c" : "#ffd43b"],
+          [L("Targets met", "Pasiekti tikslai"), summary.targetsSet ? `${summary.targetsMet}/${summary.targetsSet}` : "—", summary.targetsSet && summary.targetsMet === summary.targetsSet ? "#69db7c" : "#ffd43b"],
+          [L("Benchmarked KPIs", "Lyginami KPI"), String(summary.benched), "#fff"],
+          [L("Targets set", "Nustatyti tikslai"), String(summary.targetsSet), "#7cc4ff"],
+        ].map(([k, v, c], i) =>
+          <div key={i} style={{ padding: "16px 18px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
+            <div style={{ fontSize: 9, color: "#8c8c88", fontFamily: "var(--m)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>{k}</div>
+            <div style={{ fontSize: 26, fontWeight: 300, fontFamily: "var(--f)", color: c }}>{v}</div>
+          </div>)}
+      </div>
+
+      {/* category groups */}
+      {KPI_CATS.map((cat) => {
+        const metas = KPI_META.filter((m) => m.cat === cat.key);
+        if (!metas.length) return null;
+        return <div key={cat.key} style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 10, color: "#fff", fontFamily: "var(--m)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", marginBottom: 10 }}>{L(cat.en, cat.lt)}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 }}>
+            {metas.map((meta) => {
+              const s = scoreKpi(meta, kpis, sector, targets);
+              const tier = s.inBand ? TIER[s.inBand.tier] : null;
+              const tgt = s.targetStatus ? TGT[s.targetStatus] : null;
+              return <div key={meta.key} style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "14px 16px", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ fontSize: 10.5, color: "#bcbcb8", fontFamily: "var(--m)", textTransform: "uppercase", letterSpacing: ".06em", flex: 1 }}>{L(meta.en, meta.lt)}</div>
+                  {tier && <span style={{ fontSize: 8.5, fontFamily: "var(--m)", fontWeight: 700, color: tier.c, border: `1px solid ${tier.c}`, borderRadius: 3, padding: "1px 6px", textTransform: "uppercase", whiteSpace: "nowrap" }}>{L(tier.en, tier.lt)}</span>}
+                </div>
+                <div style={{ fontSize: 30, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: 1.1, marginTop: 6 }}>{formatKpi(s.val, meta.fmt)}</div>
+                <Gauge s={s} meta={meta} />
+                {/* target row */}
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${PL_SOFT}`, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  {editing === meta.key ? <>
+                    <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commit(meta.key); if (e.key === "Escape") setEditing(null); }} placeholder={L("target", "tikslas")} style={{ width: 70, background: "#000", border: `1px solid #7cc4ff`, color: "#fff", fontFamily: "var(--m)", fontSize: 12, padding: "4px 8px", outline: "none" }} />
+                    <button onClick={() => commit(meta.key)} style={{ background: "#7cc4ff", color: "#000", border: "none", fontFamily: "var(--m)", fontSize: 9.5, fontWeight: 700, padding: "4px 9px", cursor: "pointer", textTransform: "uppercase" }}>{L("Set", "Nustatyti")}</button>
+                    {targets[meta.key] != null && <button onClick={() => { setTarget(meta.key, null); setEditing(null); }} style={{ background: "none", color: "#8c8c88", border: "none", fontFamily: "var(--m)", fontSize: 9.5, cursor: "pointer", textTransform: "uppercase" }}>{L("Clear", "Išvalyti")}</button>}
+                  </> : <>
+                    {s.target != null ? <>
+                      <span style={{ fontSize: 10.5, color: "#bcbcb8", fontFamily: "var(--m)" }}>{L("Target", "Tikslas")}: <span style={{ color: "#7cc4ff" }}>{formatKpi(s.target, meta.fmt)}</span></span>
+                      {tgt && <span style={{ fontSize: 8.5, fontFamily: "var(--m)", fontWeight: 700, color: tgt.c, border: `1px solid ${tgt.c}`, borderRadius: 3, padding: "1px 6px", textTransform: "uppercase" }}>{L(tgt.en, tgt.lt)}{s.targetPct != null ? ` · ${s.targetPct}%` : ""}</span>}
+                      <button onClick={() => startEdit(meta.key)} style={{ marginLeft: "auto", background: "none", color: "#8c8c88", border: "none", fontFamily: "var(--m)", fontSize: 9.5, cursor: "pointer", textTransform: "uppercase" }}>{L("Edit", "Keisti")}</button>
+                    </> : <button onClick={() => startEdit(meta.key)} style={{ background: "none", color: "#7cc4ff", border: `1px dashed rgba(124,196,255,0.4)`, borderRadius: 3, fontFamily: "var(--m)", fontSize: 9.5, fontWeight: 600, padding: "4px 10px", cursor: "pointer", textTransform: "uppercase" }}>+ {L("Set a goal", "Nustatyti tikslą")}</button>}
+                  </>}
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>;
+      })}
+
+      <div style={{ marginTop: 8, fontSize: 10.5, color: "#7a7a76", fontFamily: "var(--s)", lineHeight: 1.55 }}>
+        {L("Benchmark bands are illustrative baselines per sector and should be replaced with your own aggregated data; the value, median tick, and your target (▼) are shown on each gauge. Figures are accounting approximations — verify against the filed statements.",
+           "Lyginimo diapazonai yra orientaciniai pagal sektorių ir turėtų būti pakeisti jūsų agreguotais duomenimis; reikšmė, medianos žyma ir jūsų tikslas (▼) rodomi kiekvienoje skalėje. Skaičiai yra apskaitos aproksimacijos — patikrinkite su pateiktomis ataskaitomis.")}
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// MONTHLY VAT-CLOSE WORKFLOW AGENT
+// A multi-step, stateful process with human sign-off gates. It ingests a
+// monthly i.SAF, reconciles it against the loaded SAF-T ledger, surfaces
+// discrepancies for review, drafts FR0600 notes, and produces a client
+// memo. Deterministic numbers stand alone; AI only phrases narrative.
+// ────────────────────────────────────────────────────────────────────
+function VatCloseWorkflow({ lang, data, kpis, callAI, audit, state, setState, presetIsaf, presetRecon, presetIsafName }) {
+  const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const L = (en, lt) => (lang === "lt" ? lt : en);
+  const bP = { background: "#fff", color: "#000", border: "none", padding: "9px 18px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" };
+  const bG = { background: "transparent", color: "#d2d2ce", border: `1px solid ${PL_LINE}`, padding: "9px 16px", fontSize: 11, fontWeight: 600, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" };
+  const set = (patch) => setState((s) => ({ ...s, ...patch }));
+  const r2 = (n) => Math.round((n || 0) * 100) / 100;
+  const eur = (n) => (n || 0).toLocaleString() + " €";
+
+  const STEPS = [
+    { key: "ledger", en: "Ledger check", lt: "Knygos patikra" },
+    { key: "intake", en: "i.SAF intake", lt: "i.SAF įkėlimas" },
+    { key: "reconcile", en: "Reconcile", lt: "Sutikrinimas" },
+    { key: "review", en: "Review discrepancies", lt: "Peržiūrėti neatitikimus" },
+    { key: "fr0600", en: "FR0600 notes", lt: "FR0600 pastabos" },
+    { key: "memo", en: "Client memo", lt: "Kliento atmintinė" },
+  ];
+  const step = state.step;
+  const recon = state.recon;
+
+  // advance helpers
+  const goTo = (n) => set({ step: n });
+  const ingestISAF = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = parseISAF(e.target.result);
+        if (parsed._parseError) { alert(L("i.SAF parse error: ", "i.SAF klaida: ") + parsed._parseError); return; }
+        const rec = reconcileISAF(parsed, data);
+        audit?.log?.("WF_VATCLOSE_ISAF", `${file.name} · ${rec.findings.length} findings`);
+        set({ isaf: parsed, isafName: file.name, recon: rec, decisions: {}, step: 3 });
+      } catch (err) { alert(L("Error: ", "Klaida: ") + err.message); }
+    };
+    reader.readAsText(file);
+  };
+  const useExisting = () => {
+    if (!presetRecon || !presetIsaf) return;
+    set({ isaf: presetIsaf, isafName: presetIsafName || "i.SAF", recon: presetRecon, decisions: {}, step: 3 });
+  };
+
+  // FR0600 deterministic figures from the reconciled VAT position
+  const fr = recon?.summary?.vat ? (() => {
+    const v = recon.summary.vat;
+    const corrections = [];
+    recon.findings.forEach((f) => {
+      if (f.severity === "Block" || f.severity === "Reject") corrections.push({ id: f.id, sev: f.severity, title: f.title });
+    });
+    return {
+      outputLedger: v.outputSAFT, inputLedger: v.inputSAFT, netLedger: v.netSAFT,
+      outputISAF: v.outputISAF, inputISAF: v.inputISAF, netISAF: v.netISAF,
+      netDelta: v.netDelta, corrections,
+    };
+  })() : null;
+
+  const reviewDecisions = state.decisions || {};
+  const findings = recon?.findings || [];
+  const reviewedCount = findings.filter((f) => reviewDecisions[f.id]).length;
+  const allReviewed = findings.length === 0 || reviewedCount === findings.length;
+
+  const draftMemo = async () => {
+    setBusy(true);
+    try {
+      const v = recon.summary.vat;
+      const period = data?.header?.fiscalYearFrom ? `${data.header.fiscalYearFrom?.slice(0, 10)} → ${data.header.fiscalYearTo?.slice(0, 10)}` : (state.isaf?.header?.periodFrom || "");
+      const entity = data?.header?.company?.name || "the entity";
+      const decisionsSummary = findings.map((f) => `- [${f.severity}] ${f.title}: ${reviewDecisions[f.id] === "resolved" ? "RESOLVED" : reviewDecisions[f.id] === "accepted" ? "accepted/known" : "open"}`).join("\n");
+      const sys = L(
+        "You are a tax advisor drafting a concise monthly VAT-close memo for a client. Use ONLY the figures and findings provided. Be practical, professional, and brief. Do not invent numbers. End with a one-line note that this is informational, not legal advice.",
+        "Esate mokesčių konsultantas, rengiantis glaustą mėnesinę PVM uždarymo atmintinę klientui. Naudokite TIK pateiktus skaičius ir radinius. Būkite praktiškas, profesionalus ir glaustas. Nesugalvokite skaičių. Pabaigoje pridėkite eilutę, kad tai informacinio pobūdžio informacija, ne teisinė konsultacija."
+      );
+      const payload = `ENTITY: ${entity}\nPERIOD: ${period}\nVAT POSITION (ledger basis): output ${eur(v.outputSAFT)}, input ${eur(v.inputSAFT)}, net ${eur(v.netSAFT)}\ni.SAF DECLARED: output ${eur(v.outputISAF)}, input ${eur(v.inputISAF)}, net ${eur(v.netISAF)}\nNET DELTA (i.SAF − ledger): ${eur(v.netDelta)}\nDISCREPANCIES (${findings.length}):\n${decisionsSummary || "none"}\n\nWrite: (1) one-paragraph summary of the close, (2) the discrepancies found and their resolution status, (3) the net VAT position and what to file, (4) recommended next actions.`;
+      const md = await callAI(sys, payload, []);
+      const facts = buildGroundingFacts({ kpis, reconResult: recon });
+      const ver = verifyNarrative(md, facts);
+      set({ memo: md, memoVer: ver, memoGround: null });
+      audit?.log?.("WF_VATCLOSE_MEMO", entity);
+    } catch (e) {
+      set({ memo: L("Could not draft the memo via AI. The deterministic figures above remain valid; you can write the memo manually.\n\nError: ", "Nepavyko parengti atmintinės per AI. Deterministiniai skaičiai galioja; atmintinę galite parašyti rankiniu būdu.\n\nKlaida: ") + e.message, memoVer: null });
+    }
+    setBusy(false);
+  };
+
+  const reset = () => setState({ step: 0, isaf: null, isafName: "", recon: null, decisions: {}, memo: null, memoVer: null, memoGround: null, closedAt: null });
+
+  // ── render ──
+  const ledgerReady = !!(data && data.header);
+  const Dot = ({ s }) => <span style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: s === "done" ? "#69db7c" : s === "active" ? "#7cc4ff" : "rgba(255,255,255,0.18)", boxShadow: s === "active" ? "0 0 0 4px rgba(124,196,255,0.15)" : "none" }} />;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 10 }}><span style={{ width: 22, height: 1, background: "#8c8c88" }} />02·H — {L("Monthly VAT Close", "Mėnesinis PVM uždarymas")}</div>
+        {state.closedAt && <span style={{ marginLeft: "auto", padding: "5px 12px", border: "1px solid #69db7c", color: "#69db7c", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)" }}>{L("CLOSED", "UŽDARYTA")}</span>}
+        {(state.step > 0 || state.closedAt) && <button onClick={reset} style={{ ...bG, marginLeft: state.closedAt ? 0 : "auto" }}>↺ {L("Restart", "Iš naujo")}</button>}
+      </div>
+      <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 20, lineHeight: 1.65, maxWidth: 820 }}>
+        {L("A guided, multi-step close: ingest the monthly i.SAF, reconcile it against the SAF-T ledger, review each discrepancy, then produce FR0600 notes and a client memo. You sign off at each gate; the figures are computed deterministically.",
+           "Vedamas, kelių žingsnių uždarymas: įkelkite mėnesinį i.SAF, sutikrinkite su SAF-T knyga, peržiūrėkite kiekvieną neatitikimą, parenkite FR0600 pastabas ir kliento atmintinę. Jūs patvirtinate kiekviename žingsnyje; skaičiai apskaičiuojami deterministiškai.")}
+      </p>
+
+      {/* stepper */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 22, flexWrap: "wrap", border: `1px solid ${PL_LINE}`, borderRadius: 2 }}>
+        {STEPS.map((s, i) => {
+          const status = state.closedAt ? "done" : i < step ? "done" : i === step ? "active" : "todo";
+          return <div key={s.key} onClick={() => { if (i <= step) goTo(i); }} style={{ flex: "1 1 130px", display: "flex", alignItems: "center", gap: 8, padding: "11px 13px", borderRight: i < STEPS.length - 1 ? `1px solid ${PL_LINE}` : "none", background: i === step && !state.closedAt ? "var(--bg2)" : "transparent", cursor: i <= step ? "pointer" : "default" }}>
+            <Dot s={status} />
+            <div>
+              <div style={{ fontSize: 9, color: "#7a7a76", fontFamily: "var(--m)", fontWeight: 600 }}>{String(i + 1).padStart(2, "0")}</div>
+              <div style={{ fontSize: 11.5, color: status === "todo" ? "#7a7a76" : "#fff", fontFamily: "var(--m)", fontWeight: status === "active" ? 700 : 400 }}>{L(s.en, s.lt)}</div>
+            </div>
+          </div>;
+        })}
+      </div>
+
+      {/* active step body */}
+      <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "20px 22px" }}>
+        {/* STEP 0 — ledger */}
+        {step === 0 && <div>
+          <h4 style={{ fontSize: 16, color: "#fff", fontFamily: "var(--f)", margin: "0 0 10px" }}>{L("1 · Confirm the SAF-T ledger", "1 · Patvirtinkite SAF-T knygą")}</h4>
+          {ledgerReady ? <>
+            <div style={{ fontSize: 13, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.7 }}>
+              {L("Loaded entity", "Įkelta įmonė")}: <strong style={{ color: "#fff" }}>{data.header.company?.name || "—"}</strong><br />
+              {L("Period", "Periodas")}: {data.header.fiscalYearFrom?.slice(0, 10)} → {data.header.fiscalYearTo?.slice(0, 10)}<br />
+              {kpis?.kpis && <>{L("Ledger VAT position", "Knygos PVM pozicija")}: output {eur(kpis.kpis.salesVat)} · input {eur(kpis.kpis.inputVat)} · net {eur(kpis.kpis.netVatPosition)}</>}
+            </div>
+            <button onClick={() => goTo(1)} style={{ ...bP, marginTop: 16 }}>{L("Start close →", "Pradėti uždarymą →")}</button>
+          </> : <div style={{ fontSize: 13, color: "#ffa94d", fontFamily: "var(--m)" }}>{L("Load a SAF-T file first (above), then return here.", "Pirma įkelkite SAF-T failą (viršuje), tada grįžkite čia.")}</div>}
+        </div>}
+
+        {/* STEP 1 — intake */}
+        {step === 1 && <div>
+          <h4 style={{ fontSize: 16, color: "#fff", fontFamily: "var(--f)", margin: "0 0 10px" }}>{L("2 · Provide the monthly i.SAF", "2 · Pateikite mėnesinį i.SAF")}</h4>
+          <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 16, lineHeight: 1.6 }}>{L("Upload the i.SAF (VAT invoice register) for the period to reconcile against the ledger.", "Įkelkite šio periodo i.SAF (PVM sąskaitų registrą), kad sutikrintumėte su knyga.")}</p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <button onClick={() => fileRef.current?.click()} style={bP}>{L("Upload i.SAF (XML)", "Įkelti i.SAF (XML)")} →</button>
+            {presetRecon && <button onClick={useExisting} style={bG}>{L("Use the i.SAF already reconciled", "Naudoti jau sutikrintą i.SAF")}</button>}
+            <button onClick={() => goTo(0)} style={{ ...bG, border: "none", color: "#8c8c88" }}>← {L("Back", "Atgal")}</button>
+          </div>
+          <input ref={fileRef} type="file" accept=".xml" style={{ display: "none" }} onChange={(e) => ingestISAF(e.target?.files?.[0])} />
+        </div>}
+
+        {/* STEP 2 — reconcile */}
+        {step === 2 && <div><div style={{ fontSize: 13, color: "#8c8c88" }}>{L("Reconciling…", "Sutikrinama…")}</div></div>}
+
+        {/* STEP 3 — reconcile result */}
+        {step === 3 && recon && <div>
+          <h4 style={{ fontSize: 16, color: "#fff", fontFamily: "var(--f)", margin: "0 0 12px" }}>{L("3 · Reconciliation result", "3 · Sutikrinimo rezultatas")}</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}`, marginBottom: 16 }}>
+            {[[L("Output VAT Δ", "Pardavimo PVM Δ"), recon.summary.vat.outputDelta], [L("Input VAT Δ", "Pirkimo PVM Δ"), recon.summary.vat.inputDelta], [L("Net VAT Δ", "Grynoji PVM Δ"), recon.summary.vat.netDelta], [L("Discrepancies", "Neatitikimai"), recon.findings.length, true]].map(([k, val, count], i) =>
+              <div key={i} style={{ padding: "14px 16px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
+                <div style={{ fontSize: 9, color: "#8c8c88", fontFamily: "var(--m)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>{k}</div>
+                <div style={{ fontSize: 20, fontWeight: 300, fontFamily: "var(--f)", color: count ? "#fff" : Math.abs(val) > 0.02 ? "#ff8a8a" : "#69db7c" }}>{count ? val : (val > 0 ? "+" : "") + eur(val)}</div>
+              </div>)}
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button onClick={() => goTo(4)} style={bP}>{L("Review discrepancies →", "Peržiūrėti neatitikimus →")}</button>
+            <button onClick={() => goTo(1)} style={{ ...bG, border: "none", color: "#8c8c88" }}>← {L("Different i.SAF", "Kitas i.SAF")}</button>
+          </div>
+        </div>}
+
+        {/* STEP 4 — review */}
+        {step === 4 && recon && <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <h4 style={{ fontSize: 16, color: "#fff", fontFamily: "var(--f)", margin: 0 }}>{L("4 · Review & sign off", "4 · Peržiūra ir patvirtinimas")}</h4>
+            <span style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)" }}>{reviewedCount}/{findings.length} {L("reviewed", "peržiūrėta")}</span>
+            {findings.length > 0 && <button onClick={() => { const d = {}; findings.forEach((f) => d[f.id] = "accepted"); set({ decisions: d }); }} style={{ ...bG, marginLeft: "auto" }}>{L("Accept all as known", "Patvirtinti visus kaip žinomus")}</button>}
+          </div>
+          {findings.length === 0 ? <div style={{ border: "1px solid #69db7c", padding: 14, color: "#69db7c", fontFamily: "var(--m)", fontSize: 13 }}>✓ {L("No discrepancies — the register matches the ledger.", "Neatitikimų nėra — registras atitinka knygą.")}</div>
+            : findings.map((f) => {
+              const SEVC = { Block: "#ff6b6b", Reject: "#ffa94d", Warn: "#ffd43b" };
+              const dec = reviewDecisions[f.id];
+              return <div key={f.id} style={{ borderLeft: `2px solid ${SEVC[f.severity]}`, background: "#000", padding: "12px 14px", marginBottom: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 5 }}>
+                  <span style={{ fontFamily: "var(--m)", fontSize: 11, fontWeight: 700, color: "#fff" }}>{f.id}</span>
+                  <span style={{ fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, padding: "1px 7px", border: `1px solid ${SEVC[f.severity]}`, color: SEVC[f.severity], textTransform: "uppercase" }}>{f.severity}</span>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                    <button onClick={() => set({ decisions: { ...reviewDecisions, [f.id]: "resolved" } })} style={{ background: dec === "resolved" ? "#69db7c" : "transparent", color: dec === "resolved" ? "#000" : "#69db7c", border: "1px solid #69db7c", fontFamily: "var(--m)", fontSize: 9.5, fontWeight: 700, padding: "3px 9px", cursor: "pointer", textTransform: "uppercase" }}>{L("Resolved", "Išspręsta")}</button>
+                    <button onClick={() => set({ decisions: { ...reviewDecisions, [f.id]: "accepted" } })} style={{ background: dec === "accepted" ? "#ffd43b" : "transparent", color: dec === "accepted" ? "#000" : "#ffd43b", border: "1px solid #ffd43b", fontFamily: "var(--m)", fontSize: 9.5, fontWeight: 700, padding: "3px 9px", cursor: "pointer", textTransform: "uppercase" }}>{L("Known", "Žinoma")}</button>
+                  </div>
+                </div>
+                <div style={{ fontSize: 13.5, color: "#fff", fontFamily: "var(--f)" }}>{f.title}</div>
+                <div style={{ fontSize: 12, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.5, marginTop: 3 }}>{f.detail}</div>
+                {f.evidence?.length > 0 && <div style={{ fontSize: 11, color: "#9f9f9b", fontFamily: "var(--m)", marginTop: 4 }}>{f.evidence.slice(0, 4).join(" · ")}</div>}
+              </div>;
+            })}
+          <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <button onClick={() => goTo(5)} disabled={!allReviewed} style={{ ...bP, opacity: allReviewed ? 1 : 0.45, cursor: allReviewed ? "pointer" : "not-allowed" }}>{L("Approve & continue →", "Patvirtinti ir tęsti →")}</button>
+            {!allReviewed && <span style={{ fontSize: 11, color: "#ffa94d", fontFamily: "var(--m)" }}>{L("Mark every discrepancy before continuing.", "Pažymėkite kiekvieną neatitikimą prieš tęsiant.")}</span>}
+            <button onClick={() => goTo(3)} style={{ ...bG, border: "none", color: "#8c8c88" }}>← {L("Back", "Atgal")}</button>
+          </div>
+        </div>}
+
+        {/* STEP 5 — FR0600 notes */}
+        {step === 5 && fr && <div>
+          <h4 style={{ fontSize: 16, color: "#fff", fontFamily: "var(--f)", margin: "0 0 12px" }}>{L("5 · FR0600 notes (VAT return basis)", "5 · FR0600 pastabos (PVM deklaracija)")}</h4>
+          <div style={{ overflowX: "auto", marginBottom: 14 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: "var(--m)" }}>
+              <thead><tr style={{ color: "#8c8c88", textAlign: "left" }}>
+                <th style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_LINE}`, fontSize: 10, textTransform: "uppercase" }}>{L("Line", "Eilutė")}</th>
+                <th style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_LINE}`, fontSize: 10, textTransform: "uppercase" }}>{L("Ledger (file)", "Knyga (failas)")}</th>
+                <th style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_LINE}`, fontSize: 10, textTransform: "uppercase" }}>{L("i.SAF declared", "i.SAF deklaruota")}</th>
+                <th style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_LINE}`, fontSize: 10, textTransform: "uppercase" }}>Δ</th>
+              </tr></thead>
+              <tbody>
+                {[[L("Output VAT", "Pardavimo PVM"), fr.outputLedger, fr.outputISAF], [L("Input VAT", "Pirkimo PVM"), fr.inputLedger, fr.inputISAF], [L("Net VAT payable", "Mokėtinas PVM"), fr.netLedger, fr.netISAF]].map(([k, a, b], i) => {
+                  const d = r2(b - a);
+                  return <tr key={i} style={{ color: "#d2d2ce" }}>
+                    <td style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_SOFT}`, color: "#fff" }}>{k}</td>
+                    <td style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_SOFT}` }}>{eur(a)}</td>
+                    <td style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_SOFT}` }}>{eur(b)}</td>
+                    <td style={{ padding: "7px 8px", borderBottom: `1px solid ${PL_SOFT}`, color: Math.abs(d) > 0.02 ? "#ff8a8a" : "#69db7c" }}>{d > 0 ? "+" : ""}{eur(d)}</td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+          {fr.corrections.length > 0 && <div style={{ border: `1px solid ${PL_LINE}`, borderLeft: "3px solid #ffa94d", padding: "12px 14px", marginBottom: 14 }}>
+            <div style={{ fontSize: 10, color: "#ffa94d", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 8 }}>{L("Corrections to resolve before filing", "Taisymai prieš deklaravimą")}</div>
+            {fr.corrections.map((c) => <div key={c.id} style={{ fontSize: 12, color: "#d2d2ce", fontFamily: "var(--s)", padding: "2px 0" }}>· <strong style={{ color: "#fff" }}>{c.id}</strong> ({c.sev}) — {c.title} {reviewDecisions[c.id] === "resolved" ? <span style={{ color: "#69db7c", fontFamily: "var(--m)", fontSize: 11 }}>✓ {L("resolved", "išspręsta")}</span> : <span style={{ color: "#ffd43b", fontFamily: "var(--m)", fontSize: 11 }}>{L("acknowledged", "pažymėta")}</span>}</div>)}
+          </div>}
+          <p style={{ fontSize: 11.5, color: "#9f9f9b", fontFamily: "var(--s)", lineHeight: 1.55, marginBottom: 14 }}>{L("The return is filed on the ledger basis; the Δ column shows where the i.SAF register differs and must be aligned. Verify against the official FR0600 before submission.", "Deklaracija teikiama pagal knygą; Δ stulpelis rodo, kur i.SAF skiriasi ir turi būti suderinta. Patikrinkite pagal oficialią FR0600 prieš teikimą.")}</p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button onClick={() => goTo(6)} style={bP}>{L("Draft client memo →", "Rengti kliento atmintinę →")}</button>
+            <button onClick={() => goTo(4)} style={{ ...bG, border: "none", color: "#8c8c88" }}>← {L("Back", "Atgal")}</button>
+          </div>
+        </div>}
+
+        {/* STEP 6 — memo */}
+        {step === 6 && <div>
+          <h4 style={{ fontSize: 16, color: "#fff", fontFamily: "var(--f)", margin: "0 0 12px" }}>{L("6 · Client memo", "6 · Kliento atmintinė")}</h4>
+          {!state.memo && <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <button onClick={draftMemo} disabled={busy} style={{ ...bP, opacity: busy ? 0.5 : 1 }}>{busy ? L("Drafting…", "Rengiama…") : L("Generate memo", "Sugeneruoti atmintinę") + " →"}</button>
+            <button onClick={() => goTo(5)} style={{ ...bG, border: "none", color: "#8c8c88" }}>← {L("Back", "Atgal")}</button>
+          </div>}
+          {state.memo && <>
+            <div style={{ border: `1px solid ${PL_LINE}`, background: "#000", padding: "16px 18px" }}><Md text={state.memo} /></div>
+            {state.memoVer && <DefensibilityPanel verification={state.memoVer} lang={lang} />}
+            <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+              {!state.closedAt && <button onClick={() => { set({ closedAt: new Date().toISOString() }); audit?.log?.("WF_VATCLOSE_COMPLETE", data?.header?.company?.name || ""); }} style={bP}>{L("Mark VAT close complete ✓", "Pažymėti uždarymą baigtą ✓")}</button>}
+              {state.closedAt && <span style={{ padding: "8px 14px", border: "1px solid #69db7c", color: "#69db7c", fontFamily: "var(--m)", fontSize: 11, fontWeight: 700 }}>✓ {L("Closed", "Uždaryta")} · {new Date(state.closedAt).toLocaleString(lang === "lt" ? "lt-LT" : "en-GB")}</span>}
+              <button onClick={() => {
+                const v = recon.summary.vat;
+                const lines = [`MONTHLY VAT CLOSE — ${data?.header?.company?.name || ""}`, `Period: ${data?.header?.fiscalYearFrom?.slice(0,10)} → ${data?.header?.fiscalYearTo?.slice(0,10)}`, ``, `VAT POSITION (ledger): output ${eur(v.outputSAFT)}, input ${eur(v.inputSAFT)}, net ${eur(v.netSAFT)}`, `i.SAF declared: output ${eur(v.outputISAF)}, input ${eur(v.inputISAF)}, net ${eur(v.netISAF)}`, `Net delta: ${eur(v.netDelta)}`, ``, `DISCREPANCIES (${findings.length}):`, ...findings.map((f) => `- [${f.severity}] ${f.id} ${f.title} — ${reviewDecisions[f.id] || "open"}`), ``, `MEMO:`, state.memo].join("\n");
+                const blob = new Blob([lines], { type: "text/plain" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `vat-close-${(data?.header?.company?.name || "entity").replace(/\s+/g, "-")}.txt`; a.click();
+                audit?.log?.("WF_VATCLOSE_EXPORT", "");
+              }} style={bG}>↧ {L("Export close package", "Eksportuoti paketą")}</button>
+              <button onClick={() => { set({ memo: null, memoVer: null }); }} style={{ ...bG, border: "none", color: "#8c8c88" }}>↻ {L("Redraft", "Perrašyti")}</button>
+            </div>
+          </>}
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+// Lists the legal provisions a grounded answer relied on, with the exact
+// article text, and flags any citation that did not resolve to the corpus.
+function SourcesPanel({ grounding, lang }) {
+  const PL_LINE = "rgba(255,255,255,0.12)";
+  if (!grounding || (!grounding.sources?.length && !grounding.hasUnresolved)) return null;
+  const L = (en, lt) => (lang === "lt" ? lt : en);
+  const ok = !grounding.hasUnresolved;
+  return (
+    <div style={{ marginTop: 14, border: `1px solid ${PL_LINE}`, background: "var(--bg2)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: grounding.sources?.length ? `1px solid ${PL_LINE}` : "none", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase" }}>{L("Sources", "Šaltiniai")}</span>
+        <span style={{ fontSize: 11, color: "#bcbcb8", fontFamily: "var(--m)" }}>{(grounding.sources || []).length} {L("provisions", "nuostatos")}</span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontFamily: "var(--m)", color: ok ? "#69db7c" : "#ffd43b" }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: ok ? "#69db7c" : "#ffd43b" }} />
+          {grounding.citeTotal > 0
+            ? L(`${grounding.groundedCount}/${grounding.citeTotal} citations resolve to source`, `${grounding.groundedCount}/${grounding.citeTotal} citatos turi šaltinį`)
+            : L("grounded in retrieved law", "pagrįsta rasta teise")}
+        </span>
+      </div>
+      {(grounding.sources || []).map((s, i) =>
+        <div key={s.id} style={{ display: "flex", gap: 10, padding: "10px 14px", borderBottom: i < grounding.sources.length - 1 ? `1px solid rgba(255,255,255,0.06)` : "none" }}>
+          <span style={{ flexShrink: 0, fontSize: 10, fontFamily: "var(--m)", fontWeight: 700, color: "#7cc4ff", border: "1px solid rgba(124,196,255,0.4)", borderRadius: 3, padding: "1px 6px", height: "fit-content" }}>{i + 1}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11.5, color: "#fff", fontFamily: "var(--m)", fontWeight: 700 }}>{s.law} · {s.article}</div>
+            <div style={{ fontSize: 12, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.5, marginTop: 3 }}>{lang === "lt" ? s.text : (s.textEn || s.text)}</div>
+            {s.penalty && <div style={{ fontSize: 10.5, color: "#ffa94d", fontFamily: "var(--m)", marginTop: 3 }}>⚠ {L("Sanction", "Sankcija")}: {s.penalty}</div>}
+          </div>
+        </div>)}
+      {grounding.hasUnresolved && <div style={{ padding: "9px 14px", fontSize: 11, color: "#ffd43b", fontFamily: "var(--m)", borderTop: `1px solid rgba(255,255,255,0.06)` }}>
+        ⚠ {L("Unverified citation(s)", "Nepatvirtinta citata(-os)")}: {grounding.unresolved.join(", ")} — {L("not found in the corpus; verify manually.", "nerasta korpuse; patikrinkite rankiniu būdu.")}
+      </div>}
+    </div>
+  );
+}
+
+// Compact, collapsible panel that shows how well an AI narrative is grounded
+// in the deterministic results. Purely a transparency aid for the reviewer.
+function DefensibilityPanel({ verification, lang }) {
+  const [open, setOpen] = useState(false);
+  const PL_LINE = "rgba(255,255,255,0.12)";
+  if (!verification || !verification.claims?.length) return null;
+  const { score, band, counts, claims, factCount } = verification;
+  const C = { verified: "#69db7c", review: "#ffd43b", unsupported: "#ff8a8a" };
+  const bandColor = score >= 80 ? "#69db7c" : score >= 60 ? "#ffd43b" : score >= 40 ? "#ffa94d" : "#ff8a8a";
+  const L = (en, lt) => (lang === "lt" ? lt : en);
+  const statusLabel = (s) => s === "verified" ? L("Verified", "Patvirtinta") : s === "review" ? L("Review", "Peržiūrėti") : L("Unsupported", "Nepagrįsta");
+  return (
+    <div style={{ marginTop: 22, border: `1px solid ${PL_LINE}`, background: "var(--bg2)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase" }}>{L("Defensibility", "Pagrįstumas")}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontSize: 26, fontWeight: 300, color: bandColor, fontFamily: "var(--f)", lineHeight: 1 }}>{score}</span>
+          <span style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)" }}>/ 100 · {band}</span>
+        </div>
+        <div style={{ display: "flex", gap: 12, marginLeft: "auto", flexWrap: "wrap" }}>
+          {[["verified", counts.verified], ["review", counts.review], ["unsupported", counts.unsupported]].map(([k, n]) =>
+            <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: "var(--m)", color: "#bcbcb8" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: C[k], display: "inline-block" }} />{n} {statusLabel(k)}
+            </span>)}
+        </div>
+        <button onClick={() => setOpen(o => !o)} style={{ background: "none", border: `1px solid ${PL_LINE}`, color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".08em", padding: "5px 12px", cursor: "pointer", textTransform: "uppercase" }}>
+          {open ? L("Hide claims", "Slėpti") : L("Inspect claims", "Tikrinti teiginius")}
+        </button>
+      </div>
+      <div style={{ padding: "0 16px 12px", fontSize: 11.5, color: "#9f9f9b", fontFamily: "var(--s)", lineHeight: 1.55 }}>
+        {L(
+          `Each statement is checked against the ${factCount} deterministic values computed from your file. “Verified” means a figure matches a computed value; “Unsupported” means no matching value was found — verify it manually; “Review” marks interpretive or legal statements. This is a transparency aid, not a guarantee.`,
+          `Kiekvienas teiginys tikrinamas pagal ${factCount} deterministiškai apskaičiuotas reikšmes iš jūsų failo. „Patvirtinta“ — skaičius sutampa su apskaičiuota reikšme; „Nepagrįsta“ — atitikmuo nerastas, patikrinkite rankiniu būdu; „Peržiūrėti“ — interpretaciniai ar teisiniai teiginiai. Tai skaidrumo priemonė, ne garantija.`
+        )}
+      </div>
+      {open && <div style={{ borderTop: `1px solid ${PL_LINE}` }}>
+        {claims.map((c, i) =>
+          <div key={i} style={{ display: "flex", gap: 10, padding: "10px 16px", borderBottom: i < claims.length - 1 ? `1px solid ${PL_LINE}` : "none" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C[c.status], marginTop: 5, flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.5 }}>{c.text}</div>
+              <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", marginTop: 3 }}>
+                {statusLabel(c.status)} · {c.confidence}%{c.grounding ? ` · ${c.grounding}` : ""}{c.numbers?.length ? ` · ${c.numbers.join(", ")}` : ""}
+              </div>
+            </div>
+          </div>)}
+      </div>}
+    </div>
+  );
 }
 
 function TAXAI({ onExit, initialView } = {}) {
@@ -7177,6 +8254,28 @@ function TAXAI({ onExit, initialView } = {}) {
   const [intel, setIntel] = useState(null);                          // deterministic forensic intelligence bundle
   const [threatResult, setThreatResult] = useState(null);            // AI threat-assessment narrative
   const [personalRules, setPersonalRules] = useState(null);          // AI-designed, industry/company-specific rules (deterministically scored)
+  const [isafData, setIsafData] = useState(null);                    // parsed i.SAF (monthly VAT register)
+  const [isafFileName, setIsafFileName] = useState("");
+  const [reconResult, setReconResult] = useState(null);              // i.SAF ↔ SAF-T reconciliation result
+  const isafFileRef = useRef(null);
+  const [conformance, setConformance] = useState(null);              // rule-engine conformance suite result
+  const [vatClose, setVatClose] = useState({ step: 0, isaf: null, isafName: "", recon: null, decisions: {}, memo: null, memoVer: null, memoGround: null, closedAt: null });
+  // KPI targets (persisted) + chosen benchmark sector
+  const [kpiTargets, setKpiTargets] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_kpi_targets") || "{}"); } catch { return {}; } });
+  const setKpiTarget = useCallback((key, val) => setKpiTargets((t) => { const n = { ...t }; if (val == null) delete n[key]; else n[key] = val; try { localStorage.setItem("taxai_kpi_targets", JSON.stringify(n)); } catch {} return n; }), []);
+  const [benchSector, setBenchSector] = useState(null);
+
+  // Deterministic fact index used to verify AI narratives (recomputed when results change).
+  const groundingFacts = useMemo(() => buildGroundingFacts({
+    kpis: enterpriseKpis?.kpis,
+    runResult,
+    intel,
+    metrics: personalRules?.metrics,
+    reconResult,
+  }), [enterpriseKpis, runResult, intel, personalRules, reconResult]);
+  const verifyAi = useMemo(() => (typeof aiResult === "string" && !aiResult.startsWith("Error")) ? verifyNarrative(aiResult, groundingFacts) : null, [aiResult, groundingFacts]);
+  const verifySmartAnalysis = useMemo(() => (typeof smartAnalysisResult === "string" && !smartAnalysisResult.startsWith("Error")) ? verifyNarrative(smartAnalysisResult, groundingFacts) : null, [smartAnalysisResult, groundingFacts]);
+  const verifyThreat = useMemo(() => (typeof threatResult === "string" && !threatResult.startsWith("Error")) ? verifyNarrative(threatResult, groundingFacts) : null, [threatResult, groundingFacts]);
   const [intelTab, setIntelTab] = useState("overview");              // Command-center sub-tab
   const [caseFlags, setCaseFlags] = useState({});                    // ruleId/signal → {flagged, note, assignee, status}
   const [toast, setToast] = useState(null);                          // transient toast message
@@ -7217,6 +8316,7 @@ function TAXAI({ onExit, initialView } = {}) {
     setAiResult(null); setSmartResult(null); setSmartAnalysisResult(null);
     setEnterpriseResult(null); setEnterpriseKpis(null); setIntel(null);
     setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null);
+    setIsafData(null); setIsafFileName(""); setReconResult(null);
     const parsed = parseSAFTFull(c);
     const result = runAllRules(parsed);
     setFileData({ type: "xml", parsed, raw: c });
@@ -7229,16 +8329,6 @@ function TAXAI({ onExit, initialView } = {}) {
   }, [audit]);
 
   // Load the built-in synthetic demo dataset (so a fresh deployment is usable).
-  const loadDemo = useCallback(() => {
-    const xml = buildSampleSAFT();
-    audit.log("DEMO_DATASET_LOADED", "synthetic SAF-T with planted signals");
-    const result = processXML(xml, "demo-sample.xml");
-    setToast(lang === "lt"
-      ? `Demonstraciniai duomenys įkelti · ${result.summary.total} radinių`
-      : `Demo dataset loaded · ${result.summary.total} findings`);
-    setView("saftview");
-  }, [processXML, audit, lang]);
-
   const upload = useCallback(e => {
     const file = e.target.files?.[0]; if (!file) return;
     setFileName(file.name);
@@ -7252,6 +8342,7 @@ function TAXAI({ onExit, initialView } = {}) {
     setRunResult(null);
     setOverrides({});
     setPersonalRules(null);
+    setIsafData(null); setIsafFileName(""); setReconResult(null);
     audit.log("FILE_UPLOAD", file.name);
     const reader = new FileReader();
     reader.onload = evt => {
@@ -7275,6 +8366,27 @@ function TAXAI({ onExit, initialView } = {}) {
     };
     reader.readAsText(file);
   }, [audit, processXML, lang]);
+
+  // Upload a monthly i.SAF (VAT invoice register) and reconcile it vs the loaded SAF-T ledger.
+  const uploadISAF = useCallback((e) => {
+    const file = e.target?.files?.[0]; if (!file) return;
+    if (!fileData?.parsed) { setToast(lang === "lt" ? "Pirma įkelkite SAF-T failą" : "Load a SAF-T file first"); return; }
+    audit.log("ISAF_UPLOAD", file.name);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const parsed = parseISAF(evt.target.result);
+        if (parsed._parseError) { setToast((lang === "lt" ? "i.SAF klaida: " : "i.SAF error: ") + parsed._parseError); return; }
+        const recon = reconcileISAF(parsed, fileData.parsed);
+        setIsafData(parsed); setIsafFileName(file.name); setReconResult(recon);
+        audit.log("ISAF_RECONCILED", `${recon.findings.length} findings · netΔ €${recon.summary.vat.netDelta}`);
+        setToast(lang === "lt" ? `i.SAF sutikrinta · ${recon.findings.length} radinių` : `i.SAF reconciled · ${recon.findings.length} findings`);
+      } catch (err) {
+        setToast((lang === "lt" ? "i.SAF apdorojimo klaida: " : "i.SAF processing error: ") + err.message);
+      }
+    };
+    reader.readAsText(file);
+  }, [audit, fileData, lang]);
 
   // Drag-and-drop a SAF-T / CSV file anywhere onto the app.
   const handleDrop = useCallback((e) => {
@@ -7442,7 +8554,9 @@ function TAXAI({ onExit, initialView } = {}) {
     try {
       const primary = AGENTS.find(a => a.id === aids[0]);
       const resp = await callAI(`You are the ${primary.name} agent.`, text + multi + fileCtx + deterministicNote, msgs);
-      setThinking({}); setMsgs(p => [...p, { id: Date.now(), role: "assistant", text: resp, agent: primary, agentIds: aids, ts: new Date() }]);
+      const _sources = retrieveSources(text, LEGAL_DB, 6);
+      const _grounding = groundCitations(resp, _sources, LEGAL_DB);
+      setThinking({}); setMsgs(p => [...p, { id: Date.now(), role: "assistant", text: resp, agent: primary, agentIds: aids, ts: new Date(), sources: _grounding.sources, grounding: _grounding }]);
     } catch (e) {
       setThinking({}); setMsgs(p => [...p, { id: Date.now(), role: "assistant", text: `Error: ${e.message}`, agent: AGENTS[0], agentIds: ["tax"], ts: new Date(), err: true }]);
     } setLoading(false);
@@ -7459,6 +8573,7 @@ function TAXAI({ onExit, initialView } = {}) {
     { id: "home", l: t.home, ic: "◆" },
     { id: "chat", l: t.chat, ic: "◈" },
     { id: "saftview", l: t.saft, ic: "◫" },
+    { id: "kpis", l: lang === "lt" ? "KPI" : "KPIs", ic: "▱" },
     { id: "intel", l: lang === "lt" ? "Žvalgyba" : "Intelligence", ic: "✦" },
     { id: "eauditor", l: lang === "lt" ? "E-Auditorius" : "E-Auditor", ic: "◉" },
     { id: "agents", l: `${t.agents} (${AGENTS.length})`, ic: "◎" },
@@ -7580,7 +8695,6 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "intel", lbl: lang === "lt" ? "Žvalgybos centras" : "Intelligence center", hint: "view", run: () => setView("intel") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
           { k: "logs", lbl: lang === "lt" ? "Audito žurnalas" : "Audit log", hint: "view", run: () => setView("logs") },
-          { k: "demo", lbl: lang === "lt" ? "Įkelti demonstracinius duomenis" : "Load demo dataset", hint: "action", run: () => loadDemo() },
           { k: "upload", lbl: lang === "lt" ? "Įkelti failą…" : "Upload a file…", hint: "action", run: () => fileRef.current?.click() },
           { k: "lt", lbl: "Lietuvių (LT)", hint: "lang", run: () => setLang("lt") },
           { k: "en", lbl: "English (EN)", hint: "lang", run: () => setLang("en") },
@@ -7625,7 +8739,6 @@ function TAXAI({ onExit, initialView } = {}) {
             <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 5 }}>{fileData ? "Loaded" : "SAF-T / CSV"}</div>
             <div style={{ fontSize: 12.5, color: fileData ? "#fff" : "#bcbcb8", fontFamily: "var(--s)", fontWeight: 600, wordBreak: "break-all" }}>{fileData ? `✓ ${fileName}` : t.upload}</div>
           </div>
-          <button onClick={loadDemo} style={{ width: "100%", marginTop: 8, padding: "9px", border: `1px solid ${PL_LINE}`, background: "transparent", color: "#bcbcb8", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase", transition: "all .2s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = "#fff"; e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { e.currentTarget.style.borderColor = PL_LINE; e.currentTarget.style.color = "#bcbcb8"; }}>▸ {lang === "lt" ? "Demonstraciniai duomenys" : "Load demo data"}</button>
         </div>
         <button onClick={() => { setCmdOpen(true); setCmdQuery(""); }} style={{ padding: "10px 16px", borderTop: `1px solid ${PL_LINE}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "transparent", border: "none", cursor: "pointer", color: "#8c8c88" }} onMouseEnter={e => e.currentTarget.style.color = "#fff"} onMouseLeave={e => e.currentTarget.style.color = "#8c8c88"}>
           <span style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase" }}>{lang === "lt" ? "Komandos" : "Commands"}</span>
@@ -7648,7 +8761,7 @@ function TAXAI({ onExit, initialView } = {}) {
               <div style={{ ...lbl, marginBottom: 30 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fff", animation: "pulse 2s infinite" }} />Forensic Tax Intelligence · Republic of Lithuania</div>
               <h1 style={{ fontSize: "clamp(48px,7vw,92px)", fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: .98, letterSpacing: "-.025em", marginBottom: 28 }}>{lang === "lt" ? "Mokesčių " : "Tax "}<em style={{ fontStyle: "italic" }}>{lang === "lt" ? "intelektas" : "intelligence"}</em><br />{lang === "lt" ? "sukurtas " : "built for "}<span style={{ color: "#8c8c88" }}>{lang === "lt" ? "Lietuvai." : "Lithuania."}</span></h1>
               <p style={{ fontSize: 19, color: "#d2d2ce", fontFamily: "var(--s)", fontWeight: 400, maxWidth: 660, lineHeight: 1.7, marginBottom: 44 }}>
-                {lang === "lt" ? `Deterministinis 300 taisyklių SAF-T variklis · 7 forensikos varikliai · ${AGENTS.length} oficialių šaltinių agentai · Patikrinti 2026 m. tarifai · Jokių imitacinių duomenų.` : `A deterministic 300-rule SAF-T engine · 7 forensic engines · ${AGENTS.length} official-source agents · Verified 2026 rates · Zero mock data.`}
+                {lang === "lt" ? `Pamatykite savo apskaitą taip, kaip ją matys VMI — pirmiau už ją.` : `See your books the way the tax authority will — before they do.`}
               </p>
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                 <button onClick={() => setView("saftview")} style={bP} onMouseEnter={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#000"; }}>{lang === "lt" ? "Analizuoti SAF-T" : "Analyze SAF-T"} →</button>
@@ -7718,7 +8831,16 @@ function TAXAI({ onExit, initialView } = {}) {
             {msgs.map(msg => <div key={msg.id} style={{ padding: "16px 0", maxWidth: 760, margin: "0 auto", width: "100%", animation: "fadeUp .35s ease" }}>
               {msg.role === "user" ? <div><div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".12em" }}>{lang === "lt" ? modes.find(m => m.id === mode)?.lt : mode} · {msg.ts?.toLocaleTimeString("lt-LT", { hour: "2-digit", minute: "2-digit" })}</div><div style={{ fontSize: 24, color: "#fff", fontFamily: "var(--f)", fontWeight: 400, lineHeight: 1.3 }}>{msg.text}</div></div>
                 : <div><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, border: "1px solid #fff", color: "#fff", fontSize: 14, fontWeight: 700 }}>{msg.agent?.icon || "◆"}</span><span style={{ fontSize: 12, fontWeight: 700, color: "#fff", fontFamily: "var(--m)", textTransform: "uppercase", letterSpacing: ".1em" }}>{lang === "lt" ? AGENTS.find(a => a.id === msg.agent?.id)?.nameLt || msg.agent?.name : msg.agent?.name}</span>{msg.agentIds?.length > 1 && <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", padding: "2px 8px", border: `1px solid ${PL_LINE}` }}>+{msg.agentIds.length - 1}</span>}</div>
-                  <div style={{ paddingLeft: 40, borderLeft: msg.err ? "2px solid #f47067" : `2px solid ${PL_LINE}` }}><Md text={msg.text} /></div></div>}
+                  <div style={{ paddingLeft: 40, borderLeft: msg.err ? "2px solid #f47067" : `2px solid ${PL_LINE}` }}>
+                    {(() => {
+                      if (msg.sources && msg.sources.length) {
+                        const nc = numberCitations(msg.text, msg.sources, LEGAL_DB);
+                        return <Md text={nc.text} />;
+                      }
+                      return <Md text={msg.text} />;
+                    })()}
+                    {msg.grounding && <SourcesPanel grounding={msg.grounding} lang={lang} />}
+                  </div></div>}
             </div>)}
             {Object.keys(thinking).length > 0 && <div style={{ padding: "16px 0", maxWidth: 760, margin: "0 auto", animation: "fadeUp .3s ease" }}><div style={{ paddingLeft: 40, display: "flex", alignItems: "center", gap: 10 }}>{dots()}<span style={{ fontSize: 12, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em" }}>{lang === "lt" ? "ANALIZUOJAMA..." : "ANALYZING..."}</span></div></div>}
             <div ref={chatRef} />
@@ -7734,7 +8856,7 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>}
 
         {/* ═══════════ SAF-T INTELLIGENCE ═══════════ */}
-        {view === "saftview" && <div key="saftview" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+        {view === "saftview" && <div key="saftview" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease", backgroundImage: "linear-gradient(rgba(0,0,0,0.74), rgba(0,0,0,0.93)), url(/saft-bg.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed", }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
             <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? "300 deterministinių taisyklių pagal XSD v2.01 ir VA-127 — vykdoma įkėlus, su įrodymais kiekvienam radiniui." : "300 deterministic rules per XSD v2.01 and Order VA-127 — executed on upload, with cited evidence for every finding."} right={findings.length > 0 ? <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button> : null} />
 
@@ -7742,12 +8864,7 @@ function TAXAI({ onExit, initialView } = {}) {
               <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 8 }}>{fileData ? "File loaded" : (lang === "lt" ? "Vilkite failą čia arba spustelėkite" : "Drag a file here or click")}</div>
               <div style={{ fontSize: 17, color: "#fff", fontFamily: "var(--f)", fontWeight: 400 }}>{fileData ? `✓ ${fileName}` : t.upload}</div>
             </div>
-            {!fileData && <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-              <div style={{ flex: 1, height: 1, background: PL_LINE }} />
-              <span style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "#8c8c88" }}>{lang === "lt" ? "arba" : "or"}</span>
-              <button onClick={loadDemo} style={{ ...bG, padding: "10px 18px" }} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>▸ {lang === "lt" ? "Įkelti demonstracinius duomenis" : "Load demo dataset"}</button>
-              <div style={{ flex: 1, height: 1, background: PL_LINE }} />
-            </div>}
+
 
             {fileData && <>
               <div style={{ display: "flex", gap: 0, marginBottom: 28, flexWrap: "wrap", borderLeft: `1px solid ${PL_LINE}` }}>
@@ -7758,6 +8875,8 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "smartanalysis", en: "Smart Analysis", lt: "Išmanioji analizė" },
                   { id: "enterprise", en: "Enterprise Audit", lt: "Įmonės auditas" },
                   { id: "rules", en: `Rules · 300${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}`, lt: `Taisyklės · 300${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}` },
+                  { id: "reconcile", en: `i.SAF Reconcile${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}`, lt: `i.SAF sutikrinimas${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}` },
+                  { id: "vatclose", en: `VAT Close${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}`, lt: `PVM uždarymas${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}` },
                 ].map(tab =>
                   <button key={tab.id} onClick={() => {
                     setSaftTab(tab.id);
@@ -7835,6 +8954,7 @@ function TAXAI({ onExit, initialView } = {}) {
                 </p>
                 {saftLoading && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 20 }}>{dots()}<span style={{ fontSize: 13, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em" }}>{lang === "lt" ? "ANALIZUOJAMA..." : "ANALYZING..."}</span></div>}
                 {aiResult && <Md text={aiResult} />}
+                {aiResult && <DefensibilityPanel verification={verifyAi} lang={lang} />}
               </div>}
 
               {/* ── SMART FILTER ── */}
@@ -7859,6 +8979,7 @@ function TAXAI({ onExit, initialView } = {}) {
                 {saftLoading && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 20 }}>{dots()}<span style={{ fontSize: 13, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em" }}>{lang === "lt" ? "ATLIEKAMA META-ANALIZĖ..." : "RUNNING META-ANALYSIS..."}</span></div>}
                 {smartAnalysisResult && <>
                   <Md text={smartAnalysisResult} />
+                  <DefensibilityPanel verification={verifySmartAnalysis} lang={lang} />
                   <div style={{ marginTop: 18, padding: "12px 16px", border: "1px solid rgba(217,183,109,0.3)", fontSize: 11, color: "#d9b76d", fontFamily: "var(--s)", lineHeight: 1.6 }}>
                     ⚠ {lang === "lt" ? "Šis išmaniosios analizės modulis pateikia bendras gaires. Konkrečios teisinės pozicijos VMI patikrinime turi būti suderintos su licencijuotu mokesčių konsultantu. Sumos – orientacinės." : "This Smart Analysis module provides general guidance. Specific legal positions for a VMI inspection must be agreed with a licensed tax consultant. Amounts are indicative."}
                   </div>
@@ -7944,6 +9065,62 @@ function TAXAI({ onExit, initialView } = {}) {
                 <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 20, lineHeight: 1.65, maxWidth: 820 }}>
                   {lang === "lt" ? "Visi 300 SAF-T atitikties tikrinimai pagal XSD v2.01 ir VA-127 įsakymą. Tikrinimai: S = Schema, B = Verslo, C = Konsistencijos, F = Finansinė rizika. Lygiai: Block = stabdoma, Reject = atmesta VMI, Warn = peržiūrai." : "All 300 SAF-T compliance checks per XSD v2.01 and Order VA-127. Types: S = Schema, B = Business, C = Consistency, F = Financial-risk. Severity: Block = halt, Reject = VMI rejection, Warn = review queue."}
                 </p>
+
+                {/* ── Active rate pack + versioned packs ── */}
+                {(() => {
+                  const periodDate = fileData?.parsed?.header?.fiscalYearFrom || fileData?.parsed?.header?.fiscalYearTo || null;
+                  const active = resolveRatePack(periodDate);
+                  return <div style={{ marginBottom: 22 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", border: `1px solid ${PL_LINE}`, borderLeft: "3px solid #7cc4ff", background: "var(--bg2)", padding: "12px 16px" }}>
+                      <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase" }}>{lang === "lt" ? "Aktyvus taisyklių paketas" : "Active rule pack"}</span>
+                      <span style={{ fontSize: 14, color: "#fff", fontFamily: "var(--f)" }}>{active.label}</span>
+                      <span style={{ fontSize: 11, color: "#bcbcb8", fontFamily: "var(--m)" }}>VAT {active.vat.standard}% · {lang === "lt" ? "lengv." : "reduced"} [{active.vat.reduced.join(", ")}] · CIT {active.cit.standard}% / {active.cit.small}%</span>
+                      <span style={{ marginLeft: "auto", fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)" }}>{periodDate ? (lang === "lt" ? "pagal periodą " : "by period ") + periodDate.slice(0, 10) : (lang === "lt" ? "naujausias (nėra failo)" : "latest (no file)")}</span>
+                    </div>
+                    <details style={{ marginTop: 8, border: `1px solid ${PL_LINE}`, background: "#000" }}>
+                      <summary style={{ fontSize: 12, fontWeight: 600, color: "#d2d2ce", fontFamily: "var(--m)", cursor: "pointer", padding: "11px 16px", letterSpacing: ".04em" }}>{lang === "lt" ? "Visi datuoti paketai ir pakeitimų istorija" : "All dated packs & changelog"}</summary>
+                      <div style={{ padding: "0 16px 14px" }}>
+                        {RATE_PACKS.slice().reverse().map(p => <div key={p.id} style={{ padding: "12px 0", borderBottom: `1px solid ${PL_SOFT}` }}>
+                          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 13, color: "#fff", fontFamily: "var(--f)" }}>{p.label}</span>
+                            <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)" }}>{p.effectiveFrom} → {p.effectiveTo || (lang === "lt" ? "dabar" : "present")}</span>
+                          </div>
+                          <div style={{ fontSize: 11.5, color: "#bcbcb8", fontFamily: "var(--m)", marginTop: 4 }}>VAT {p.vat.standard}% · {lang === "lt" ? "lengvatiniai" : "reduced"} [{p.vat.reduced.join(", ")}] · CIT {p.cit.standard}% · {lang === "lt" ? "maža įmonė" : "small"} {p.cit.small}% (≤€{p.cit.smallThreshold.toLocaleString()})</div>
+                          <div style={{ fontSize: 11, color: "#9f9f9b", fontFamily: "var(--s)", marginTop: 4, lineHeight: 1.5 }}><span style={{ color: "#ffd43b" }}>Δ</span> {p.changelog}</div>
+                          <div style={{ fontSize: 10, color: "#7a7a76", fontFamily: "var(--m)", marginTop: 3 }}>{lang === "lt" ? "Šaltinis" : "Source"}: {p.source}</div>
+                        </div>)}
+                        <div style={{ fontSize: 10.5, color: "#7a7a76", fontFamily: "var(--s)", marginTop: 10, lineHeight: 1.5 }}>
+                          {lang === "lt" ? "Tarifai pažymėti šaltiniais ir įsigaliojimo datomis auditui. Variklis pritaiko paketą pagal failo periodą. Patikrinkite prieš naudojimą." : "Rates are dated and sourced for audit. The engine resolves the pack by the file's period. Verify against the official source before relying on it."}
+                        </div>
+                      </div>
+                    </details>
+                  </div>;
+                })()}
+
+                {/* ── Conformance / accuracy harness ── */}
+                <div style={{ marginBottom: 24, border: `1px solid ${PL_LINE}`, background: "var(--bg2)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase" }}>{lang === "lt" ? "Atitikties patikra" : "Conformance suite"}</span>
+                    {conformance && <span style={{ fontSize: 22, fontWeight: 300, fontFamily: "var(--f)", color: conformance.score === 100 ? "#69db7c" : conformance.score >= 80 ? "#ffd43b" : "#ff8a8a" }}>{conformance.score}%</span>}
+                    {conformance && <span style={{ fontSize: 11, color: "#bcbcb8", fontFamily: "var(--m)" }}>{conformance.passed}/{conformance.total} {lang === "lt" ? "testų" : "fixtures"}</span>}
+                    <button onClick={() => {
+                      const res = runConformance({ parse: (xml) => parseSAFTFull(xml), run: (d) => runAllRules(d) });
+                      setConformance(res); audit.log("CONFORMANCE_RUN", `${res.passed}/${res.total}`);
+                    }} style={{ ...bP, marginLeft: "auto", padding: "8px 16px" }}>{conformance ? (lang === "lt" ? "Paleisti iš naujo" : "Re-run") : (lang === "lt" ? "Paleisti patikrą →" : "Run suite →")}</button>
+                  </div>
+                  <div style={{ padding: "0 16px 12px", fontSize: 11.5, color: "#9f9f9b", fontFamily: "var(--s)", lineHeight: 1.55 }}>
+                    {lang === "lt" ? "Variklis paleidžiamas prieš pažymėtus bandinius su žinomais defektais; tikrinama, ar suveikia teisingos taisyklės. Tai įrodo taisyklių teisingumą, o ne tik daro prielaidą." : "Runs the engine against labelled fixtures with known defects and checks that the correct rules fire — demonstrating rule correctness rather than assuming it."}
+                  </div>
+                  {conformance && <div style={{ borderTop: `1px solid ${PL_LINE}` }}>
+                    {conformance.results.map((x, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: i < conformance.results.length - 1 ? `1px solid ${PL_SOFT}` : "none", flexWrap: "wrap" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: x.passed ? "#69db7c" : "#ff8a8a", flexShrink: 0 }} />
+                      <span style={{ fontSize: 11, fontFamily: "var(--m)", fontWeight: 700, color: "#fff" }}>{x.id}</span>
+                      <span style={{ fontSize: 12, fontFamily: "var(--s)", color: "#d2d2ce" }}>{x.name}</span>
+                      <span style={{ marginLeft: "auto", fontSize: 10.5, fontFamily: "var(--m)", color: "#8c8c88" }}>{x.error ? "ERR: " + x.error : x.checks.map(c => `${c.rule} ${c.pass ? "✓" : "✗ (got " + c.got + ")"}`).join(" · ")}</span>
+                    </div>)}
+                  </div>}
+                </div>
+
                 {(() => {
                   const catalog = getRuleCatalog();
                   const groups = {};
@@ -7974,6 +9151,7 @@ function TAXAI({ onExit, initialView } = {}) {
                               <th style={{ padding: "8px", borderBottom: `1px solid ${PL_LINE}`, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10 }}>Sev</th>
                               <th style={{ padding: "8px", borderBottom: `1px solid ${PL_LINE}`, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10 }}>Type</th>
                               <th style={{ padding: "8px", borderBottom: `1px solid ${PL_LINE}`, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10 }}>Title</th>
+                              <th style={{ padding: "8px", borderBottom: `1px solid ${PL_LINE}`, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10 }}>Basis</th>
                               <th style={{ padding: "8px", borderBottom: `1px solid ${PL_LINE}`, width: 90, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10 }}>Status</th>
                             </tr>
                           </thead>
@@ -7985,6 +9163,11 @@ function TAXAI({ onExit, initialView } = {}) {
                                 <td style={{ padding: "8px", borderBottom: `1px solid ${PL_SOFT}` }}><SevDot s={r.severity} />{r.severity}</td>
                                 <td style={{ padding: "8px", borderBottom: `1px solid ${PL_SOFT}`, color: "#8c8c88" }}>{r.typeName}</td>
                                 <td style={{ padding: "8px", borderBottom: `1px solid ${PL_SOFT}` }}>{r.title}</td>
+                                {(() => { const pv = provenanceFor(r); const sc = pv.status === "schema" ? "#7cc4ff" : pv.status === "regulatory" ? "#69db7c" : "#ffd43b";
+                                  return <td style={{ padding: "8px", borderBottom: `1px solid ${PL_SOFT}`, color: "#9f9f9b", maxWidth: 240 }} title={pv.authority + " · " + pv.reference}>
+                                    <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: sc, marginRight: 6, verticalAlign: "middle" }} />
+                                    <span style={{ fontSize: 11 }}>{pv.reference}</span>
+                                  </td>; })()}
                                 <td style={{ padding: "8px", borderBottom: `1px solid ${PL_SOFT}` }}>
                                   {triggered ? <span style={{ padding: "2px 8px", border: "1px solid #ff8a8a", color: "#ff8a8a", fontWeight: 600, fontSize: 10 }}>FAIL × {triggered}</span>
                                     : runResult ? <span style={{ padding: "2px 8px", border: "1px solid #69db7c", color: "#69db7c", fontWeight: 600, fontSize: 10 }}>PASS</span>
@@ -8089,13 +9272,101 @@ function TAXAI({ onExit, initialView } = {}) {
                   </div>;
                 })()}
               </div>}
+
+              {/* ════════ i.SAF ↔ SAF-T RECONCILIATION ════════ */}
+              {saftTab === "reconcile" && <div style={panel}>
+                {(() => {
+                  const SEVC = { Block: "#ff6b6b", Reject: "#ffa94d", Warn: "#ffd43b" };
+                  const r = reconResult;
+                  const v = r?.summary?.vat;
+                  const tol = 0.02;
+                  const Delta = ({ d }) => <span style={{ color: Math.abs(d) > tol ? "#ff8a8a" : "#69db7c", fontFamily: "var(--m)" }}>{d > 0 ? "+" : ""}{(d || 0).toLocaleString()} €</span>;
+                  return <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 12, flexWrap: "wrap" }}>
+                      <SEC n="02·G" en="i.SAF ↔ SAF-T Reconciliation" lt="i.SAF ↔ SAF-T sutikrinimas" />
+                      {r && <span style={{ marginLeft: "auto", padding: "6px 14px", border: `1px solid ${r.bySeverity.Block ? "#ff6b6b" : r.bySeverity.Reject ? "#ffa94d" : "#69db7c"}`, color: r.bySeverity.Block ? "#ff6b6b" : r.bySeverity.Reject ? "#ffa94d" : "#69db7c", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>{r.findings.length} {lang === "lt" ? "neatitikimai" : "discrepancies"}</span>}
+                    </div>
+                    <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 18, lineHeight: 1.65, maxWidth: 880 }}>
+                      {lang === "lt"
+                        ? "Sutikrinkite mėnesinį i.SAF (PVM sąskaitų registrą) su pilnu SAF-T didžiosios knygos failu — tai tas pats neatitikimų patikrinimas, kurį atlieka VMI i.MAS. Aptinka nedeklaruotą pardavimo PVM, per daug atskaitytą pirkimo PVM, sumų neatitikimus ir grynosios PVM pozicijos skirtumus (FR0600)."
+                        : "Cross-check your monthly i.SAF (VAT invoice register) against the full SAF-T ledger — the same discrepancy review VMI's i.MAS runs. It catches undeclared output VAT, over-claimed input VAT, amount mismatches, and net-VAT-position gaps against your FR0600."}
+                    </p>
+
+                    {!r && <div style={{ border: `1px dashed ${PL_LINE}`, padding: 26, textAlign: "center", background: "var(--bg2)" }}>
+                      <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 10 }}>{lang === "lt" ? "Įkelkite mėnesinį i.SAF (XML)" : "Upload your monthly i.SAF (XML)"}</div>
+                      <div style={{ fontSize: 15, color: "#fff", fontFamily: "var(--f)", marginBottom: 16 }}>{lang === "lt" ? "Sutikrinsime jį su jau įkeltu SAF-T" : "We'll reconcile it against the SAF-T already loaded"}</div>
+                      <button onClick={() => isafFileRef.current?.click()} style={bP}>{lang === "lt" ? "Pasirinkti i.SAF failą" : "Choose i.SAF file"} →</button>
+                    </div>}
+                    <input ref={isafFileRef} type="file" accept=".xml" onChange={uploadISAF} style={{ display: "none" }} />
+
+                    {r && <>
+                      {/* VAT position */}
+                      <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase", margin: "4px 0 10px" }}>{lang === "lt" ? "PVM pozicija — i.SAF vs SAF-T" : "VAT position — i.SAF vs SAF-T"}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}`, marginBottom: 22 }}>
+                        {[["Output VAT", "Pardavimo PVM", v.outputISAF, v.outputSAFT, v.outputDelta], ["Input VAT", "Pirkimo PVM", v.inputISAF, v.inputSAFT, v.inputDelta], ["Net VAT position", "Grynoji PVM pozicija", v.netISAF, v.netSAFT, v.netDelta]].map(([en, ltl, a, b2, d], i) =>
+                          <div key={i} style={{ padding: "18px 20px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
+                            <div style={{ fontSize: 9, color: "#8c8c88", fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>{lang === "lt" ? ltl : en}</div>
+                            <div style={{ fontSize: 12, color: "#d2d2ce", fontFamily: "var(--m)", lineHeight: 1.7 }}>i.SAF: {(a || 0).toLocaleString()} €<br />SAF-T: {(b2 || 0).toLocaleString()} €</div>
+                            <div style={{ fontSize: 14, marginTop: 8, fontWeight: 700 }}>Δ <Delta d={d} /></div>
+                          </div>)}
+                      </div>
+
+                      {/* match summary */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}`, marginBottom: 22 }}>
+                        {[["Sales / Pardavimai", r.summary.sales], ["Purchases / Pirkimai", r.summary.purchases]].map(([title, s], i) =>
+                          <div key={i} style={{ padding: "16px 20px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
+                            <div style={{ fontSize: 11, color: "#fff", fontFamily: "var(--m)", fontWeight: 700, marginBottom: 8 }}>{title}</div>
+                            <div style={{ fontSize: 12, color: "#bcbcb8", fontFamily: "var(--m)", lineHeight: 1.8 }}>
+                              {lang === "lt" ? "Sutapo" : "Matched"}: {s.matched} · {lang === "lt" ? "PVM neat." : "VAT mism."}: {s.vatMismatch}<br />
+                              {lang === "lt" ? "Nėra knygoje" : "Missing in ledger"}: {s.missingInLedger} · {lang === "lt" ? "Nedeklaruota" : "Not in register"}: {s.missingInRegister}
+                            </div>
+                          </div>)}
+                      </div>
+
+                      {/* findings */}
+                      {r.findings.length === 0
+                        ? <div style={{ border: "1px solid #69db7c", padding: 18, color: "#69db7c", fontFamily: "var(--m)", fontSize: 13 }}>✓ {lang === "lt" ? "Neatitikimų nerasta — i.SAF atitinka SAF-T." : "No discrepancies — i.SAF matches the SAF-T ledger."}</div>
+                        : r.findings.map((f, i) => <div key={i} style={{ borderLeft: `2px solid ${SEVC[f.severity]}`, background: "var(--bg2)", padding: "14px 16px", marginBottom: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                            <span style={{ fontFamily: "var(--m)", fontSize: 11, fontWeight: 700, color: "#fff" }}>{f.id}</span>
+                            <span style={{ fontFamily: "var(--m)", fontSize: 10, fontWeight: 700, padding: "1px 8px", border: `1px solid ${SEVC[f.severity]}`, color: SEVC[f.severity], textTransform: "uppercase" }}>{f.severity}</span>
+                          </div>
+                          <div style={{ fontSize: 14, color: "#fff", fontFamily: "var(--f)", marginBottom: 4 }}>{f.title}</div>
+                          <div style={{ fontSize: 12.5, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6 }}>{f.detail}</div>
+                          {f.evidence?.length > 0 && <div style={{ fontSize: 11.5, color: "#9f9f9b", fontFamily: "var(--m)", marginTop: 6 }}>{f.evidence.join(" · ")}</div>}
+                        </div>)}
+
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+                        <button onClick={() => isafFileRef.current?.click()} style={bG}>↻ {lang === "lt" ? "Kitas i.SAF failas" : "Different i.SAF file"}</button>
+                        <span style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)" }}>{isafFileName} · {lang === "lt" ? "deterministinis sutikrinimas" : "deterministic reconciliation"}</span>
+                      </div>
+                    </>}
+                  </>;
+                })()}
+              </div>}
+
+              {/* ════════ MONTHLY VAT-CLOSE WORKFLOW ════════ */}
+              {saftTab === "vatclose" && <div style={panel}>
+                <VatCloseWorkflow
+                  lang={lang}
+                  data={fileData?.parsed}
+                  kpis={enterpriseKpis}
+                  callAI={callAI}
+                  audit={audit}
+                  state={vatClose}
+                  setState={setVatClose}
+                  presetIsaf={isafData}
+                  presetRecon={reconResult}
+                  presetIsafName={isafFileName}
+                />
+              </div>}
             </>}
             {!fileData && <div style={{ ...panel, padding: 48, textAlign: "center" }}><div style={{ ...lbl, justifyContent: "center", marginBottom: 16 }}><span style={rule} />{lang === "lt" ? "Nėra duomenų" : "No data"}</div><h3 style={{ fontSize: 28, fontWeight: 300, color: "#fff", fontFamily: "var(--f)" }}>{lang === "lt" ? "Įkelkite SAF-T duomenis" : "Upload SAF-T data"}</h3></div>}
           </div>
         </div>}
 
         {/* ═══════════ AGENTS ═══════════ */}
-        {view === "agents" && <div key="agents" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+        {view === "agents" && <div key="agents" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease", backgroundImage: "linear-gradient(rgba(0,0,0,0.74), rgba(0,0,0,0.93)), url(/agents-bg.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed", }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
             <PageBanner variant="network" label={lang === "lt" ? "06 — Specializuoti agentai" : "06 — Specialised Agents"} title={<>{AGENTS.length} <em style={{ fontStyle: "italic" }}>{t.agents}</em></>} sub={lang === "lt" ? "Kiekvienas agentas pagrįstas oficialiu šaltiniu (VMI, e-TAR, Sodra, AVNT, FNTT). Spustelėkite, kad pradėtumėte pokalbį." : "Each agent is grounded in an official source of record (VMI, e-TAR, Sodra, AVNT, FNTT). Click any to start a conversation."} />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
@@ -8104,6 +9375,29 @@ function TAXAI({ onExit, initialView } = {}) {
                 <div><div style={{ fontSize: 16, fontWeight: 500, color: "#fff", fontFamily: "var(--f)" }}>{lang === "lt" ? a.nameLt : a.name}</div><div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#69db7c", boxShadow: "0 0 8px #69db7c" }} /><span style={{ fontSize: 9, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase" }}>Active · Official source</span></div></div>
               </div>)}
             </div>
+          </div>
+        </div>}
+
+        {/* ═══════════ KPI DASHBOARD (standalone) ═══════════ */}
+        {view === "kpis" && <div key="kpis" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease", backgroundImage: "linear-gradient(rgba(0,0,0,0.78), rgba(0,0,0,0.94)), url(/saft-bg.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed", }}>
+          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+            <PageBanner variant="scan" label={lang === "lt" ? "03 — Veiklos rodikliai" : "03 — Performance metrics"} title={<>KPI <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "žvalgyba" : "Intelligence"}</em></>} sub={lang === "lt" ? "Deterministiniai rodikliai iš jūsų SAF-T duomenų, palyginti su sektoriaus normomis, su jūsų pačių tikslais." : "Deterministic metrics from your SAF-T data, benchmarked against sector norms, with your own targets."} />
+            {enterpriseKpis?.kpis ? (() => {
+              const detected = personalRules?.detectedSector;
+              const sectorList = availableSectors();
+              const active = benchSector || (detected && sectorList.includes(detected) ? detected : sectorList[0]);
+              return <div style={{ ...panel, marginTop: 16 }}>
+                {detected && detected !== "Unknown" && !benchSector && <div style={{ marginBottom: 14, fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)" }}>{lang === "lt" ? "Aptiktas sektorius" : "Detected sector"}: <span style={{ color: "#7cc4ff" }}>{detected}</span> — {lang === "lt" ? "naudojamas lyginimui (galite pakeisti)." : "used for benchmarking (you can change it)."}</div>}
+                <KpiDashboard lang={lang} kpis={enterpriseKpis.kpis} sector={active} setSector={setBenchSector} targets={kpiTargets} setTarget={setKpiTarget} />
+              </div>;
+            })() : <div style={{ ...panel, marginTop: 16, textAlign: "center", padding: "56px 24px" }}>
+              <div style={{ ...lbl, justifyContent: "center", marginBottom: 16 }}><span style={rule} />{lang === "lt" ? "Nėra duomenų KPI" : "No data for KPIs"}</div>
+              <h3 style={{ fontSize: 28, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", marginBottom: 12 }}>{lang === "lt" ? "Įkelkite SAF-T failą" : "Load a SAF-T file"}</h3>
+              <p style={{ fontSize: 14, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 20, maxWidth: 520, marginInline: "auto", lineHeight: 1.6 }}>{lang === "lt" ? "KPI apskaičiuojami automatiškai iš jūsų SAF-T duomenų. Įkelkite SAF-T failą, kad pamatytumėte rodiklius." : "KPIs are computed automatically from your SAF-T data. Upload a SAF-T file to see your metrics."}</p>
+              <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+                <button onClick={() => setView("saftview")} style={bP}>{lang === "lt" ? "Eiti į SAF-T →" : "Go to SAF-T →"}</button>
+              </div>
+            </div>}
           </div>
         </div>}
 
@@ -8162,7 +9456,7 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>}
 
         {/* ═══════════ INTELLIGENCE COMMAND CENTER ═══════════ */}
-        {view === "intel" && <div key="intel" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+        {view === "intel" && <div key="intel" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease", backgroundImage: "linear-gradient(rgba(0,0,0,0.74), rgba(0,0,0,0.93)), url(/intel-bg.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed", }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
             <PageBanner variant="network" height={170} label={lang === "lt" ? "05 — Forensikos žvalgyba" : "05 — Forensic Intelligence"} title={<>{lang === "lt" ? "Žvalgybos " : "Intelligence "}<em style={{ fontStyle: "italic" }}>{lang === "lt" ? "centras" : "Command Center"}</em></>} sub={lang === "lt" ? "Šeši deterministiniai forensikos varikliai — visi skaičiai apskaičiuoti JS, ne AI." : "Six deterministic forensic engines — every number computed in JS, not AI."} right={intel ? <>
               <button onClick={() => { exportForensicReport({ company: fileData?.parsed?.header?.company?.name || fileName, period: `${fileData?.parsed?.header?.fiscalYearFrom || ""} — ${fileData?.parsed?.header?.fiscalYearTo || ""}`, intel, runResult, findings, threatMarkdown: threatResult, caseFlags, lang, personalRules }); audit.log("EXPORT_FORENSIC_REPORT", fileName); }} style={bP}>↧ {lang === "lt" ? "Ataskaita" : "Report"}</button>
@@ -8173,7 +9467,7 @@ function TAXAI({ onExit, initialView } = {}) {
               <div style={{ fontSize: 36, marginBottom: 14, color: "#fff" }}>✦</div>
               <h3 style={{ fontSize: 26, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", marginBottom: 8 }}>{lang === "lt" ? "Nėra duomenų analizei" : "No data to analyze"}</h3>
               <p style={{ fontSize: 14, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 22 }}>{lang === "lt" ? "Įkelkite SAF-T XML failą — žvalgyba apskaičiuojama automatiškai." : "Upload a SAF-T XML file — intelligence computes automatically."}</p>
-              <button onClick={loadDemo} style={{ ...bP, margin: "0 auto" }}>▸ {lang === "lt" ? "Įkelti demonstracinius duomenis" : "Load demo dataset"}</button>
+              <button onClick={() => setView("saftview")} style={{ ...bP, margin: "0 auto" }}>{lang === "lt" ? "Eiti į SAF-T →" : "Go to SAF-T →"}</button>
             </div>}
 
             {intel && <>
@@ -8397,6 +9691,7 @@ function TAXAI({ onExit, initialView } = {}) {
                 {saftLoading && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 20 }}>{dots()}<span style={{ fontSize: 13, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em" }}>{lang === "lt" ? "VYKDOMAS GRĖSMIŲ VERTINIMAS..." : "RUNNING THREAT ASSESSMENT..."}</span></div>}
                 {threatResult && <>
                   <Md text={threatResult} />
+                  <DefensibilityPanel verification={verifyThreat} lang={lang} />
                   <div style={{ marginTop: 18, padding: "12px 16px", border: "1px solid rgba(217,183,109,0.3)", fontSize: 11, color: "#d9b76d", fontFamily: "var(--s)", lineHeight: 1.6 }}>
                     ⚠ {lang === "lt" ? "Tai sprendimų palaikymo įrankis, ne kaltinimas. Signalai reikalauja tyrimo — ne įrodymas. Kiekvienas signalas turi nekaltą ir kaltą paaiškinimą." : "This is decision-support, not an accusation. Signals warrant investigation — they are not proof. Every signal has an innocent and a guilty explanation."}
                   </div>
