@@ -682,6 +682,8 @@ function parseSAFTFull(xmlStr) {
           return {
             recordID: txt(l, "RecordID"),
             productCode: txt(l, "ProductCode"),
+            goodsServicesID: txt(l, "GoodsServicesID"),
+            description: txt(l, "Description") || txt(l, "ProductDescription"),
             quantity: num(l, "Quantity"),
             unitOfMeasure: txt(l, "UnitOfMeasure"),
             unitPrice: num(l, "UnitPrice"),
@@ -699,12 +701,24 @@ function parseSAFTFull(xmlStr) {
           };
         });
         const refsEl = inv.getElementsByTagName("References")[0];
+        // Ship-from / ship-to country (SAF-T LT cross-border location of supply)
+        const shipFromEl = inv.getElementsByTagName("ShipFrom")[0];
+        const shipToEl = inv.getElementsByTagName("ShipTo")[0];
+        const shipFromCountry = shipFromEl ? (txt(shipFromEl.getElementsByTagName("Address")[0] || shipFromEl, "Country")) : "";
+        const shipToCountry = shipToEl ? (txt(shipToEl.getElementsByTagName("Address")[0] || shipToEl, "Country")) : "";
+        // Supplier tax-registration (type + country) on the invoice party block
+        const partyEl = inv.getElementsByTagName("SupplierInfo")[0] || inv.getElementsByTagName("CustomerInfo")[0];
+        const trEl = inv.getElementsByTagName("TaxRegistration")[0] || (partyEl ? partyEl.getElementsByTagName("TaxRegistration")[0] : null);
         return {
           invoiceNo: txt(inv, "InvoiceNo"),
           invoiceDate: txt(inv, "InvoiceDate"),
           invoiceType: txt(inv, "InvoiceType"),
           customerID: txt(inv, "CustomerID"),
           supplierID: txt(inv, "SupplierID"),
+          shipFromCountry, shipToCountry,
+          supplierTaxRegType: trEl ? txt(trEl, "TaxType") : "",
+          supplierTaxRegCountry: trEl ? txt(trEl, "Country") : "",
+          supplierAddressCountry: partyEl ? txt((partyEl.getElementsByTagName("Address")[0] || partyEl), "Country") : "",
           accountID: txt(inv, "AccountID"),
           glPostingDate: txt(inv, "GLPostingDate"),
           glTransactionID: txt(inv, "GLTransactionID"),
@@ -909,3469 +923,239 @@ function buildContext(data) {
   return ctx;
 }
 
-// ════════════════════════════════════════════════════════════════════
-// 300 RULES — declarative, executed by runAllRules()
-// Each rule.check(data, ctx, T) returns an array of {detail, evidence}
-// objects (empty array = pass). The runner wraps these in mkFinding().
-// T = thresholds (DEFAULT_THRESHOLDS merged with user overrides).
-// ════════════════════════════════════════════════════════════════════
 
-const RULES = [];
-const R = (rule) => { RULES.push(rule); return rule; };
-
-// ─── Helper: produce a single finding from a condition ─────────
-const fail = (detail, evidence) => [{ detail, evidence: sampleEvidence(evidence) }];
-const ok = () => [];
-
+// ═══ VERIFIED AUDIT RULES (LT VAT) — the 13-rule foundation ═══
 // ════════════════════════════════════════════════════════════════════
-// CATEGORY A — File-level and Header (A-001 to A-035)
+// TAXAI · VERIFIED AUDIT RULES (LT VAT)  — structured, data-connected
+// ────────────────────────────────────────────────────────────────────
+// Each rule mirrors a real audit test: legal-grounded title/description,
+// the data types it applies to, a failure-message template with @fields,
+// the ORIGINAL SQL (kept verbatim as provenance), and an evaluate()
+// function that faithfully re-implements the SQL's WHERE logic against
+// the parsed SAF-T objects produced by parseSAFTFull(). Deterministic.
 // ════════════════════════════════════════════════════════════════════
 
-R({ id: "A-001", category: "Header", severity: "Block", type: "S",
-  title: "XML declaration with UTF-8 encoding",
-  rationale: "Per spec: file MUST begin with <?xml version='1.0' encoding='UTF-8'?>",
-  check: (d) => {
-    if (!d._meta?.hasXmlDecl) return fail("Missing or malformed XML declaration");
-    const enc = (d._meta.declaredEncoding || "").toUpperCase();
-    if (enc && enc !== "UTF-8") return fail(`Encoding declared as '${enc}', must be UTF-8`);
-    return ok();
-  }});
-
-R({ id: "A-002", category: "Header", severity: "Block", type: "S",
-  title: "Root element must be <AuditFile> in VMI namespace",
-  rationale: "Namespace https://www.vmi.lt/cms/saf-t is mandatory.",
-  check: (d) => {
-    if (!d._meta?.rootIsAuditFile) return fail("Root element is not <AuditFile>");
-    if (!d._meta.namespace?.includes("vmi.lt")) return fail(`Namespace '${d._meta.namespace}' is not the VMI SAF-T namespace`);
-    return ok();
-  }});
-
-R({ id: "A-003", category: "Header", severity: "Reject", type: "B",
-  title: "Must validate against SAF-T XSD v2.01",
-  rationale: "Pre-submission XSD validation is mandatory; this engine performs structural checks but full XSD validation requires an XSD-aware tool.",
-  check: (d) => d.header?.auditFileVersion === "2.01" ? ok() :
-    fail(`AuditFileVersion='${d.header?.auditFileVersion || "(missing)"}' — XSD v2.01 expected`)});
-
-R({ id: "A-004", category: "Header", severity: "Warn", type: "B",
-  title: "Filename should reflect entity/period/part (recommendation)",
-  rationale: "VMI recommends naming convention for traceability.",
-  check: () => ok()  // Filename not available at parse-time in browser; informational
-});
-
-R({ id: "A-005", category: "Header", severity: "Reject", type: "B",
-  title: "Large files must be split via NumberOfParts, not by archive",
-  rationale: "Multi-part archives are invalid; use SAF-T NumberOfParts/PartNumber.",
-  check: (d, ctx, T) => {
-    const mb = (d._meta?.fileSizeBytes || 0) / (1024 * 1024);
-    if (mb > T.fileSizeMbLimit && (d.header?.numberOfParts || 1) <= 1) {
-      return fail(`File size ${mb.toFixed(1)} MB exceeds ${T.fileSizeMbLimit} MB but NumberOfParts=1 — splitting required`);
-    }
-    return ok();
-  }});
-
-R({ id: "A-006", category: "Header", severity: "Block", type: "S",
-  title: "Header/AuditFileVersion = 2.01",
-  check: (d) => d.header?.auditFileVersion === "2.01" ? ok() :
-    fail(`Got '${d.header?.auditFileVersion}'`)});
-
-R({ id: "A-007", category: "Header", severity: "Block", type: "S",
-  title: "Header/AuditFileCountry must be ISO 3166-1 (LT expected)",
-  check: (d) => {
-    const c = d.header?.auditFileCountry;
-    if (!c) return fail("AuditFileCountry missing");
-    if (!isCountryCode(c)) return fail(`Invalid country code '${c}'`);
-    if (c !== "LT") return fail(`Country '${c}' — expected 'LT' for Lithuanian entities`);
-    return ok();
-  }});
-
-R({ id: "A-008", category: "Header", severity: "Block", type: "S",
-  title: "Header/AuditFileDateCreated must be valid xs:dateTime",
-  check: (d) => isIsoDateTime(d.header?.auditFileDateCreated) ? ok() :
-    fail(`AuditFileDateCreated='${d.header?.auditFileDateCreated}' invalid`)});
-
-R({ id: "A-009", category: "Header", severity: "Block", type: "S",
-  title: "SoftwareCompanyName, SoftwareID, SoftwareVersion all required",
-  check: (d) => {
-    const miss = [];
-    if (!d.header?.softwareCompanyName) miss.push("SoftwareCompanyName");
-    if (!d.header?.softwareID) miss.push("SoftwareID");
-    if (!d.header?.softwareVersion) miss.push("SoftwareVersion");
-    return miss.length ? fail(`Missing: ${miss.join(", ")}`) : ok();
-  }});
-
-R({ id: "A-010", category: "Header", severity: "Block", type: "S",
-  title: "FiscalYearFrom <= FiscalYearTo, both valid dates",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    if (!isIsoDate(f) || !isIsoDate(t)) return fail(`Invalid FiscalYear dates: '${f}' / '${t}'`);
-    if (f > t) return fail(`FiscalYearFrom '${f}' > FiscalYearTo '${t}'`);
-    return ok();
-  }});
-
-R({ id: "A-011", category: "Header", severity: "Block", type: "S",
-  title: "Header/Company identification structure required",
-  check: (d) => {
-    const co = d.header?.company;
-    if (!co) return fail("Company element missing");
-    const miss = [];
-    if (!co.registrationNumber) miss.push("RegistrationNumber");
-    if (!co.name) miss.push("Name");
-    if (!co.address) miss.push("Address");
-    return miss.length ? fail(`Company missing: ${miss.join(", ")}`) : ok();
-  }});
-
-R({ id: "A-012", category: "Header", severity: "Reject", type: "B",
-  title: "Company/RegistrationNumber must be 9-digit LT Register code",
-  check: (d) => {
-    const rn = d.header?.company?.registrationNumber;
-    if (!rn) return fail("RegistrationNumber missing");
-    if (!isLtRegistrationNumber(rn)) return fail(`'${rn}' is not a 9-digit numeric Register code`);
-    return ok();
-  }});
-
-R({ id: "A-013", category: "Header", severity: "Block", type: "S",
-  title: "DefaultCurrencyCode must be valid ISO 4217 (EUR expected)",
-  check: (d) => {
-    const cc = d.header?.defaultCurrencyCode;
-    if (!cc) return fail("DefaultCurrencyCode missing");
-    if (!ISO_4217.has(cc)) return fail(`Invalid currency '${cc}'`);
-    if (cc !== "EUR") return fail(`Currency '${cc}' — EUR expected for LT residents (unless stated exception)`);
-    return ok();
-  }});
-
-R({ id: "A-014", category: "Header", severity: "Block", type: "S",
-  title: "SelectionCriteria must describe the audit selection",
-  check: (d) => d.header?.selectionCriteria ? ok() : fail("SelectionCriteria missing — audit traceability anchor")});
-
-R({ id: "A-015", category: "Header", severity: "Block", type: "S",
-  title: "TaxAccountingBasis must be 'K' (accrual) or 'P' (cash)",
-  check: (d) => ACCOUNTING_BASIS.has(d.header?.taxAccountingBasis) ? ok() :
-    fail(`Got '${d.header?.taxAccountingBasis}', allowed: K|P`)});
-
-R({ id: "A-016", category: "Header", severity: "Block", type: "S",
-  title: "Entity ≤ 20 chars, pattern [A-Z0-9_]*",
-  check: (d) => {
-    const e = d.header?.entity;
-    if (!e) return fail("Entity missing");
-    if (e.length > 20) return fail(`Entity '${e}' exceeds 20 chars`);
-    if (!/^[A-Z0-9_]*$/.test(e)) return fail(`Entity '${e}' contains invalid characters (only A-Z, 0-9, _)`);
-    return ok();
-  }});
-
-R({ id: "A-017", category: "Header", severity: "Block", type: "S",
-  title: "DataType must be one of: F, GL, SI, PI, PA, MG, AS",
-  check: (d) => DATATYPES.has(d.header?.dataType) ? ok() :
-    fail(`Got '${d.header?.dataType}', allowed: ${[...DATATYPES].join("|")}`)});
-
-R({ id: "A-018", category: "Header", severity: "Block", type: "S",
-  title: "PartNumber in [1, NumberOfParts], both non-negative integers",
-  check: (d) => {
-    const np = d.header?.numberOfParts, pn = d.header?.partNumber;
-    if (np == null || pn == null) return fail(`NumberOfParts=${np}, PartNumber=${pn} — both required`);
-    if (np < 1 || pn < 1 || pn > np) return fail(`Invalid: PartNumber=${pn}, NumberOfParts=${np}`);
-    if (!Number.isInteger(np) || !Number.isInteger(pn)) return fail("Must be integers");
-    return ok();
-  }});
-
-R({ id: "A-019", category: "Header", severity: "Reject", type: "C",
-  title: "FiscalYear range ≤ 366 days per file part",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    if (!isIsoDate(f) || !isIsoDate(t)) return ok();
-    const days = (new Date(t) - new Date(f)) / 86400000;
-    return days <= 366 ? ok() : fail(`Range ${Math.round(days)} days — must split multi-year audits`);
-  }});
-
-R({ id: "A-020", category: "Header", severity: "Reject", type: "C",
-  title: "AuditFileDateCreated must not predate FiscalYearTo",
-  check: (d) => {
-    const c = d.header?.auditFileDateCreated, t = d.header?.fiscalYearTo;
-    if (!c || !t) return ok();
-    return c.substring(0, 10) >= t ? ok() :
-      fail(`Created ${c.substring(0, 10)} before period end ${t}`);
-  }});
-
-R({ id: "A-021", category: "Header", severity: "Warn", type: "C",
-  title: "AuditFileDateCreated should not be in the future",
-  check: (d) => {
-    const c = d.header?.auditFileDateCreated;
-    if (!c) return ok();
-    const created = new Date(c), now = new Date(Date.now() + 86400000); // 1 day TZ tolerance
-    return created <= now ? ok() : fail(`Created '${c}' is in the future`);
-  }});
-
-R({ id: "A-022", category: "Header", severity: "Reject", type: "C",
-  title: "All dates between 1900-01-01 and 2099-12-31",
-  check: (d) => {
-    const bad = [];
-    const check = (val, where) => {
-      if (val && (val < "1900-01-01" || val > "2099-12-31T23:59:59")) bad.push(`${where}: ${val}`);
-    };
-    check(d.header?.fiscalYearFrom, "FiscalYearFrom");
-    check(d.header?.fiscalYearTo, "FiscalYearTo");
-    check(d.header?.auditFileDateCreated, "AuditFileDateCreated");
-    return bad.length ? fail(`Out-of-range dates: ${bad.length}`, bad) : ok();
-  }});
-
-R({ id: "A-023", category: "Header", severity: "Reject", type: "B",
-  title: "Multi-part: PartNumber must run sequentially across parts (single-file check informational)",
-  rationale: "Cross-part validation requires multiple files; flagged if metadata inconsistent.",
-  check: (d) => {
-    const np = d.header?.numberOfParts;
-    if (np > 1) return fail(`File declares part ${d.header?.partNumber} of ${np} — verify all parts submitted in sequence (cross-file check requires all parts)`);
-    return ok();
-  }});
-
-R({ id: "A-024", category: "Header", severity: "Reject", type: "B",
-  title: "MasterFiles populated only in PartNumber=1 of a multi-part split",
-  check: (d) => {
-    const pn = d.header?.partNumber, np = d.header?.numberOfParts;
-    if (np > 1 && pn > 1) {
-      const hasMaster = (d.accounts?.length || 0) > 0 || (d.customers?.length || 0) > 0 ||
-        (d.suppliers?.length || 0) > 0 || (d.products?.length || 0) > 0;
-      if (hasMaster) return fail(`PartNumber=${pn} of ${np} contains MasterFiles — only PartNumber=1 should`);
-    }
-    return ok();
-  }});
-
-R({ id: "A-025", category: "Header", severity: "Reject", type: "B",
-  title: "GL/F types: GeneralLedgerAccounts must be in every part or the last period",
-  check: (d) => {
-    if (!["GL", "F"].includes(d.header?.dataType)) return ok();
-    if ((d.header?.numberOfParts || 1) <= 1) return ok();
-    if ((d.accounts?.length || 0) === 0) {
-      return fail(`DataType=${d.header.dataType}, part ${d.header.partNumber}/${d.header.numberOfParts} has no GL accounts — must be in every part or last period`);
-    }
-    return ok();
-  }});
-
-R({ id: "A-026", category: "Header", severity: "Reject", type: "B",
-  title: "Only data groups marked 'X' for DataType may carry content (VA-127 Table 4)",
-  check: (d) => {
-    // Permissive heuristic: e.g., DataType=SI should mainly carry SalesInvoices; flag obvious mismatches
-    const dt = d.header?.dataType;
-    const issues = [];
-    if (dt === "SI" && (d.purchases?.items?.length || 0) > 0) issues.push("DataType=SI contains PurchaseInvoices");
-    if (dt === "PI" && (d.sales?.items?.length || 0) > 0) issues.push("DataType=PI contains SalesInvoices");
-    if (dt === "PA" && (d.transactions?.length || 0) > 0) issues.push("DataType=PA contains GL transactions");
-    if (dt === "MG" && (d.payments?.length || 0) > 0) issues.push("DataType=MG contains Payments");
-    return issues.length ? fail(issues.join("; ")) : ok();
-  }});
-
-R({ id: "A-027", category: "Header", severity: "Reject", type: "B",
-  title: "Inspected period exceeding one reporting year must be split",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    if (!isIsoDate(f) || !isIsoDate(t)) return ok();
-    return (new Date(t) - new Date(f)) / 86400000 <= 366 ? ok() :
-      fail("Period > 1 reporting year — split required by reporting year");
-  }});
-
-R({ id: "A-028", category: "Header", severity: "Reject", type: "B",
-  title: "Minimum period length = 1 month, maximum = 1 reporting year",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    if (!isIsoDate(f) || !isIsoDate(t)) return ok();
-    const days = (new Date(t) - new Date(f)) / 86400000;
-    if (days < 28) return fail(`Period ${Math.round(days)} days — less than 1 calendar month`);
-    if (days > 366) return fail(`Period ${Math.round(days)} days — exceeds 1 reporting year`);
-    return ok();
-  }});
-
-R({ id: "A-029", category: "Header", severity: "Warn", type: "B",
-  title: "VMI client tool sub-division must not alter NumberOfParts/PartNumber",
-  rationale: "Informational — values must originate from generating ERP, not be rewritten by upload client.",
-  check: () => ok()});
-
-R({ id: "A-030", category: "Header", severity: "Reject", type: "B",
-  title: "Header period values self-consistent across parts",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    if (!isIsoDate(f) || !isIsoDate(t)) return fail("Cannot verify cross-part consistency — date(s) invalid");
-    return ok();
-  }});
-
-R({ id: "A-031", category: "Header", severity: "Reject", type: "C",
-  title: "No ASCII control characters (0-8, 11, 12, 14-31) in text elements",
-  check: (d) => {
-    const offenders = [];
-    const scan = (obj, where) => {
-      if (typeof obj === "string" && hasControlChars(obj)) offenders.push(`${where}: '${obj.substring(0, 40)}'`);
-      else if (obj && typeof obj === "object") {
-        for (const [k, v] of Object.entries(obj)) {
-          if (typeof v === "string" && hasControlChars(v)) offenders.push(`${where}.${k}`);
-        }
-      }
-    };
-    scan(d.header, "Header");
-    (d.transactions || []).slice(0, 100).forEach((t) => scan(t.description, `Tx ${t.transactionID}.description`));
-    return offenders.length ? fail(`${offenders.length} elements with control chars`, offenders) : ok();
-  }});
-
-R({ id: "A-032", category: "Header", severity: "Warn", type: "C",
-  title: "Leading/trailing whitespace should be trimmed in text elements",
-  check: () => ok()  // Parser already trims; informational
-});
-
-R({ id: "A-033", category: "Header", severity: "Reject", type: "C",
-  title: "XML special characters must be escaped (handled by parser)",
-  check: (d) => d._parseError ? fail(`XML parse error: ${d._parseError}`) : ok()});
-
-R({ id: "A-034", category: "Header", severity: "Block", type: "S",
-  title: "String length limits per XSD simple types",
-  check: (d) => {
-    const issues = [];
-    (d.accounts || []).forEach((a) => {
-      if (a.accountID?.length > 70) issues.push(`Account ${a.accountID}: ID > 70 chars`);
-      if (a.accountDescription?.length > LEN.long) issues.push(`Account ${a.accountID}: description > 256`);
-    });
-    (d.customers || []).forEach((c) => {
-      if (c.customerID?.length > LEN.mid1) issues.push(`Customer ${c.customerID}: ID > 35`);
-    });
-    (d.suppliers || []).forEach((s) => {
-      if (s.supplierID?.length > LEN.mid1) issues.push(`Supplier ${s.supplierID}: ID > 35`);
-    });
-    return issues.length ? fail(`${issues.length} length violations`, issues) : ok();
-  }});
-
-R({ id: "A-035", category: "Header", severity: "Block", type: "S",
-  title: "Monetary values: 18 total digits, 2 fraction; decimal point, no thousands separators",
-  rationale: "Parser interprets numbers; raw XML inspection needed for definitive check.",
-  check: (d) => {
-    // Sample check: look for any extreme values
-    const oversized = (d.transactions || []).flatMap((t) =>
-      (t.lines || []).filter((l) =>
-        (l.debitAmount && Math.abs(l.debitAmount) > 9.99e15) ||
-        (l.creditAmount && Math.abs(l.creditAmount) > 9.99e15)
-      ).map((l) => `Tx ${t.transactionID} line ${l.recordID}`));
-    return oversized.length ? fail(`${oversized.length} amounts exceed 18-digit total`, oversized) : ok();
-  }});
-
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY B — Master Files (B-036 to B-110)
-// ════════════════════════════════════════════════════════════════════
-
-// B.1 General Ledger Accounts ──────────────────────────────────────────
-R({ id: "B-036", category: "Accounts", severity: "Block", type: "S",
-  title: "Account/AccountID ≤ 70 chars and unique",
-  check: (d) => {
-    const issues = [];
-    const seen = new Map();
-    (d.accounts || []).forEach((a) => {
-      if (!a.accountID) issues.push("Account with empty AccountID");
-      else if (a.accountID.length > 70) issues.push(`AccountID '${a.accountID}' > 70 chars`);
-      seen.set(a.accountID, (seen.get(a.accountID) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, c]) => c > 1).forEach(([id, c]) =>
-      issues.push(`Duplicate AccountID '${id}' appears ${c}×`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-037", category: "Accounts", severity: "Block", type: "S",
-  title: "Account/AccountDescription required, ≤ 256 chars",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      !a.accountDescription || a.accountDescription.length > LEN.long
-    ).map((a) => a.accountID);
-    return issues.length ? fail(`${issues.length} accounts missing/oversized description`, issues) : ok();
-  }});
-
-R({ id: "B-038", category: "Accounts", severity: "Block", type: "S",
-  title: "Account/AccountTableID and AccountTableDescription required",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      !a.accountTableID || !a.accountTableDescription
-    ).map((a) => a.accountID);
-    return issues.length ? fail(`${issues.length} accounts missing table mapping`, issues) : ok();
-  }});
-
-R({ id: "B-039", category: "Accounts", severity: "Block", type: "S",
-  title: "AccountType must be IT, TT, NK, I, P, S, or KT",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      !ACCOUNT_TYPES.has(a.accountType)
-    ).map((a) => `${a.accountID} type='${a.accountType}'`);
-    return issues.length ? fail(`${issues.length} invalid account types`, issues) : ok();
-  }});
-
-R({ id: "B-040", category: "Accounts", severity: "Block", type: "S",
-  title: "GroupingCategory if present must be S1L, S2L, S, D1L, or D",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      a.groupingCategory && !GROUPING_CATEGORIES.has(a.groupingCategory)
-    ).map((a) => `${a.accountID} cat='${a.groupingCategory}'`);
-    return issues.length ? fail(`${issues.length} invalid grouping categories`, issues) : ok();
-  }});
-
-R({ id: "B-041", category: "Accounts", severity: "Warn", type: "B",
-  title: "GroupingCode must point to existing higher-level account",
-  check: (d, ctx) => {
-    const issues = (d.accounts || []).filter((a) =>
-      a.groupingCode && !ctx.accountMap.has(a.groupingCode)
-    ).map((a) => `${a.accountID} → unknown ${a.groupingCode}`);
-    return issues.length ? fail(`${issues.length} orphan GroupingCodes`, issues) : ok();
-  }});
-
-R({ id: "B-042", category: "Accounts", severity: "Block", type: "S",
-  title: "All four balance elements present (use 0.00, not omission)",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      !a._hasOpeningDb || !a._hasOpeningCr || !a._hasClosingDb || !a._hasClosingCr
-    ).map((a) => a.accountID);
-    return issues.length ? fail(`${issues.length} accounts with missing balance tags`, issues) : ok();
-  }});
-
-R({ id: "B-043", category: "Accounts", severity: "Reject", type: "C",
-  title: "No negative balance values (use opposite side instead)",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      a.openingDebitBalance < 0 || a.openingCreditBalance < 0 ||
-      a.closingDebitBalance < 0 || a.closingCreditBalance < 0
-    ).map((a) => a.accountID);
-    return issues.length ? fail(`${issues.length} accounts with negative balances`, issues) : ok();
-  }});
-
-R({ id: "B-044", category: "Accounts", severity: "Warn", type: "C",
-  title: "Both debit and credit sides non-zero on same balance is rare",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      (a.openingDebitBalance > 0 && a.openingCreditBalance > 0) ||
-      (a.closingDebitBalance > 0 && a.closingCreditBalance > 0)
-    ).map((a) => `${a.accountID}: OpDb=${a.openingDebitBalance}, OpCr=${a.openingCreditBalance}, ClDb=${a.closingDebitBalance}, ClCr=${a.closingCreditBalance}`);
-    return issues.length ? fail(`${issues.length} accounts with bilateral balances`, issues) : ok();
-  }});
-
-R({ id: "B-045", category: "Accounts", severity: "Reject", type: "C",
-  title: "Sum opening debit = sum opening credit (TB equality at period start)",
-  check: (d, ctx, T) => {
-    const diff = Math.abs(ctx.sumOpeningDebit - ctx.sumOpeningCredit);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Opening TB unbalanced: ΣDb=${ctx.sumOpeningDebit.toFixed(2)}, ΣCr=${ctx.sumOpeningCredit.toFixed(2)}, diff=€${diff.toFixed(2)}`);
-  }});
-
-R({ id: "B-046", category: "Accounts", severity: "Reject", type: "C",
-  title: "Sum closing debit = sum closing credit (TB equality at period end)",
-  check: (d, ctx, T) => {
-    const diff = Math.abs(ctx.sumClosingDebit - ctx.sumClosingCredit);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Closing TB unbalanced: ΣDb=${ctx.sumClosingDebit.toFixed(2)}, ΣCr=${ctx.sumClosingCredit.toFixed(2)}, diff=€${diff.toFixed(2)}`);
-  }});
-
-R({ id: "B-047", category: "Accounts", severity: "Reject", type: "C",
-  title: "Per-account roll-forward: (OpDb−OpCr) + (Db−Cr) = (ClDb−ClCr)",
-  rationale: "The single most-checked rule in a VMI audit.",
-  check: (d, ctx, T) => {
-    const issues = [];
-    for (const a of d.accounts || []) {
-      const mv = ctx.accountMovements.get(a.accountID) || { debit: 0, credit: 0 };
-      const opening = (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0);
-      const closing = (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0);
-      const expected = opening + mv.debit - mv.credit;
-      const diff = Math.abs(expected - closing);
-      if (diff > T.roundingToleranceEur) {
-        issues.push(`${a.accountID}: expected ClBal ${expected.toFixed(2)}, got ${closing.toFixed(2)} (diff €${diff.toFixed(2)})`);
-      }
-    }
-    return issues.length ? fail(`${issues.length} accounts fail roll-forward`, issues) : ok();
-  }});
-
-R({ id: "B-048", category: "Accounts", severity: "Warn", type: "B",
-  title: "VAT/CIT control accounts should appear even if zero-activity",
-  check: (d) => {
-    // Heuristic: look for standard VAT/CIT account naming
-    const hasVat = (d.accounts || []).some((a) => /vat|pvm/i.test((a.accountDescription || "") + a.accountID));
-    const hasCit = (d.accounts || []).some((a) => /cit|pelno mokest/i.test((a.accountDescription || "") + a.accountID));
-    const missing = [];
-    if (!hasVat) missing.push("VAT control account");
-    if (!hasCit) missing.push("CIT control account");
-    return missing.length ? fail(`Possibly missing: ${missing.join(", ")}`) : ok();
-  }});
-
-// B.2 Customers ────────────────────────────────────────────────────────
-R({ id: "B-049", category: "Customers", severity: "Block", type: "S",
-  title: "Customer/CustomerID unique and ≤ 35 chars",
-  check: (d) => {
-    const issues = [], seen = new Map();
-    (d.customers || []).forEach((c) => {
-      if (c.customerID?.length > LEN.mid1) issues.push(`'${c.customerID}' > 35 chars`);
-      seen.set(c.customerID, (seen.get(c.customerID) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([id]) => issues.push(`Duplicate CustomerID '${id}'`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-050", category: "Customers", severity: "Block", type: "S",
-  title: "Customer/RegistrationNumber required, ≤ 35 chars",
-  check: (d) => {
-    const issues = (d.customers || []).filter((c) => !c.registrationNumber).map((c) => c.customerID);
-    return issues.length ? fail(`${issues.length} customers without RegistrationNumber`, issues) : ok();
-  }});
-
-R({ id: "B-051", category: "Customers", severity: "Block", type: "S",
-  title: "Customer/Name required",
-  check: (d) => {
-    const issues = (d.customers || []).filter((c) => !c.name).map((c) => c.customerID);
-    return issues.length ? fail(`${issues.length} customers without Name`, issues) : ok();
-  }});
-
-R({ id: "B-052", category: "Customers", severity: "Block", type: "S",
-  title: "Customer/Address with at least City and Country for transacting customers",
-  check: (d) => {
-    const issues = (d.customers || []).filter((c) =>
-      !c.addressCity || !c.addressCountry
-    ).map((c) => c.customerID);
-    return issues.length ? fail(`${issues.length} customers missing City/Country`, issues) : ok();
-  }});
-
-R({ id: "B-053", category: "Customers", severity: "Block", type: "S",
-  title: "Customer TaxRegistrationNumber must match country format (LT: LT + 9 or 12 digits)",
-  check: (d) => {
-    const issues = (d.customers || []).filter((c) => {
-      if (!c.taxRegistrationNumber) return false;
-      if (c.country === "LT" || /^LT/.test(c.taxRegistrationNumber)) {
-        return !isLtVatNumber(c.taxRegistrationNumber);
-      }
-      return false;
-    }).map((c) => `${c.customerID}: '${c.taxRegistrationNumber}'`);
-    return issues.length ? fail(`${issues.length} invalid LT VAT numbers`, issues) : ok();
-  }});
-
-R({ id: "B-054", category: "Customers", severity: "Block", type: "S",
-  title: "Customer/AccountID must reference an existing GL account",
-  check: (d, ctx) => {
-    const issues = (d.customers || []).filter((c) =>
-      c.accountID && !ctx.accountMap.has(c.accountID)
-    ).map((c) => `${c.customerID} → unknown account '${c.accountID}'`);
-    return issues.length ? fail(`${issues.length} orphan AccountID references`, issues) : ok();
-  }});
-
-R({ id: "B-055", category: "Customers", severity: "Block", type: "S",
-  title: "SelfBillingIndicator if present must equal 'V'",
-  check: (d) => {
-    const issues = (d.customers || []).filter((c) =>
-      c.selfBillingIndicator && c.selfBillingIndicator !== SELF_BILLING_IND
-    ).map((c) => `${c.customerID}: '${c.selfBillingIndicator}'`);
-    return issues.length ? fail(`${issues.length} invalid SelfBillingIndicator values`, issues) : ok();
-  }});
-
-R({ id: "B-056", category: "Customers", severity: "Block", type: "S",
-  title: "Customer balance elements must be supplied (0.00 if zero)",
-  check: () => ok()  // Parser defaults to 0; original tag presence harder to verify after parse
-});
-
-R({ id: "B-057", category: "Customers", severity: "Warn", type: "C",
-  title: "Sum customer opening (debit-credit) reconciles to receivables control",
-  check: (d, ctx, T) => {
-    const acctReceivables = (d.customers || [])
-      .map((c) => c.accountID).filter(Boolean);
-    const uniq = [...new Set(acctReceivables)];
-    if (!uniq.length) return ok();
-    const customerSum = (d.customers || []).reduce((s, c) =>
-      s + (c.openingDebitBalance || 0) - (c.openingCreditBalance || 0), 0);
-    const accountSum = uniq.reduce((s, id) => {
-      const a = ctx.accountMap.get(id);
-      return s + (a ? (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0) : 0);
-    }, 0);
-    const diff = Math.abs(customerSum - accountSum);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Customer opening sum €${customerSum.toFixed(2)} vs control account sum €${accountSum.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "B-058", category: "Customers", severity: "Warn", type: "C",
-  title: "Sum customer closing (debit-credit) reconciles to receivables control",
-  check: (d, ctx, T) => {
-    const uniq = [...new Set((d.customers || []).map((c) => c.accountID).filter(Boolean))];
-    if (!uniq.length) return ok();
-    const customerSum = (d.customers || []).reduce((s, c) =>
-      s + (c.closingDebitBalance || 0) - (c.closingCreditBalance || 0), 0);
-    const accountSum = uniq.reduce((s, id) => {
-      const a = ctx.accountMap.get(id);
-      return s + (a ? (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0) : 0);
-    }, 0);
-    const diff = Math.abs(customerSum - accountSum);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Customer closing sum €${customerSum.toFixed(2)} vs control account sum €${accountSum.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "B-059", category: "Customers", severity: "Warn", type: "B",
-  title: "Generic placeholder names ('Cash customer', 'Unknown') only for retail aggregates",
-  check: (d) => {
-    const issues = (d.customers || []).filter((c) =>
-      /^(cash customer|unknown|various|n\/a|test|temp|tbd|nezinomas|kt\.)$/i.test((c.name || "").trim())
-    ).map((c) => `${c.customerID}: '${c.name}'`);
-    return issues.length ? fail(`${issues.length} placeholder customer names`, issues) : ok();
-  }});
-
-R({ id: "B-060", category: "Customers", severity: "Warn", type: "C",
-  title: "Single RegistrationNumber mapped to multiple CustomerIDs (duplicate master)",
-  check: (d) => {
-    const map = new Map();
-    (d.customers || []).forEach((c) => {
-      if (!c.registrationNumber) return;
-      const arr = map.get(c.registrationNumber) || [];
-      arr.push(c.customerID);
-      map.set(c.registrationNumber, arr);
-    });
-    const dups = [...map.entries()].filter(([, ids]) => ids.length > 1).map(([rn, ids]) =>
-      `RegNum ${rn} → ${ids.join(", ")}`);
-    return dups.length ? fail(`${dups.length} duplicate customer masters`, dups) : ok();
-  }});
-
-R({ id: "B-061", category: "Customers", severity: "Reject", type: "C",
-  title: "OpenSalesInvoices: UnpaidAmount ≤ Amount",
-  check: (d) => {
-    const issues = [];
-    (d.customers || []).forEach((c) => (c.openSalesInvoices || []).forEach((o) => {
-      if (o.unpaidAmount > o.amount + 0.02) {
-        issues.push(`${c.customerID} inv ${o.invoiceNo}: unpaid €${o.unpaidAmount} > amount €${o.amount}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} overpaid open invoices`, issues) : ok();
-  }});
-
-R({ id: "B-062", category: "Customers", severity: "Reject", type: "C",
-  title: "OpenSalesInvoices: InvoiceDate ≤ GLPostingDate",
-  check: (d) => {
-    const issues = [];
-    (d.customers || []).forEach((c) => (c.openSalesInvoices || []).forEach((o) => {
-      if (o.invoiceDate && o.glPostingDate && o.invoiceDate > o.glPostingDate) {
-        issues.push(`${c.customerID} inv ${o.invoiceNo}: invoiceDate ${o.invoiceDate} > glPostingDate ${o.glPostingDate}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} date inconsistencies`, issues) : ok();
-  }});
-
-R({ id: "B-063", category: "Customers", severity: "Reject", type: "C",
-  title: "OpenSalesInvoices CurrencyAmount/CurrencyCode self-consistent",
-  check: (d) => {
-    const issues = [];
-    (d.customers || []).forEach((c) => (c.openSalesInvoices || []).forEach((o) => {
-      if (o.currencyCode && !ISO_4217.has(o.currencyCode)) {
-        issues.push(`${c.customerID} inv ${o.invoiceNo}: bad currency '${o.currencyCode}'`);
-      }
-      if (o.currencyAmount != null && o.amount != null) {
-        if ((o.currencyAmount < 0) !== (o.amount < 0)) {
-          issues.push(`${c.customerID} inv ${o.invoiceNo}: sign mismatch`);
-        }
-      }
-    }));
-    return issues.length ? fail(`${issues.length} currency inconsistencies`, issues) : ok();
-  }});
-
-// B.3 Suppliers (B-064 to B-078) — mirror customer rules
-const supplierChecks = [
-  { id: "B-064", title: "Supplier/SupplierID unique and ≤ 35 chars",
-    fn: (d) => {
-      const issues = [], seen = new Map();
-      (d.suppliers || []).forEach((s) => {
-        if (s.supplierID?.length > LEN.mid1) issues.push(`'${s.supplierID}' > 35`);
-        seen.set(s.supplierID, (seen.get(s.supplierID) || 0) + 1);
-      });
-      [...seen.entries()].filter(([, n]) => n > 1).forEach(([id]) => issues.push(`Duplicate SupplierID '${id}'`));
-      return issues;
-    }},
-  { id: "B-065", title: "Supplier/RegistrationNumber required",
-    fn: (d) => (d.suppliers || []).filter((s) => !s.registrationNumber).map((s) => s.supplierID)},
-  { id: "B-066", title: "Supplier/Name required",
-    fn: (d) => (d.suppliers || []).filter((s) => !s.name).map((s) => s.supplierID)},
-  { id: "B-067", title: "Supplier/Address: City and Country required",
-    fn: (d) => (d.suppliers || []).filter((s) => !s.addressCity || !s.addressCountry).map((s) => s.supplierID)},
-  { id: "B-068", title: "Supplier TaxRegistrationNumber LT format check",
-    fn: (d) => (d.suppliers || []).filter((s) =>
-      s.taxRegistrationNumber && /^LT/.test(s.taxRegistrationNumber) && !isLtVatNumber(s.taxRegistrationNumber)
-    ).map((s) => `${s.supplierID}: '${s.taxRegistrationNumber}'`)},
-  { id: "B-069", title: "Supplier/AccountID must reference existing GL account",
-    fn: (d, ctx) => (d.suppliers || []).filter((s) =>
-      s.accountID && !ctx.accountMap.has(s.accountID)
-    ).map((s) => `${s.supplierID} → ${s.accountID}`)},
-  { id: "B-070", title: "Supplier SelfBillingIndicator if present must be 'V'",
-    fn: (d) => (d.suppliers || []).filter((s) =>
-      s.selfBillingIndicator && s.selfBillingIndicator !== SELF_BILLING_IND
-    ).map((s) => s.supplierID)},
-  { id: "B-071", title: "Supplier balance elements must be supplied",
-    fn: () => []},
-  { id: "B-072", title: "Sum supplier opening reconciles to payables control",
-    fn: (d, ctx, T) => {
-      const uniq = [...new Set((d.suppliers || []).map((s) => s.accountID).filter(Boolean))];
-      if (!uniq.length) return [];
-      const supSum = (d.suppliers || []).reduce((s, x) =>
-        s + (x.openingCreditBalance || 0) - (x.openingDebitBalance || 0), 0);
-      const accSum = uniq.reduce((s, id) => {
-        const a = ctx.accountMap.get(id);
-        return s + (a ? (a.openingCreditBalance || 0) - (a.openingDebitBalance || 0) : 0);
-      }, 0);
-      const diff = Math.abs(supSum - accSum);
-      return diff <= T.roundingToleranceEur ? [] : [`Supplier opening €${supSum.toFixed(2)} vs control €${accSum.toFixed(2)}, diff €${diff.toFixed(2)}`];
-    }},
-  { id: "B-073", title: "Sum supplier closing reconciles to payables control",
-    fn: (d, ctx, T) => {
-      const uniq = [...new Set((d.suppliers || []).map((s) => s.accountID).filter(Boolean))];
-      if (!uniq.length) return [];
-      const supSum = (d.suppliers || []).reduce((s, x) =>
-        s + (x.closingCreditBalance || 0) - (x.closingDebitBalance || 0), 0);
-      const accSum = uniq.reduce((s, id) => {
-        const a = ctx.accountMap.get(id);
-        return s + (a ? (a.closingCreditBalance || 0) - (a.closingDebitBalance || 0) : 0);
-      }, 0);
-      const diff = Math.abs(supSum - accSum);
-      return diff <= T.roundingToleranceEur ? [] : [`Supplier closing €${supSum.toFixed(2)} vs control €${accSum.toFixed(2)}, diff €${diff.toFixed(2)}`];
-    }},
-  { id: "B-074", title: "Generic supplier placeholder names flagged",
-    fn: (d) => (d.suppliers || []).filter((s) =>
-      /^(unknown|various|n\/a|test|nezinomas|tiekejas)$/i.test((s.name || "").trim())
-    ).map((s) => `${s.supplierID}: '${s.name}'`)},
-  { id: "B-075", title: "Duplicate supplier RegistrationNumber → multiple SupplierIDs",
-    fn: (d) => {
-      const map = new Map();
-      (d.suppliers || []).forEach((s) => {
-        if (!s.registrationNumber) return;
-        const arr = map.get(s.registrationNumber) || [];
-        arr.push(s.supplierID);
-        map.set(s.registrationNumber, arr);
-      });
-      return [...map.entries()].filter(([, ids]) => ids.length > 1).map(([rn, ids]) => `${rn} → ${ids.join(", ")}`);
-    }},
-  { id: "B-076", title: "OpenPurchaseInvoices UnpaidAmount ≤ Amount",
-    fn: (d) => {
-      const issues = [];
-      (d.suppliers || []).forEach((s) => (s.openPurchaseInvoices || []).forEach((o) => {
-        if (o.unpaidAmount > o.amount + 0.02) {
-          issues.push(`${s.supplierID} inv ${o.invoiceNo}: unpaid €${o.unpaidAmount} > €${o.amount}`);
-        }
-      }));
-      return issues;
-    }},
-  { id: "B-077", title: "OpenPurchaseInvoices InvoiceDate ≤ GLPostingDate",
-    fn: (d) => {
-      const issues = [];
-      (d.suppliers || []).forEach((s) => (s.openPurchaseInvoices || []).forEach((o) => {
-        if (o.invoiceDate && o.glPostingDate && o.invoiceDate > o.glPostingDate) {
-          issues.push(`${s.supplierID} inv ${o.invoiceNo}`);
-        }
-      }));
-      return issues;
-    }},
+// EU member-state code set used across several rules (as in the source SQL).
+const EU_COUNTRIES = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","EL","ES","NL","IE","LU","LV","MT","DE","PT","RO","SK","SI","SE","HU","GB","IT"];
+const EU_WITH_LT = [...EU_COUNTRIES, "LT"];
+
+// Resolve a line's STITaxCode (PVM1/PVM13/…) from the tax table, falling back
+// to the line's own tax code. Mirrors JOIN TaxTableEntryDetail ON tax_code.
+function stiOf(line, taxIndex) {
+  const code = line?.tax?.taxCode || "";
+  if (taxIndex && taxIndex[code]) return taxIndex[code];
+  return code; // some files already carry the STI code directly
+}
+// goods_services_id IS NOT NULL ? = X : product_code = X   (the CASE in the SQL)
+function classMatches(line, X) {
+  const g = (line?.goodsServicesID || "").trim();
+  if (g) return g === X;
+  return (line?.productCode || "").trim() === X;
+}
+const auditR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Build STITaxCode lookup from parsed taxCodes: { TaxCode → STITaxCode }.
+function buildTaxIndex(data) {
+  const idx = {};
+  (data?.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; });
+  return idx;
+}
+
+// ── The 13 rules ──────────────────────────────────────────────────────
+// severity: High → "Reject", Low → "Warn"  (kept as the source "Reikšmingumas")
+const AUDIT_RULES = [
+  {
+    id: "PP_LT_PVM_106", severity: "High", level: 3, dataTypes: "F-Full; SI-Invoices", refType: "SaftLt::InvoiceLine", scope: "sales",
+    title: "Deklaruotas vietinis prekių tiekimas, kai nėra duomenų, kurioje valstybėje pasibaigė prekių tiekimas",
+    titleEn: "Declared local supply of goods with no destination (Ship-To) country",
+    description: "Vadovaujantis PVM įstatymo 4 straipsniu, jei prekės perduodamos kitam asmeniui Lietuvos teritorijoje, prekių tiekimas laikomas įvykusiu Lietuvoje. Testas pateikia prekių pardavimo sąskaitas su PVM kodu PVM1, kuriose Ship From = LT, tačiau nėra Ship To šalies. Jei tiekimas pasibaigė ne Lietuvoje, sandoris galimai neturėjo būti klasifikuojamas PVM1.",
+    legal: "PVMĮ 4 str.", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | NetTotal = @NetTotal",
+    fixEn: 'Confirm where the supply of goods actually ended (Ship-To). If the goods left Lithuania, reclassify the line away from PVM1 (e.g. intra-EU 0% or export); if they stayed in LT, add the missing Ship-To country to the invoice.', fixLt: 'Patikrinkite, kur faktiškai pasibaigė prekių tiekimas (Ship-To). Jei prekės išvyko iš Lietuvos, perklasifikuokite eilutę iš PVM1 (pvz. 0% ES viduje ar eksportas); jei liko LT — pridėkite trūkstamą Ship-To šalį sąskaitoje.',
+    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
+      (inv.lines || []).some((l) => classMatches(l, "PR") && stiOf(l, taxIndex) === "PVM1")
+      && !inv.shipToCountry && inv.shipFromCountry === "LT"
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry || "—", ShipFromCountry: inv.shipFromCountry, NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_100", severity: "High", level: 3, dataTypes: "F-Full; SI-Invoices", refType: "SaftLt::InvoiceLine", scope: "sales",
+    title: "Deklaruotas vietinis prekių tiekimas, kai prekių tiekimas pasibaigė kitoje ES valstybėje",
+    titleEn: "Declared local supply where goods ended in another EU member state",
+    description: "PVMĮ 4 str. pagrindu. Testas pateikia pardavimo sąskaitas su PVM1, kuriose Ship To yra kita ES valstybė. Rizika, kad įvyko tiekimas į kitą ES valstybę narę ir Bendrovė nepagrįstai išskyrė PVM.",
+    legal: "PVMĮ 4 str.", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | NetTotal = @NetTotal",
+    fixEn: "Confirm the place of supply. If the goods were delivered to another EU member state, the supply is likely a 0% intra-EU supply (PVM13), not local PVM1 — correct the VAT code and obtain the customer's valid EU VAT number.", fixLt: 'Patikrinkite tiekimo vietą. Jei prekės pristatytos į kitą ES valstybę narę, tai greičiausiai 0% tiekimas ES viduje (PVM13), ne vietinis PVM1 — pataisykite PVM kodą ir gaukite galiojantį pirkėjo ES PVM kodą.',
+    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
+      (inv.lines || []).some((l) => classMatches(l, "PS") && stiOf(l, taxIndex) === "PVM1")
+      && inv.shipToCountry && EU_COUNTRIES.includes(inv.shipToCountry)
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry, ShipFromCountry: inv.shipFromCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_070", severity: "High", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice", scope: "purchases",
+    title: "Paslaugų įsigijimas Lietuvoje, kai teikėjas nurodo kitos ES/ne ES valstybės PVM kodą, tačiau įsikūrimo adresas — Lietuva",
+    titleEn: "Local purchase with foreign supplier VAT-reg but supplier address in Lithuania",
+    description: "PVMĮ 19 str. 1 d. pagrindu (standartinis tarifas). Pirkimo sąskaitos su PVM1, kai teikėjo PVM registracijos šalis ≠ LT, bet teikėjo adreso šalis = LT. Rizika, kad teikėjas negalėjo išskirti vietinio PVM.",
+    legal: "PVMĮ 19 str. 1 d.; VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | SupplierTaxReg = @SupplierTaxRegNumberType; @SupplierTaxRegNumberCountry | SupplierAddressCountry = @SupplierAddressCountry | NetTotal = @NetTotal",
+    fixEn: "Verify whether the supplier is actually VAT-registered in Lithuania. If the supplier is established in LT but used a foreign VAT number, local VAT (PVM1) may be wrong — consider reverse charge and correct the supplier's tax registration data.", fixLt: 'Patikrinkite, ar teikėjas tikrai registruotas PVM mokėtoju Lietuvoje. Jei teikėjas įsikūręs LT, bet nurodė užsienio PVM kodą, vietinis PVM1 gali būti neteisingas — apsvarstykite atvirkštinį apmokestinimą ir pataisykite teikėjo registracijos duomenis.',
+    evaluate: (data, taxIndex) => (data?.purchases?.items || []).filter((inv) =>
+      (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM1")
+      && inv.supplierTaxRegCountry && inv.supplierTaxRegCountry !== "LT" && inv.supplierAddressCountry === "LT"
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, SupplierTaxRegNumberType: inv.supplierTaxRegType || "—", SupplierTaxRegNumberCountry: inv.supplierTaxRegCountry, SupplierAddressCountry: inv.supplierAddressCountry, NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_068", severity: "High", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice", scope: "purchases",
+    title: "Paslaugų įsigijimas Lietuvoje, kai paslaugas suteikia ne PVM mokėtojas Lietuvoje",
+    titleEn: "Local purchase where the supplier is a Lithuanian non-VAT registrant",
+    description: "PVMĮ 19 str. 1 d. pagrindu. Pirkimo sąskaitos su PVM1, kai teikėjo PVM registracijos šalis = LT, bet registracijos tipas ≠ PVM. Rizika, kad teikėjas negalėjo išskirti vietinio PVM.",
+    legal: "PVMĮ 19 str. 1 d.; VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | SupplierTaxReg = @SupplierTaxRegNumberType; @SupplierTaxRegNumberCountry | SupplierAddressCountry = @SupplierAddressCountry | NetTotal = @NetTotal",
+    fixEn: 'Confirm whether the Lithuanian supplier was entitled to charge local VAT. If the supplier is not a registered VAT payer (registration type ≠ PVM), the input VAT may not be deductible — request a corrected invoice.', fixLt: 'Patikrinkite, ar Lietuvos teikėjas turėjo teisę išskirti vietinį PVM. Jei teikėjas nėra registruotas PVM mokėtojas (registracijos tipas ≠ PVM), pirkimo PVM gali būti neatskaitomas — paprašykite pataisytos sąskaitos.',
+    evaluate: (data, taxIndex) => (data?.purchases?.items || []).filter((inv) =>
+      (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM1")
+      && inv.supplierTaxRegCountry === "LT" && inv.supplierTaxRegType && inv.supplierTaxRegType !== "PVM"
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, SupplierTaxRegNumberType: inv.supplierTaxRegType, SupplierTaxRegNumberCountry: inv.supplierTaxRegCountry, SupplierAddressCountry: inv.supplierAddressCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_054", severity: "High", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
+    title: "Trikampės prekybos sandoriai, kai tiekėjas nurodė ne PVM kodą arba nenurodė kodo tipo",
+    titleEn: "Triangular-trade sales where supplier VAT-reg type is not PVM or missing",
+    description: "Pardavimo sąskaitos su PVM19, kai Ship From ir Ship To yra skirtingos ES valstybės (ne LT), o teikėjo PVM registracijos tipas ≠ PVM arba nenurodytas. Galima netinkama trikampės prekybos klasifikacija.",
+    legal: "PVMĮ (trikampė prekyba)", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | SupplierTaxReg = @SupplierTaxRegType; @SupplierTaxRegCountry | NetTotal = @NetTotal",
+    fixEn: "Review the triangular-trade treatment: confirm the chain of supply between the two EU states and the supplier's VAT-registration type. If it is not a valid triangular transaction, the PVM19 classification should be corrected.", fixLt: 'Peržiūrėkite trikampės prekybos vertinimą: patikrinkite tiekimo grandinę tarp dviejų ES valstybių ir teikėjo PVM registracijos tipą. Jei tai ne tinkamas trikampis sandoris, PVM19 klasifikaciją reikia pataisyti.',
+    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
+      inv.shipToCountry && inv.shipFromCountry && EU_COUNTRIES.includes(inv.shipToCountry) && EU_COUNTRIES.includes(inv.shipFromCountry)
+      && inv.shipFromCountry !== inv.shipToCountry
+      && (!inv.supplierTaxRegType || inv.supplierTaxRegType !== "PVM")
+      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM19")
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry, ShipFromCountry: inv.shipFromCountry, SupplierTaxRegType: inv.supplierTaxRegType || "—", SupplierTaxRegCountry: inv.supplierTaxRegCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_011", severity: "High", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
+    title: "Prekių tiekimas į kitą ES valstybę, kai prekės buvo išgabentos ne už ES ribų",
+    titleEn: "Intra-EU supply (PVM13) where Ship-To is inside the EU (possible misclassification)",
+    description: "Pardavimo sąskaitos su PVM13 (0% intra-EU), kai Ship To yra ES valstybė (įskaitant LT). PVM13 skirtas tiekimui į kitą ES narę; jei prekės liko ES viduje/LT, klasifikacija gali būti neteisinga.",
+    legal: "PVMĮ 49 str. (0% intra-EU)", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipTo | ShipFrom = @ShipFrom | NetTotal = @NetTotal",
+    fixEn: 'Confirm the goods were dispatched to another EU member state. The 0% intra-EU rate (PVM13) requires movement to another member state; if the goods stayed in LT or left the EU, reclassify accordingly.', fixLt: 'Patikrinkite, ar prekės išgabentos į kitą ES valstybę narę. 0% tarifas ES viduje (PVM13) reikalauja gabenimo į kitą valstybę narę; jei prekės liko LT ar paliko ES, perklasifikuokite atitinkamai.',
+    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
+      inv.shipToCountry && EU_WITH_LT.includes(inv.shipToCountry)
+      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM13")
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipTo: inv.shipToCountry, ShipFrom: inv.shipFromCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_010", severity: "High", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
+    title: "Prekių tiekimas į kitą ES valstybę prasidėjo ne Lietuvos teritorijoje",
+    titleEn: "Intra-EU supply (PVM13) that did not start in Lithuania",
+    description: "Pardavimo sąskaitos su PVM13, kai Ship From ≠ LT. 0% intra-EU tiekimas iš LT turėtų prasidėti Lietuvoje.",
+    legal: "PVMĮ 49 str. (0% intra-EU)", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | NetTotal = @NetTotal",
+    fixEn: 'Confirm the dispatch started in Lithuania. A 0% intra-EU supply declared from LT (PVM13) should begin in LT; if it started elsewhere, the LT VAT treatment is likely wrong.', fixLt: 'Patikrinkite, ar gabenimas prasidėjo Lietuvoje. 0% tiekimas ES viduje, deklaruotas iš LT (PVM13), turėtų prasidėti LT; jei prasidėjo kitur, LT PVM vertinimas greičiausiai neteisingas.',
+    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
+      inv.shipFromCountry && inv.shipFromCountry !== "LT"
+      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM13")
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry || "—", ShipFromCountry: inv.shipFromCountry, NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_116", severity: "Low", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine", scope: "sales",
+    title: "Ilgalaikio turto pardavimas Lietuvoje",
+    titleEn: "Sale of fixed assets in Lithuania (informational)",
+    description: "Pardavimo sąskaitų eilutės su klasifikacija IT (ilgalaikis turtas) ir PVM1. Informacinis testas ilgalaikio turto pardavimams peržiūrėti.",
+    legal: "PVMĮ; VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
+    fixEn: 'Review the fixed-asset sale and confirm the VAT treatment is correct for the asset disposal (informational — no action required if treatment is verified).', fixLt: 'Peržiūrėkite ilgalaikio turto pardavimą ir patikrinkite, ar PVM vertinimas teisingas turto perleidimui (informacinis — veiksmų nereikia, jei vertinimas patvirtintas).',
+    evaluate: (data, taxIndex) => { const out=[]; (data?.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
+      if (classMatches(l, "IT") && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID || "—", ProductCode: l.productCode || "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
+    })); return out; },
+  },
+  {
+    id: "PP_LT_PVM_115", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoiceLine", scope: "purchases",
+    title: "Vietiniai įsigijimai, kai nėra duomenų, ar tiekiamos prekės ar teikiamos paslaugos",
+    titleEn: "Local purchase line where goods/services class is set but product code is missing",
+    description: "Pirkimo eilutės su PVM1, kai goods_services_id užpildytas, bet product_code tuščias. Duomenų pilnumo patikra prekės/paslaugos klasifikacijai.",
+    legal: "VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
+    fixEn: 'Add the missing product code so the goods/services classification of the line is complete and consistent with the goods-services indicator.', fixLt: 'Pridėkite trūkstamą produkto kodą, kad eilutės prekių/paslaugų klasifikacija būtų pilna ir atitiktų prekių-paslaugų požymį.',
+    evaluate: (data, taxIndex) => { const out=[]; (data?.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
+      if ((l.goodsServicesID || "").trim() && !((l.productCode || "").trim()) && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID, ProductCode: "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
+    })); return out; },
+  },
+  {
+    id: "PP_LT_PVM_114", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoiceLine", scope: "purchases",
+    title: "Kiti sandoriai, kurie laikomi įsigijimais Lietuvoje",
+    titleEn: "Other transactions classified as acquisitions in Lithuania (class KT)",
+    description: "Pirkimo eilutės su klasifikacija KT (kita) ir PVM1. Peržiūrai pateikiami kiti sandoriai, laikomi įsigijimais Lietuvoje.",
+    legal: "VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
+    fixEn: "Review the transaction classified as 'other' (KT) and confirm it is correctly treated as a Lithuanian acquisition at standard VAT (PVM1).", fixLt: 'Peržiūrėkite kaip „kita“ (KT) klasifikuotą sandorį ir patikrinkite, ar jis teisingai vertinamas kaip įsigijimas Lietuvoje su standartiniu PVM (PVM1).',
+    evaluate: (data, taxIndex) => { const out=[]; (data?.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
+      if (classMatches(l, "KT") && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID || "—", ProductCode: l.productCode || "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
+    })); return out; },
+  },
+  {
+    id: "PP_LT_PVM_113", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoiceLine", scope: "purchases",
+    title: "Ilgalaikio turto įsigijimas Lietuvoje",
+    titleEn: "Acquisition of fixed assets in Lithuania (informational)",
+    description: "Pirkimo eilutės su klasifikacija IT (ilgalaikis turtas) ir PVM1. Informacinis testas ilgalaikio turto įsigijimams peržiūrėti.",
+    legal: "VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
+    fixEn: 'Review the fixed-asset acquisition and confirm the VAT treatment and deductibility are correct (informational — no action required if verified).', fixLt: 'Peržiūrėkite ilgalaikio turto įsigijimą ir patikrinkite, ar PVM vertinimas ir atskaita teisingi (informacinis — veiksmų nereikia, jei patvirtinta).',
+    evaluate: (data, taxIndex) => { const out=[]; (data?.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
+      if (classMatches(l, "IT") && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID || "—", ProductCode: l.productCode || "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
+    })); return out; },
+  },
+  {
+    id: "PP_LT_PVM_061", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice", scope: "purchases",
+    title: "Paslaugų įsigijimas iš ne ES PVM mokėtojo",
+    titleEn: "Purchase (PVM20) from a non-EU supplier VAT-registration",
+    description: "Pirkimo sąskaitos su PVM20, kai teikėjo PVM registracijos šalis nenurodyta arba yra ne ES valstybė. Peržiūrai pateikiami įsigijimai iš ne ES PVM mokėtojų.",
+    legal: "PVMĮ (atvirkštinis apmokestinimas / importas)", failTpl: "InvoiceNo = @InvoiceNo | SupplierTaxReg = @SupplierTaxRegNumberType; @SupplierTaxRegNumberCountry | NetTotal = @NetTotal",
+    fixEn: 'Review the acquisition from a non-EU supplier and confirm the correct treatment (import VAT / reverse charge) was applied for PVM20.', fixLt: 'Peržiūrėkite įsigijimą iš ne ES teikėjo ir patikrinkite, ar PVM20 atveju pritaikytas teisingas vertinimas (importo PVM / atvirkštinis apmokestinimas).',
+    evaluate: (data, taxIndex) => (data?.purchases?.items || []).filter((inv) =>
+      (!inv.supplierTaxRegCountry || !EU_WITH_LT.includes(inv.supplierTaxRegCountry))
+      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM20")
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, SupplierTaxRegNumberType: inv.supplierTaxRegType || "—", SupplierTaxRegNumberCountry: inv.supplierTaxRegCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
+  {
+    id: "PP_LT_PVM_021", severity: "Low", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
+    title: "Prekių tiekimas į kitą ES valstybę, kai sąskaitose nėra nuorodos į 0 procentų PVM taikymą",
+    titleEn: "Intra-EU supply (PVM13) with no reference justifying the 0% rate",
+    description: "Pardavimo sąskaitos su PVM13, kuriose nėra nuorodos (Reference), pagrindžiančios 0% PVM taikymą. 0% intra-EU tiekimas paprastai reikalauja nuorodos į PVMĮ nuostatą.",
+    legal: "PVMĮ 49 str.; reikalavimas nurodyti pagrindą", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | Reference = @Reference | NetTotal = @NetTotal",
+    fixEn: 'Add the reference to the PVMĮ provision (e.g. Art. 49) justifying the 0% rate on the invoice. Intra-EU 0% supplies (PVM13) must state the legal basis for the exemption.', fixLt: 'Pridėkite nuorodą į PVMĮ nuostatą (pvz. 49 str.), pagrindžiančią 0% tarifą sąskaitoje. 0% tiekimai ES viduje (PVM13) turi nurodyti atleidimo teisinį pagrindą.',
+    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
+      !((inv.references || "").trim())
+      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM13")
+    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry || "—", ShipFromCountry: inv.shipFromCountry || "—", Reference: inv.references || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
+  },
 ];
-supplierChecks.forEach(({ id, title, fn }) => R({
-  id, category: "Suppliers",
-  severity: id === "B-072" || id === "B-073" || id === "B-074" || id === "B-075" ? "Warn" : (id >= "B-076" ? "Reject" : "Block"),
-  type: id === "B-072" || id === "B-073" || id === "B-074" || id === "B-075" ? "C" : (id >= "B-076" ? "C" : "S"),
-  title,
-  check: (d, ctx, T) => {
-    const out = fn(d, ctx, T);
-    return out.length ? fail(`${out.length} issues`, out) : ok();
-  }
-}));
 
-R({ id: "B-078", category: "Suppliers", severity: "Warn", type: "C",
-  title: "Entity as both Customer and Supplier must use different IDs",
-  check: (d) => {
-    const custRegs = new Map();
-    (d.customers || []).forEach((c) => c.registrationNumber && custRegs.set(c.registrationNumber, c.customerID));
-    const issues = (d.suppliers || []).filter((s) =>
-      s.registrationNumber && custRegs.has(s.registrationNumber) && custRegs.get(s.registrationNumber) === s.supplierID
-    ).map((s) => `Same ID ${s.supplierID} used for customer & supplier with RegNum ${s.registrationNumber}`);
-    return issues.length ? fail(`${issues.length} dual-role ID collisions`, issues) : ok();
-  }});
+// Render a failure-message template by substituting @fields from a hit row.
+function renderFailMsg(tpl, row) {
+  return String(tpl || "").replace(/@(\w+)/g, (m, k) => (row[k] != null ? String(row[k]) : m));
+}
+
+// Run all audit rules against parsed SAF-T data.
+function runAuditRules(data) {
+  const taxIndex = buildTaxIndex(data);
+  const hasSales = (data?.sales?.items?.length || 0) > 0;
+  const hasPurch = (data?.purchases?.items?.length || 0) > 0;
+  const results = AUDIT_RULES.map((rule) => {
+    const applicable = rule.scope === "sales" ? hasSales : hasPurch;
+    let hits = [];
+    let error = null;
+    if (applicable) { try { hits = rule.evaluate(data, taxIndex) || []; } catch (e) { error = e.message; } }
+    const status = error ? "error" : !applicable ? "na" : hits.length ? "flagged" : "clear";
+    return {
+      id: rule.id, severity: rule.severity, level: rule.level, dataTypes: rule.dataTypes, refType: rule.refType, scope: rule.scope,
+      title: rule.title, titleEn: rule.titleEn, description: rule.description, legal: rule.legal,
+      status, count: hits.length, error,
+      hits: hits.slice(0, 200).map((row) => ({ row, msg: renderFailMsg(rule.failTpl, row) })),
+    };
+  });
+  const flagged = results.filter((r) => r.status === "flagged");
+  const summary = {
+    total: AUDIT_RULES.length,
+    flagged: flagged.length,
+    clear: results.filter((r) => r.status === "clear").length,
+    na: results.filter((r) => r.status === "na").length,
+    findings: results.reduce((s, r) => s + (r.status === "flagged" ? r.count : 0), 0),
+    high: flagged.filter((r) => r.severity === "High").length,
+    low: flagged.filter((r) => r.severity === "Low").length,
+  };
+  return { results, summary };
+}
 
-// B.4 Tax Table ────────────────────────────────────────────────────────
-R({ id: "B-079", category: "TaxTable", severity: "Block", type: "S",
-  title: "TaxType ≤ 24 chars",
-  check: (d) => {
-    const issues = (d.taxCodes || []).filter((t) => t.taxType?.length > LEN.code).map((t) => t.taxCode);
-    return issues.length ? fail(`${issues.length} TaxType too long`, issues) : ok();
-  }});
-
-R({ id: "B-080", category: "TaxTable", severity: "Block", type: "S",
-  title: "TaxCode unique within TaxType, ≤ 24 chars",
-  check: (d) => {
-    const seen = new Map();
-    (d.taxCodes || []).forEach((t) => {
-      const k = `${t.taxType}|${t.taxCode}`;
-      seen.set(k, (seen.get(k) || 0) + 1);
-    });
-    const dups = [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k);
-    const tooLong = (d.taxCodes || []).filter((t) => t.taxCode?.length > LEN.code).map((t) => t.taxCode);
-    const all = [...dups.map((d) => `Duplicate ${d}`), ...tooLong.map((t) => `TaxCode '${t}' > 24 chars`)];
-    return all.length ? fail(`${all.length} issues`, all) : ok();
-  }});
-
-R({ id: "B-081", category: "TaxTable", severity: "Block", type: "S",
-  title: "TaxPercentage in [0, 100]; not both TaxPercentage and FlatTaxRate",
-  check: (d) => {
-    const issues = [];
-    (d.taxCodes || []).forEach((t) => {
-      if (t.taxPercentage != null && (t.taxPercentage < 0 || t.taxPercentage > 100)) {
-        issues.push(`${t.taxCode}: ${t.taxPercentage}% out of range`);
-      }
-      if (t.taxPercentage != null && t.flatTaxRate != null) {
-        issues.push(`${t.taxCode}: both TaxPercentage and FlatTaxRate set`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-082", category: "TaxTable", severity: "Block", type: "S",
-  title: "TaxCodeDetails/Country valid ISO 3166-1",
-  check: (d) => {
-    const issues = (d.taxCodes || []).filter((t) =>
-      t.country && !isCountryCode(t.country)
-    ).map((t) => `${t.taxCode}: '${t.country}'`);
-    return issues.length ? fail(`${issues.length} invalid country codes`, issues) : ok();
-  }});
-
-R({ id: "B-083", category: "TaxTable", severity: "Reject", type: "B",
-  title: "STITaxCode required; unmapped uses VAT100/CIT100 placeholder",
-  check: (d) => {
-    const issues = (d.taxCodes || []).filter((t) => !t.stiTaxCode).map((t) => `${t.taxType}|${t.taxCode}`);
-    return issues.length ? fail(`${issues.length} TaxCodes missing STITaxCode`, issues) : ok();
-  }});
-
-R({ id: "B-084", category: "TaxTable", severity: "Warn", type: "F",
-  title: "Standard VAT rates: 21% (active), 12%/5% reduced, 0% zero-rated",
-  rationale: "Historical periods must use rate in force at that time; current is 21/12/5/0.",
-  check: (d) => {
-    // Flag obviously stale rates (9%) which was abolished from 2026-01-01
-    const stale = (d.taxCodes || []).filter((t) =>
-      /vat|pvm/i.test(t.taxType || "") && t.taxPercentage === 9
-    ).map((t) => `${t.taxCode}: 9% (abolished 2026-01-01, replaced by 12%)`);
-    return stale.length ? fail(`${stale.length} stale 9% VAT codes — verify period applicability`, stale) : ok();
-  }});
-
-// B.5 UOM, Analysis, Movement tables ───────────────────────────────────
-R({ id: "B-085", category: "UOMTable", severity: "Block", type: "S",
-  title: "UOMTableEntry/UnitOfMeasure unique, ≤ 24 chars, Description required",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.uoms || []).forEach((u) => {
-      if (u.unitOfMeasure?.length > LEN.code) issues.push(`'${u.unitOfMeasure}' > 24`);
-      if (!u.description) issues.push(`'${u.unitOfMeasure}': no description`);
-      seen.set(u.unitOfMeasure, (seen.get(u.unitOfMeasure) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([u]) => issues.push(`Duplicate UOM '${u}'`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-086", category: "UOMTable", severity: "Block", type: "S",
-  title: "Every UOM referenced must exist in UOMTable",
-  check: (d, ctx) => {
-    const referenced = new Set();
-    (d.products || []).forEach((p) => {
-      if (p.uomBase) referenced.add(p.uomBase);
-      if (p.uomStandard) referenced.add(p.uomStandard);
-    });
-    [...(d.sales?.items || []), ...(d.purchases?.items || [])].forEach((inv) =>
-      (inv.lines || []).forEach((l) => l.unitOfMeasure && referenced.add(l.unitOfMeasure)));
-    (d.stockMovements || []).forEach((m) => m.uom && referenced.add(m.uom));
-    const orphan = [...referenced].filter((u) => !ctx.uomSet.has(u));
-    return orphan.length ? fail(`${orphan.length} UOMs referenced but not in UOMTable`, orphan) : ok();
-  }});
-
-R({ id: "B-087", category: "AnalysisTable", severity: "Block", type: "S",
-  title: "AnalysisTypeTableEntry: all four fields mandatory",
-  check: (d) => {
-    const issues = (d.analysisTypes || []).filter((a) =>
-      !a.analysisType || !a.analysisTypeDescription || !a.analysisID || !a.analysisIDDescription
-    ).map((a) => `${a.analysisType}|${a.analysisID}`);
-    return issues.length ? fail(`${issues.length} incomplete analysis entries`, issues) : ok();
-  }});
-
-R({ id: "B-088", category: "AnalysisTable", severity: "Reject", type: "B",
-  title: "STIAnalysisID required; unmapped uses APA-100 placeholder",
-  check: (d) => {
-    const issues = (d.analysisTypes || []).filter((a) => !a.stiAnalysisID).map((a) => `${a.analysisType}|${a.analysisID}`);
-    return issues.length ? fail(`${issues.length} missing STIAnalysisID`, issues) : ok();
-  }});
-
-R({ id: "B-089", category: "MovementTable", severity: "Block", type: "S",
-  title: "MovementType enum: PARD, PIR, PP, PG, PRG, VP, N, KT",
-  check: (d) => {
-    const issues = (d.movementTypes || []).filter((m) =>
-      !MOVEMENT_TYPES.has(m.movementType)
-    ).map((m) => `'${m.movementType}'`);
-    return issues.length ? fail(`${issues.length} invalid movement types`, issues) : ok();
-  }});
-
-// B.6 Products and Physical Stock ──────────────────────────────────────
-R({ id: "B-090", category: "Products", severity: "Block", type: "S",
-  title: "Product/ProductCode unique, ≤ 70 chars",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.products || []).forEach((p) => {
-      if (p.productCode?.length > 70) issues.push(`'${p.productCode}' > 70`);
-      seen.set(p.productCode, (seen.get(p.productCode) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([c]) => issues.push(`Duplicate ${c}`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-091", category: "Products", severity: "Block", type: "S",
-  title: "GoodsServicesID enum: PR, PS, IT, KT",
-  check: (d) => {
-    const issues = (d.products || []).filter((p) =>
-      !GOODS_SERVICES_IDS.has(p.goodsServicesID)
-    ).map((p) => `${p.productCode}: '${p.goodsServicesID}'`);
-    return issues.length ? fail(`${issues.length} invalid GoodsServicesID`, issues) : ok();
-  }});
-
-R({ id: "B-092", category: "Products", severity: "Block", type: "S",
-  title: "UOMBase, UOMStandard required and in UOMTable; conversion factor > 0",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.products || []).forEach((p) => {
-      if (!p.uomBase) issues.push(`${p.productCode}: no UOMBase`);
-      if (!p.uomStandard) issues.push(`${p.productCode}: no UOMStandard`);
-      if (p.uomBase && !ctx.uomSet.has(p.uomBase)) issues.push(`${p.productCode}: UOMBase '${p.uomBase}' not in table`);
-      if (p.uomStandard && !ctx.uomSet.has(p.uomStandard)) issues.push(`${p.productCode}: UOMStandard '${p.uomStandard}' not in table`);
-      if (p.uomToBaseFactor != null && p.uomToBaseFactor <= 0) issues.push(`${p.productCode}: conversion factor ${p.uomToBaseFactor} not positive`);
-    });
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-093", category: "Products", severity: "Block", type: "S",
-  title: "Product Tax/TaxType+TaxCode must exist in TaxTable",
-  check: (d, ctx) => {
-    const issues = (d.products || []).filter((p) =>
-      p.taxType && p.taxCode && !ctx.taxCodeMap.has(`${p.taxType}|${p.taxCode}`)
-    ).map((p) => `${p.productCode} → ${p.taxType}|${p.taxCode}`);
-    return issues.length ? fail(`${issues.length} unknown tax codes`, issues) : ok();
-  }});
-
-R({ id: "B-094", category: "Products", severity: "Warn", type: "C",
-  title: "Service products should not appear in PhysicalStock with non-zero qty",
-  check: (d, ctx) => {
-    const issues = (d.physicalStock || []).filter((s) => {
-      const p = ctx.productMap.get(s.productCode);
-      return p?.goodsServicesID === "PS" && (s.openingStockQuantity > 0 || s.closingStockQuantity > 0);
-    }).map((s) => s.productCode);
-    return issues.length ? fail(`${issues.length} services with stock quantity`, issues) : ok();
-  }});
-
-R({ id: "B-095", category: "Products", severity: "Block", type: "S",
-  title: "PhysicalStockEntry/ProductCode must exist in Products",
-  check: (d, ctx) => {
-    const issues = (d.physicalStock || []).filter((s) => !ctx.productMap.has(s.productCode)).map((s) => s.productCode);
-    return issues.length ? fail(`${issues.length} orphan stock entries`, issues) : ok();
-  }});
-
-R({ id: "B-096", category: "Products", severity: "Warn", type: "S",
-  title: "Negative stock quantities require justification (flagged)",
-  check: (d) => {
-    const issues = (d.physicalStock || []).filter((s) =>
-      s.openingStockQuantity < 0 || s.closingStockQuantity < 0
-    ).map((s) => `${s.productCode}: open=${s.openingStockQuantity}, close=${s.closingStockQuantity}`);
-    return issues.length ? fail(`${issues.length} negative stock quantities`, issues) : ok();
-  }});
-
-R({ id: "B-097", category: "Products", severity: "Warn", type: "B",
-  title: "Stock entries must reconcile against MovementOfGoods (see G-256)",
-  check: () => ok()  // Performed in G-256
-});
-
-R({ id: "B-098", category: "Products", severity: "Block", type: "S",
-  title: "PhysicalStockAcquisition StockRemainderQuantity ≤ AcquiredQuantity",
-  check: () => ok()  // Acquisition rows not in basic parse; structural placeholder
-});
-
-// B.7 Assets ───────────────────────────────────────────────────────────
-R({ id: "B-099", category: "Assets", severity: "Block", type: "S",
-  title: "Asset/AssetID unique, ≤ 35 chars",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.assets || []).forEach((a) => {
-      if (a.assetID?.length > LEN.mid1) issues.push(`'${a.assetID}' > 35`);
-      seen.set(a.assetID, (seen.get(a.assetID) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([id]) => issues.push(`Duplicate ${id}`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-100", category: "Assets", severity: "Block", type: "S",
-  title: "Asset/AccountID must reference existing GL account",
-  check: (d, ctx) => {
-    const issues = (d.assets || []).filter((a) =>
-      a.accountID && !ctx.accountMap.has(a.accountID)
-    ).map((a) => `${a.assetID} → ${a.accountID}`);
-    return issues.length ? fail(`${issues.length} orphan account refs`, issues) : ok();
-  }});
-
-R({ id: "B-101", category: "Assets", severity: "Block", type: "S",
-  title: "DateOfAcquisition ≤ StartUpDate, both valid",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) => {
-      if (!a.dateOfAcquisition || !a.startUpDate) return true;
-      if (!isIsoDate(a.dateOfAcquisition) || !isIsoDate(a.startUpDate)) return true;
-      return a.dateOfAcquisition > a.startUpDate;
-    }).map((a) => `${a.assetID}: acq=${a.dateOfAcquisition}, start=${a.startUpDate}`);
-    return issues.length ? fail(`${issues.length} date issues`, issues) : ok();
-  }});
-
-R({ id: "B-102", category: "Assets", severity: "Block", type: "S",
-  title: "AssetValuationType: IS, PV, or KT",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) =>
-      a.valuation && a.valuation.assetValuationType &&
-      !ASSET_VALUATION_TYPES.has(a.valuation.assetValuationType)
-    ).map((a) => `${a.assetID}: '${a.valuation.assetValuationType}'`);
-    return issues.length ? fail(`${issues.length} invalid valuation types`, issues) : ok();
-  }});
-
-R({ id: "B-103", category: "Assets", severity: "Block", type: "S",
-  title: "Main valuation DepreciationMethod must be 'T' (straight-line)",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) =>
-      a.valuation?.depreciationMethod && a.valuation.depreciationMethod !== "T"
-    ).map((a) => `${a.assetID}: '${a.valuation.depreciationMethod}'`);
-    return issues.length ? fail(`${issues.length} non-straight-line main valuations`, issues) : ok();
-  }});
-
-R({ id: "B-104", category: "Assets", severity: "Reject", type: "C",
-  title: "Asset roll-forward: Begin + Acquisitions − Depreciation − Extra ± Apprec − Impair − Transfers − Disposal = End",
-  check: (d, _, T) => {
-    const issues = (d.assets || []).filter((a) => {
-      const v = a.valuation;
-      if (!v) return false;
-      const computed = (v.bookValueBegin || 0) + (v.acquisitionsInPeriod || 0) -
-        (v.depreciationForPeriod || 0) - (v.extraordinaryDepreciation || 0) +
-        (v.appreciation || 0) - (v.impairmentNetMovement || 0) -
-        (v.transfers || 0) - (v.assetDisposal || 0);
-      return Math.abs(computed - (v.bookValueEnd || 0)) > T.roundingToleranceEur;
-    }).map((a) => `${a.assetID}: expected end €${((a.valuation.bookValueBegin || 0) + (a.valuation.acquisitionsInPeriod || 0) - (a.valuation.depreciationForPeriod || 0) - (a.valuation.extraordinaryDepreciation || 0) + (a.valuation.appreciation || 0) - (a.valuation.impairmentNetMovement || 0) - (a.valuation.transfers || 0) - (a.valuation.assetDisposal || 0)).toFixed(2)}, got €${(a.valuation.bookValueEnd || 0).toFixed(2)}`);
-    return issues.length ? fail(`${issues.length} assets fail roll-forward`, issues) : ok();
-  }});
-
-R({ id: "B-105", category: "Assets", severity: "Reject", type: "C",
-  title: "AccumulatedDepreciation ≥ DepreciationForPeriod",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) => {
-      const v = a.valuation;
-      return v && (v.accumulatedDepreciation || 0) < (v.depreciationForPeriod || 0);
-    }).map((a) => `${a.assetID}: acc=${a.valuation.accumulatedDepreciation}, period=${a.valuation.depreciationForPeriod}`);
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "B-106", category: "Assets", severity: "Warn", type: "C",
-  title: "BookValueEnd should not exceed AcquisitionCost + Appreciation",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) => {
-      const v = a.valuation;
-      return v && (v.bookValueEnd || 0) > (v.acquisitionAndProductionCostsEnd || 0) + (v.appreciation || 0) + 0.02;
-    }).map((a) => a.assetID);
-    return issues.length ? fail(`${issues.length} over-valued assets`, issues) : ok();
-  }});
-
-R({ id: "B-107", category: "Assets", severity: "Warn", type: "C",
-  title: "Fully depreciated assets should not record DepreciationForPeriod > 0",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) => {
-      const v = a.valuation;
-      return v && (v.bookValueEnd || 0) === 0 && (v.depreciationForPeriod || 0) > 0;
-    }).map((a) => a.assetID);
-    return issues.length ? fail(`${issues.length} fully-depreciated still depreciating`, issues) : ok();
-  }});
-
-// B.8 Owners ───────────────────────────────────────────────────────────
-R({ id: "B-108", category: "Owners", severity: "Block", type: "S",
-  title: "Owner/OwnerID ≤ 35; OwnerName, AccountID, and shares required",
-  check: (d, ctx) => {
-    const issues = (d.owners || []).filter((o) =>
-      !o.ownerID || !o.ownerName || !o.accountID ||
-      (!o.sharesQuantity && !o.sharesAmount)
-    ).map((o) => o.ownerID || "(no ID)");
-    const acctIssues = (d.owners || []).filter((o) =>
-      o.accountID && !ctx.accountMap.has(o.accountID)
-    ).map((o) => `${o.ownerID} → ${o.accountID}`);
-    const all = [...issues, ...acctIssues.map((a) => `Account ref: ${a}`)];
-    return all.length ? fail(`${all.length} owner issues`, all) : ok();
-  }});
-
-R({ id: "B-109", category: "Owners", severity: "Block", type: "S",
-  title: "Owner/SharesType must be PP or PRV",
-  check: (d) => {
-    const issues = (d.owners || []).filter((o) =>
-      o.sharesType && !SHARES_TYPES.has(o.sharesType)
-    ).map((o) => `${o.ownerID}: '${o.sharesType}'`);
-    return issues.length ? fail(`${issues.length} invalid SharesType`, issues) : ok();
-  }});
-
-R({ id: "B-110", category: "Owners", severity: "Warn", type: "C",
-  title: "SharesAcquisitionDate ≤ SharesTransfersDate; shares reconcile to equity",
-  check: (d) => {
-    const issues = (d.owners || []).filter((o) =>
-      o.sharesAcquisitionDate && o.sharesTransfersDate &&
-      o.sharesAcquisitionDate > o.sharesTransfersDate
-    ).map((o) => o.ownerID);
-    return issues.length ? fail(`${issues.length} date order issues`, issues) : ok();
-  }});
-
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY C — General Ledger Entries (C-111 to C-165)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "C-111", category: "GL", severity: "Block", type: "S",
-  title: "GeneralLedgerEntries/NumberOfEntries = count of Transactions",
-  check: (d) => {
-    const declared = d.gl?.numberOfEntries;
-    const actual = (d.transactions || []).length;
-    if (declared == null) return d.transactions?.length > 0 ? fail("NumberOfEntries missing") : ok();
-    return declared === actual ? ok() : fail(`Declared ${declared}, actual ${actual}`);
-  }});
-
-R({ id: "C-112", category: "GL", severity: "Reject", type: "C",
-  title: "GL/TotalDebit = sum of all Line/DebitAmount/Amount",
-  check: (d, ctx, T) => {
-    const declared = d.gl?.totalDebit;
-    if (declared == null) return ok();
-    const diff = Math.abs(declared - ctx.sumDebits);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Declared €${declared.toFixed(2)}, actual €${ctx.sumDebits.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "C-113", category: "GL", severity: "Reject", type: "C",
-  title: "GL/TotalCredit = sum of all Line/CreditAmount/Amount",
-  check: (d, ctx, T) => {
-    const declared = d.gl?.totalCredit;
-    if (declared == null) return ok();
-    const diff = Math.abs(declared - ctx.sumCredits);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Declared €${declared.toFixed(2)}, actual €${ctx.sumCredits.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "C-114", category: "GL", severity: "Reject", type: "C",
-  title: "GL TotalDebit = TotalCredit (file-level double-entry balance)",
-  check: (d, ctx, T) => {
-    const diff = Math.abs(ctx.sumDebits - ctx.sumCredits);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`ΣDb €${ctx.sumDebits.toFixed(2)}, ΣCr €${ctx.sumCredits.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "C-115", category: "GL", severity: "Block", type: "S",
-  title: "Journal/JournalID ≤ 18 chars and unique",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.journals || []).forEach((j) => {
-      if (j.journalID?.length > LEN.short) issues.push(`'${j.journalID}' > 18`);
-      seen.set(j.journalID, (seen.get(j.journalID) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([id]) => issues.push(`Duplicate ${id}`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "C-116", category: "GL", severity: "Block", type: "S",
-  title: "Journal Description and Type required",
-  check: (d) => {
-    const issues = (d.journals || []).filter((j) => !j.description || !j.type).map((j) => j.journalID);
-    return issues.length ? fail(`${issues.length} journals incomplete`, issues) : ok();
-  }});
-
-R({ id: "C-117", category: "GL", severity: "Block", type: "S",
-  title: "Transaction/TransactionID unique across all journals",
-  check: (d) => {
-    const seen = new Map();
-    (d.transactions || []).forEach((t) =>
-      seen.set(t.transactionID, (seen.get(t.transactionID) || 0) + 1));
-    const dups = [...seen.entries()].filter(([, n]) => n > 1).map(([id, n]) => `${id} (×${n})`);
-    return dups.length ? fail(`${dups.length} duplicate TransactionIDs`, dups) : ok();
-  }});
-
-R({ id: "C-118", category: "GL", severity: "Block", type: "S",
-  title: "Period in [1,12], PeriodYear in [1970, 2099] consistent with fiscal year",
-  check: (d) => {
-    const fy = d.header?.fiscalYearFrom?.substring(0, 4);
-    const fyEnd = d.header?.fiscalYearTo?.substring(0, 4);
-    const issues = (d.transactions || []).filter((t) => {
-      if (t.period == null || t.period < 1 || t.period > 13) return true; // 13 allowed for adjustments (C-148)
-      if (t.periodYear == null || t.periodYear < 1970 || t.periodYear > 2099) return true;
-      if (fy && fyEnd && t.periodYear < parseInt(fy) - 1 || t.periodYear > parseInt(fyEnd) + 1) return true;
-      return false;
-    }).map((t) => `${t.transactionID}: P=${t.period}, Y=${t.periodYear}`);
-    return issues.length ? fail(`${issues.length} period/year issues`, issues) : ok();
-  }});
-
-R({ id: "C-119", category: "GL", severity: "Block", type: "S",
-  title: "TransactionDate, SystemEntryDate, GLPostingDate all present and valid",
-  check: (d) => {
-    const issues = (d.transactions || []).filter((t) =>
-      !isIsoDate(t.transactionDate) ||
-      !(isIsoDate(t.systemEntryDate) || isIsoDateTime(t.systemEntryDate)) ||
-      !isIsoDate(t.glPostingDate)
-    ).map((t) => `${t.transactionID}`);
-    return issues.length ? fail(`${issues.length} transactions with invalid dates`, issues) : ok();
-  }});
-
-R({ id: "C-120", category: "GL", severity: "Reject", type: "C",
-  title: "TransactionDate ≤ GLPostingDate",
-  check: (d) => {
-    const issues = (d.transactions || []).filter((t) =>
-      t.transactionDate && t.glPostingDate && t.transactionDate > t.glPostingDate
-    ).map((t) => `${t.transactionID}: tx=${t.transactionDate}, post=${t.glPostingDate}`);
-    return issues.length ? fail(`${issues.length} backdated postings`, issues) : ok();
-  }});
-
-R({ id: "C-121", category: "GL", severity: "Warn", type: "C",
-  title: "SystemEntryDate gap > threshold (back-posting)",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => {
-      if (!t.transactionDate || !t.systemEntryDate) return;
-      const days = (new Date(t.systemEntryDate) - new Date(t.transactionDate)) / 86400000;
-      if (days > T.backPostingDays) {
-        issues.push(`${t.transactionID}: ${Math.round(days)}d gap`);
-      } else if (days < -1) {
-        issues.push(`${t.transactionID}: SystemEntryDate ${Math.round(-days)}d BEFORE TransactionDate (impossible)`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} back-posting / impossible timing`, issues) : ok();
-  }});
-
-R({ id: "C-122", category: "GL", severity: "Reject", type: "C",
-  title: "GLPostingDate within [FiscalYearFrom, FiscalYearTo]",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    if (!isIsoDate(f) || !isIsoDate(t)) return ok();
-    const issues = (d.transactions || []).filter((tx) =>
-      tx.glPostingDate && (tx.glPostingDate < f || tx.glPostingDate > t)
-    ).map((tx) => `${tx.transactionID}: post=${tx.glPostingDate}, period ${f}—${t}`);
-    return issues.length ? fail(`${issues.length} out-of-period postings`, issues) : ok();
-  }});
-
-R({ id: "C-123", category: "GL", severity: "Warn", type: "S",
-  title: "Transaction/Description populated, ≤ 256, no placeholder content",
-  check: (d) => {
-    const issues = (d.transactions || []).filter((t) => {
-      if (!t.description) return true;
-      if (t.description.length > LEN.long) return true;
-      if (/^(test|x|n\/a|placeholder|tba|tbd|\.)$/i.test(t.description.trim())) return true;
-      return false;
-    }).map((t) => `${t.transactionID}: '${(t.description || "").substring(0, 30)}'`);
-    return issues.length ? fail(`${issues.length} description issues`, issues) : ok();
-  }});
-
-R({ id: "C-124", category: "GL", severity: "Warn", type: "B",
-  title: "Transaction CustomerID/SupplierID must reference MasterFiles",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => {
-      if (t.customerID && !ctx.customerMap.has(t.customerID)) issues.push(`${t.transactionID}: customer '${t.customerID}'`);
-      if (t.supplierID && !ctx.supplierMap.has(t.supplierID)) issues.push(`${t.transactionID}: supplier '${t.supplierID}'`);
-    });
-    return issues.length ? fail(`${issues.length} orphan party references`, issues) : ok();
-  }});
-
-R({ id: "C-125", category: "GL", severity: "Block", type: "S",
-  title: "Every Transaction must contain at least one Line; Line/RecordID required ≤ 18",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => {
-      if (!t.lines || t.lines.length === 0) issues.push(`${t.transactionID}: no lines`);
-      else (t.lines || []).forEach((l) => {
-        if (!l.recordID) issues.push(`${t.transactionID}: line with no RecordID`);
-        else if (l.recordID.length > LEN.short) issues.push(`${t.transactionID}.${l.recordID}: RecordID > 18`);
-      });
-    });
-    return issues.length ? fail(`${issues.length} line structure issues`, issues) : ok();
-  }});
-
-R({ id: "C-126", category: "GL", severity: "Reject", type: "B",
-  title: "Line/RecordID unique within Transaction",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => {
-      const seen = new Set();
-      (t.lines || []).forEach((l) => {
-        if (seen.has(l.recordID)) issues.push(`${t.transactionID}: duplicate RecordID '${l.recordID}'`);
-        seen.add(l.recordID);
-      });
-    });
-    return issues.length ? fail(`${issues.length} duplicate RecordIDs`, issues) : ok();
-  }});
-
-R({ id: "C-127", category: "GL", severity: "Block", type: "S",
-  title: "Line/AccountID must reference existing GL account",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (!l.accountID || !ctx.accountMap.has(l.accountID)) {
-        issues.push(`${t.transactionID}.${l.recordID}: account '${l.accountID}'`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} orphan account refs`, issues) : ok();
-  }});
-
-R({ id: "C-128", category: "GL", severity: "Block", type: "S",
-  title: "Each Line: exactly one of DebitAmount or CreditAmount",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const hasDb = l.debitAmount != null;
-      const hasCr = l.creditAmount != null;
-      if (hasDb === hasCr) {
-        issues.push(`${t.transactionID}.${l.recordID}: both=${hasDb && hasCr}, neither=${!hasDb && !hasCr}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} lines with both/neither sides`, issues) : ok();
-  }});
-
-R({ id: "C-129", category: "GL", severity: "Block", type: "S",
-  title: "DebitAmount/CreditAmount must be ≥ 0",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if ((l.debitAmount != null && l.debitAmount < 0) || (l.creditAmount != null && l.creditAmount < 0)) {
-        issues.push(`${t.transactionID}.${l.recordID}: db=${l.debitAmount}, cr=${l.creditAmount}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} negative amounts`, issues) : ok();
-  }});
-
-R({ id: "C-130", category: "GL", severity: "Reject", type: "C",
-  title: "Per-transaction balance: ΣDebit = ΣCredit (double-entry)",
-  check: (d, _, T) => {
-    const issues = (d.transactions || []).filter((t) => {
-      const db = (t.lines || []).reduce((s, l) => s + (l.debitAmount || 0), 0);
-      const cr = (t.lines || []).reduce((s, l) => s + (l.creditAmount || 0), 0);
-      return Math.abs(db - cr) > T.roundingToleranceEur;
-    }).map((t) => {
-      const db = (t.lines || []).reduce((s, l) => s + (l.debitAmount || 0), 0);
-      const cr = (t.lines || []).reduce((s, l) => s + (l.creditAmount || 0), 0);
-      return `${t.transactionID}: Db €${db.toFixed(2)} ≠ Cr €${cr.toFixed(2)}`;
-    });
-    return issues.length ? fail(`${issues.length} unbalanced transactions`, issues) : ok();
-  }});
-
-R({ id: "C-131", category: "GL", severity: "Block", type: "S",
-  title: "FX line: CurrencyCode valid ISO 4217, CurrencyAmount > 0",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      [["debit", l.debitCurrencyCode, l.debitCurrencyAmount],
-       ["credit", l.creditCurrencyCode, l.creditCurrencyAmount]].forEach(([side, cc, ca]) => {
-        if (cc && !ISO_4217.has(cc)) issues.push(`${t.transactionID}.${l.recordID}: ${side} bad currency '${cc}'`);
-        if (ca != null && ca <= 0) issues.push(`${t.transactionID}.${l.recordID}: ${side} CurrencyAmount ${ca} not >0`);
-      });
-    }));
-    return issues.length ? fail(`${issues.length} FX issues`, issues) : ok();
-  }});
-
-R({ id: "C-132", category: "GL", severity: "Warn", type: "C",
-  title: "FX implied rate variance from reference > threshold",
-  rationale: "Without ECB feed in-engine, we flag implied rates outside historical band [0.001, 1000].",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const eurAmt = l.debitAmount ?? l.creditAmount;
-      const fxAmt = l.debitCurrencyAmount ?? l.creditCurrencyAmount;
-      if (eurAmt && fxAmt && fxAmt > 0) {
-        const rate = eurAmt / fxAmt;
-        if (rate < 0.001 || rate > 1000) {
-          issues.push(`${t.transactionID}.${l.recordID}: implied rate ${rate.toFixed(4)} suspicious`);
-        }
-      }
-    }));
-    return issues.length ? fail(`${issues.length} FX rate anomalies`, issues) : ok();
-  }});
-
-R({ id: "C-133", category: "GL", severity: "Block", type: "S",
-  title: "Line/Analysis/AnalysisType+AnalysisID must exist in AnalysisTypeTable",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) =>
-      (l.analysis || []).forEach((a) => {
-        if (!ctx.analysisMap.has(`${a.analysisType}|${a.analysisID}`)) {
-          issues.push(`${t.transactionID}.${l.recordID}: ${a.analysisType}|${a.analysisID}`);
-        }
-      })));
-    return issues.length ? fail(`${issues.length} orphan analysis refs`, issues) : ok();
-  }});
-
-R({ id: "C-134", category: "GL", severity: "Warn", type: "C",
-  title: "Σ AnalysisAmount on a line should equal Debit/Credit amount of that line",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (!l.analysis?.length) return;
-      const sumA = l.analysis.reduce((s, a) => s + (a.analysisAmount || 0), 0);
-      const lineAmt = l.debitAmount ?? l.creditAmount;
-      if (lineAmt && Math.abs(sumA - lineAmt) > T.roundingToleranceEur) {
-        issues.push(`${t.transactionID}.${l.recordID}: ΣAnalysis €${sumA.toFixed(2)} ≠ line €${lineAmt.toFixed(2)}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} analysis allocation mismatches`, issues) : ok();
-  }});
-
-R({ id: "C-135", category: "GL", severity: "Block", type: "S",
-  title: "Line/TaxInformation/TaxType+TaxCode must exist in TaxTable",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (l.taxInfo && l.taxInfo.taxType && l.taxInfo.taxCode &&
-          !ctx.taxCodeMap.has(`${l.taxInfo.taxType}|${l.taxInfo.taxCode}`)) {
-        issues.push(`${t.transactionID}.${l.recordID}: ${l.taxInfo.taxType}|${l.taxInfo.taxCode}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} orphan tax codes`, issues) : ok();
-  }});
-
-R({ id: "C-136", category: "GL", severity: "Reject", type: "C",
-  title: "Recomputed tax = TaxBase × TaxPercentage/100 within ±0.02 EUR",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const ti = l.taxInfo;
-      if (!ti || ti.taxBase == null || ti.taxPercentage == null || ti.taxAmount == null) return;
-      const expected = ti.taxBase * ti.taxPercentage / 100;
-      if (Math.abs(expected - ti.taxAmount) > T.roundingToleranceEur) {
-        issues.push(`${t.transactionID}.${l.recordID}: base €${ti.taxBase} × ${ti.taxPercentage}% = €${expected.toFixed(2)}, got €${ti.taxAmount.toFixed(2)}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} tax arithmetic errors`, issues) : ok();
-  }});
-
-R({ id: "C-137", category: "GL", severity: "Reject", type: "C",
-  title: "Per-account roll-forward bridges MasterFiles opening to closing (cross-section)",
-  rationale: "Same as B-047 but framed as GL-to-MasterFiles bridge.",
-  check: (d, ctx, T) => {
-    const issues = [];
-    for (const a of d.accounts || []) {
-      const mv = ctx.accountMovements.get(a.accountID) || { debit: 0, credit: 0 };
-      const opening = (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0);
-      const expected = opening + mv.debit - mv.credit;
-      const closing = (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0);
-      if (Math.abs(expected - closing) > T.roundingToleranceEur) {
-        issues.push(`${a.accountID}: GL bridge diff €${(expected - closing).toFixed(2)}`);
-      }
-    }
-    return issues.length ? fail(`${issues.length} accounts fail GL bridge`, issues) : ok();
-  }});
-
-R({ id: "C-138", category: "GL", severity: "Reject", type: "C",
-  title: "Per-customer net movement bridges opening to closing",
-  check: (d, _, T) => {
-    const custTx = new Map();
-    (d.transactions || []).forEach((t) => {
-      if (!t.customerID) return;
-      const v = custTx.get(t.customerID) || { db: 0, cr: 0 };
-      (t.lines || []).forEach((l) => {
-        v.db += l.debitAmount || 0;
-        v.cr += l.creditAmount || 0;
-      });
-      custTx.set(t.customerID, v);
-    });
-    const issues = [];
-    for (const c of d.customers || []) {
-      const mv = custTx.get(c.customerID) || { db: 0, cr: 0 };
-      const opening = (c.openingDebitBalance || 0) - (c.openingCreditBalance || 0);
-      const expected = opening + mv.db - mv.cr;
-      const closing = (c.closingDebitBalance || 0) - (c.closingCreditBalance || 0);
-      if (Math.abs(expected - closing) > T.roundingToleranceEur) {
-        issues.push(`${c.customerID}: diff €${(expected - closing).toFixed(2)}`);
-      }
-    }
-    return issues.length ? fail(`${issues.length} customers fail bridge`, issues) : ok();
-  }});
-
-R({ id: "C-139", category: "GL", severity: "Reject", type: "C",
-  title: "Per-supplier net movement bridges opening to closing",
-  check: (d, _, T) => {
-    const supTx = new Map();
-    (d.transactions || []).forEach((t) => {
-      if (!t.supplierID) return;
-      const v = supTx.get(t.supplierID) || { db: 0, cr: 0 };
-      (t.lines || []).forEach((l) => {
-        v.db += l.debitAmount || 0;
-        v.cr += l.creditAmount || 0;
-      });
-      supTx.set(t.supplierID, v);
-    });
-    const issues = [];
-    for (const s of d.suppliers || []) {
-      const mv = supTx.get(s.supplierID) || { db: 0, cr: 0 };
-      const opening = (s.openingCreditBalance || 0) - (s.openingDebitBalance || 0);
-      const expected = opening + mv.cr - mv.db;
-      const closing = (s.closingCreditBalance || 0) - (s.closingDebitBalance || 0);
-      if (Math.abs(expected - closing) > T.roundingToleranceEur) {
-        issues.push(`${s.supplierID}: diff €${(expected - closing).toFixed(2)}`);
-      }
-    }
-    return issues.length ? fail(`${issues.length} suppliers fail bridge`, issues) : ok();
-  }});
-
-R({ id: "C-140", category: "GL", severity: "Reject", type: "B",
-  title: "No Transaction.GLPostingDate after FiscalYearTo",
-  check: (d) => {
-    const t = d.header?.fiscalYearTo;
-    if (!isIsoDate(t)) return ok();
-    const issues = (d.transactions || []).filter((tx) =>
-      tx.glPostingDate && tx.glPostingDate > t
-    ).map((tx) => `${tx.transactionID}: ${tx.glPostingDate} > ${t}`);
-    return issues.length ? fail(`${issues.length} postings beyond period`, issues) : ok();
-  }});
-
-R({ id: "C-141", category: "GL", severity: "Warn", type: "C",
-  title: "TransactionDate before entity incorporation date (metadata-dependent)",
-  rationale: "Incorporation date not in SAF-T; warning placeholder.",
-  check: () => ok()});
-
-R({ id: "C-142", category: "GL", severity: "Warn", type: "C",
-  title: "SystemEntryDate outside business hours (off-hours posting)",
-  check: (d, _, T) => {
-    const issues = (d.transactions || []).filter((t) => {
-      if (!t.systemEntryDate || !t.systemEntryDate.includes("T")) return false;
-      const hr = parseInt(t.systemEntryDate.substring(11, 13));
-      return hr >= T.offHoursStart && hr < T.offHoursEnd;
-    }).map((t) => `${t.transactionID}: ${t.systemEntryDate}`);
-    return issues.length ? fail(`${issues.length} off-hours postings (${T.offHoursStart}:00–${T.offHoursEnd}:00)`, issues) : ok();
-  }});
-
-R({ id: "C-143", category: "GL", severity: "Warn", type: "C",
-  title: "Identical (date, account, debit, credit, description) tuples (potential duplicates)",
-  check: (d) => {
-    const seen = new Map();
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const key = `${t.transactionDate}|${l.accountID}|${l.debitAmount || ''}|${l.creditAmount || ''}|${(l.description || t.description || '').substring(0, 50)}`;
-      const arr = seen.get(key) || [];
-      arr.push(`${t.transactionID}.${l.recordID}`);
-      seen.set(key, arr);
-    }));
-    const dups = [...seen.entries()].filter(([, ids]) => ids.length > 1).map(([k, ids]) =>
-      `Tuple [${k.substring(0, 60)}...] in ${ids.slice(0, 3).join(", ")}${ids.length > 3 ? "..." : ""}`);
-    return dups.length ? fail(`${dups.length} duplicate tuples`, dups) : ok();
-  }});
-
-R({ id: "C-144", category: "GL", severity: "Warn", type: "C",
-  title: "Reversing entries should reference original transaction",
-  check: (d) => {
-    const issues = (d.transactions || []).filter((t) => {
-      // Detect potential reversals: negative-of-existing or "reversal" wording
-      const desc = (t.description || "").toLowerCase();
-      const isReversal = /revers|stornav|atstatym|panaikinim/i.test(desc);
-      const hasRef = /rev-|\b\d{4,}\b/.test(t.description || "");
-      return isReversal && !hasRef;
-    }).map((t) => `${t.transactionID}: '${(t.description || "").substring(0, 50)}'`);
-    return issues.length ? fail(`${issues.length} reversals without traceable reference`, issues) : ok();
-  }});
-
-R({ id: "C-145", category: "GL", severity: "Warn", type: "C",
-  title: "Gaps in document-number series within Journal",
-  check: (d) => {
-    const series = new Map();
-    (d.transactions || []).forEach((t) => {
-      const m = (t.transactionID || "").match(/^(.*?)(\d+)$/);
-      if (!m) return;
-      const prefix = `${t.journalID}|${m[1]}`;
-      const arr = series.get(prefix) || [];
-      arr.push(parseInt(m[2]));
-      series.set(prefix, arr);
-    });
-    const issues = [];
-    series.forEach((nums, prefix) => {
-      nums.sort((a, b) => a - b);
-      const gaps = [];
-      for (let i = 1; i < nums.length; i++) {
-        if (nums[i] - nums[i - 1] > 1) gaps.push(`${nums[i - 1]}→${nums[i]}`);
-      }
-      if (gaps.length > 0 && gaps.length < 30) issues.push(`${prefix}: gaps ${gaps.slice(0, 5).join(", ")}`);
-      else if (gaps.length >= 30) issues.push(`${prefix}: ${gaps.length} gaps`);
-    });
-    return issues.length ? fail(`${issues.length} series with gaps`, issues) : ok();
-  }});
-
-R({ id: "C-146", category: "GL", severity: "Warn", type: "C",
-  title: "Duplicate (Journal, doc-type, doc-number, year) tuples",
-  check: (d) => {
-    const seen = new Map();
-    (d.transactions || []).forEach((t) => {
-      const k = `${t.journalID}|${t.sourceID || ''}|${t.transactionID}|${t.periodYear}`;
-      seen.set(k, (seen.get(k) || 0) + 1);
-    });
-    const dups = [...seen.entries()].filter(([, n]) => n > 1).map(([k, n]) => `${k} (×${n})`);
-    return dups.length ? fail(`${dups.length} duplicate document tuples`, dups) : ok();
-  }});
-
-R({ id: "C-147", category: "GL", severity: "Warn", type: "C",
-  title: "Year-end: P/S accounts should net to zero into NK result",
-  check: (d, _, T) => {
-    const issues = (d.accounts || []).filter((a) =>
-      (a.accountType === "P" || a.accountType === "S") &&
-      ((a.closingDebitBalance || 0) > T.roundingToleranceEur || (a.closingCreditBalance || 0) > T.roundingToleranceEur)
-    ).map((a) => `${a.accountID} (${a.accountType}): ClDb=${a.closingDebitBalance}, ClCr=${a.closingCreditBalance}`);
-    return issues.length ? fail(`${issues.length} non-zero P/S closing balances (year-end not closed?)`, issues) : ok();
-  }});
-
-R({ id: "C-148", category: "GL", severity: "Warn", type: "C",
-  title: "Period=0 or Period=13 (adjustment) entries should be a minority",
-  check: (d) => {
-    const adj = (d.transactions || []).filter((t) => t.period === 0 || t.period === 13).length;
-    const total = (d.transactions || []).length || 1;
-    const pct = adj / total * 100;
-    return pct > 10 ? fail(`Adjustment-period entries ${adj}/${total} (${pct.toFixed(1)}%) — review`) : ok();
-  }});
-
-R({ id: "C-149", category: "GL", severity: "Warn", type: "B",
-  title: "Line/SourceDocumentID should be populated for source-doc lines",
-  check: (d) => {
-    const total = (d.transactions || []).reduce((s, t) => s + (t.lines?.length || 0), 0);
-    const missing = (d.transactions || []).reduce((s, t) =>
-      s + (t.lines || []).filter((l) => !l.sourceDocumentID).length, 0);
-    if (total === 0) return ok();
-    const pct = missing / total * 100;
-    return pct > 50 ? fail(`${missing}/${total} lines (${pct.toFixed(1)}%) lack SourceDocumentID — audit trail weak`) : ok();
-  }});
-
-R({ id: "C-150", category: "GL", severity: "Warn", type: "B",
-  title: "Transaction/SystemID should be populated and unique",
-  check: (d) => {
-    const tx = d.transactions || [];
-    const total = tx.length;
-    const missing = tx.filter((t) => !t.systemID).length;
-    if (total === 0) return ok();
-    if (missing > total * 0.2) {
-      return fail(`${missing}/${total} transactions lack SystemID`);
-    }
-    return ok();
-  }});
-
-R({ id: "C-151", category: "GL", severity: "Reject", type: "C",
-  title: "FX rounding > 0.02 EUR per transaction must hit FX gain/loss account",
-  check: (d, _, T) => {
-    const issues = (d.transactions || []).filter((t) => {
-      const db = (t.lines || []).reduce((s, l) => s + (l.debitAmount || 0), 0);
-      const cr = (t.lines || []).reduce((s, l) => s + (l.creditAmount || 0), 0);
-      return Math.abs(db - cr) > T.roundingToleranceEur;
-    }).map((t) => {
-      const db = (t.lines || []).reduce((s, l) => s + (l.debitAmount || 0), 0);
-      const cr = (t.lines || []).reduce((s, l) => s + (l.creditAmount || 0), 0);
-      return `${t.transactionID}: residual €${(db - cr).toFixed(2)}`;
-    });
-    return issues.length ? fail(`${issues.length} unallocated rounding`, issues) : ok();
-  }});
-
-R({ id: "C-152", category: "GL", severity: "Warn", type: "C",
-  title: "EUR default: FX lines carry both Amount (EUR) and CurrencyAmount+CurrencyCode",
-  check: (d) => {
-    if (d.header?.defaultCurrencyCode !== "EUR") return ok();
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const fxDb = l.debitCurrencyCode && l.debitCurrencyCode !== "EUR";
-      const fxCr = l.creditCurrencyCode && l.creditCurrencyCode !== "EUR";
-      if ((fxDb || fxCr) && !l.debitCurrencyAmount && !l.creditCurrencyAmount) {
-        issues.push(`${t.transactionID}.${l.recordID}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} FX lines missing CurrencyAmount`, issues) : ok();
-  }});
-
-R({ id: "C-153", category: "GL", severity: "Warn", type: "F",
-  title: "Cash transactions exceeding statutory cash-payment limit",
-  check: (d, ctx, T) => {
-    // Heuristic: lines on accounts described as "cash" / "kasa" exceeding threshold
-    const cashAccts = new Set((d.accounts || [])
-      .filter((a) => /cash|kasa|pinigai|grynieji/i.test(a.accountDescription || ""))
-      .map((a) => a.accountID));
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (cashAccts.has(l.accountID) && ((l.debitAmount || 0) > T.cashLimitEur || (l.creditAmount || 0) > T.cashLimitEur)) {
-        const amt = Math.max(l.debitAmount || 0, l.creditAmount || 0);
-        issues.push(`${t.transactionID}.${l.recordID}: cash €${amt}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} cash txns above €${T.cashLimitEur}`, issues) : ok();
-  }});
-
-R({ id: "C-154", category: "GL", severity: "Warn", type: "F",
-  title: "Round-amount transactions exactly on control thresholds (structuring)",
-  check: (d, _, T) => {
-    const thresholds = [T.cashLimitEur, T.amlStructuringEur, T.cashLimitEur - 1, T.amlStructuringEur - 1];
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const amt = Math.max(l.debitAmount || 0, l.creditAmount || 0);
-      if (thresholds.some((th) => Math.abs(amt - th) < 10)) {
-        issues.push(`${t.transactionID}.${l.recordID}: €${amt} near threshold`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} txns at threshold limits`, issues) : ok();
-  }});
-
-R({ id: "C-155", category: "GL", severity: "Warn", type: "F",
-  title: "Control accounts (VAT, payroll, bank-recon) not net to reasonable balance at period end",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      /clearing|tarpine|recon|control|sutaikinim/i.test(a.accountDescription || "") &&
-      Math.abs((a.closingDebitBalance || 0) - (a.closingCreditBalance || 0)) > 1
-    ).map((a) => `${a.accountID}: net €${((a.closingDebitBalance || 0) - (a.closingCreditBalance || 0)).toFixed(2)}`);
-    return issues.length ? fail(`${issues.length} control accounts not cleared`, issues) : ok();
-  }});
-
-R({ id: "C-156", category: "GL", severity: "Warn", type: "F",
-  title: "Manual journals on last day of period (enhanced review)",
-  check: (d) => {
-    const yearEnd = d.header?.fiscalYearTo;
-    if (!yearEnd) return ok();
-    const issues = (d.transactions || []).filter((t) =>
-      t.glPostingDate === yearEnd && (!t.systemID || /manual|man|tj/i.test(t.systemID || t.journalID || ""))
-    ).map((t) => `${t.transactionID} (journal ${t.journalID})`);
-    return issues.length ? fail(`${issues.length} manual year-end journals`, issues) : ok();
-  }});
-
-R({ id: "C-157", category: "GL", severity: "Warn", type: "F",
-  title: "Round-trip entries: same amount db/cr between same two accounts in short window",
-  check: (d) => {
-    const issues = [];
-    const buckets = new Map();
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (!l.debitAmount && !l.creditAmount) return;
-      const amt = (l.debitAmount || l.creditAmount).toFixed(2);
-      const key = `${amt}|${l.accountID}`;
-      const arr = buckets.get(key) || [];
-      arr.push({ tx: t.transactionID, date: t.transactionDate, side: l.debitAmount ? "D" : "C" });
-      buckets.set(key, arr);
-    }));
-    buckets.forEach((arr, key) => {
-      if (arr.length < 2) return;
-      arr.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-      for (let i = 1; i < arr.length; i++) {
-        if (arr[i].side !== arr[i - 1].side &&
-            arr[i].date && arr[i - 1].date &&
-            (new Date(arr[i].date) - new Date(arr[i - 1].date)) / 86400000 <= 7) {
-          issues.push(`${key.split("|")[1]} €${key.split("|")[0]}: ${arr[i - 1].tx} ↔ ${arr[i].tx}`);
-        }
-      }
-    });
-    return issues.length ? fail(`${issues.length} potential round-trips`, issues) : ok();
-  }});
-
-R({ id: "C-158", category: "GL", severity: "Warn", type: "F",
-  title: "Manual write-offs (bad debt, inventory loss) exceed period avg by 3σ",
-  check: (d, _, T) => {
-    const writeOffAccts = (d.accounts || []).filter((a) =>
-      /write.?off|bad.?debt|nuras|stornav|nuostol/i.test(a.accountDescription || "")
-    ).map((a) => a.accountID);
-    if (!writeOffAccts.length) return ok();
-    const amounts = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (writeOffAccts.includes(l.accountID)) {
-        const amt = (l.debitAmount || l.creditAmount || 0);
-        if (amt > 0) amounts.push({ tx: t.transactionID, amt });
-      }
-    }));
-    if (amounts.length < 3) return ok();
-    const mean = amounts.reduce((s, a) => s + a.amt, 0) / amounts.length;
-    const variance = amounts.reduce((s, a) => s + (a.amt - mean) ** 2, 0) / amounts.length;
-    const sd = Math.sqrt(variance);
-    const outliers = amounts.filter((a) => a.amt > mean + T.sigmaFactor * sd);
-    return outliers.length ? fail(`${outliers.length} write-offs > ${T.sigmaFactor}σ above mean €${mean.toFixed(2)}`,
-      outliers.map((o) => `${o.tx}: €${o.amt.toFixed(2)}`)) : ok();
-  }});
-
-R({ id: "C-159", category: "GL", severity: "Warn", type: "F",
-  title: "Reversal volumes > threshold of total postings (process risk)",
-  check: (d, _, T) => {
-    const total = (d.transactions || []).length;
-    if (total === 0) return ok();
-    const reversals = (d.transactions || []).filter((t) =>
-      /revers|stornav|atstatym|panaikinim|rev-/i.test((t.description || "") + (t.journalID || ""))
-    ).length;
-    const pct = reversals / total * 100;
-    return pct > T.reversalPercent ? fail(`Reversals ${reversals}/${total} (${pct.toFixed(1)}%) > ${T.reversalPercent}% threshold`) : ok();
-  }});
-
-R({ id: "C-160", category: "GL", severity: "Warn", type: "F",
-  title: "Postings to 'do-not-use' or 'blocked' accounts",
-  check: (d) => {
-    const blocked = new Set((d.accounts || []).filter((a) =>
-      /do.?not.?use|blocked|deprecated|nenaudoti|uždarytas/i.test(a.accountDescription || "")
-    ).map((a) => a.accountID));
-    if (!blocked.size) return ok();
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (blocked.has(l.accountID)) issues.push(`${t.transactionID}.${l.recordID} → ${l.accountID}`);
-    }));
-    return issues.length ? fail(`${issues.length} postings to blocked accounts`, issues) : ok();
-  }});
-
-R({ id: "C-161", category: "GL", severity: "Warn", type: "F",
-  title: "Entries by inactive/terminated users (HR-data dependent)",
-  check: () => ok()  // Requires HR feed
-});
-
-R({ id: "C-162", category: "GL", severity: "Warn", type: "F",
-  title: "Weekend/holiday postings for non-24/7 entities",
-  check: (d) => {
-    const issues = (d.transactions || []).filter((t) => {
-      if (!t.glPostingDate || !isIsoDate(t.glPostingDate)) return false;
-      const wd = new Date(t.glPostingDate).getDay();
-      return wd === 0 || wd === 6;
-    }).map((t) => `${t.transactionID}: ${t.glPostingDate} (${new Date(t.glPostingDate).getDay() === 0 ? "Sun" : "Sat"})`);
-    return issues.length ? fail(`${issues.length} weekend postings`, issues) : ok();
-  }});
-
-R({ id: "C-163", category: "GL", severity: "Warn", type: "F",
-  title: "Suspense-account balances not cleared at period end",
-  check: (d) => {
-    const issues = (d.accounts || []).filter((a) =>
-      /suspense|tarpinis|nepask|laikinas|unalloc/i.test(a.accountDescription || "") &&
-      Math.abs((a.closingDebitBalance || 0) - (a.closingCreditBalance || 0)) > 1
-    ).map((a) => `${a.accountID}: net €${((a.closingDebitBalance || 0) - (a.closingCreditBalance || 0)).toFixed(2)}`);
-    return issues.length ? fail(`${issues.length} suspense balances`, issues) : ok();
-  }});
-
-R({ id: "C-164", category: "GL", severity: "Warn", type: "F",
-  title: "Round-number journals (≥€1000) without analytic tagging",
-  check: (d) => {
-    const issues = [];
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      const amt = l.debitAmount || l.creditAmount || 0;
-      if (amt >= 1000 && amt % 1000 === 0 && (!l.analysis || l.analysis.length === 0)) {
-        issues.push(`${t.transactionID}.${l.recordID}: €${amt} no analysis tag`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} untagged round-number lines`, issues) : ok();
-  }});
-
-R({ id: "C-165", category: "GL", severity: "Warn", type: "F",
-  title: "Equity-only movements without board resolution traceability",
-  check: (d) => {
-    const equityAccts = new Set((d.accounts || []).filter((a) => a.accountType === "NK").map((a) => a.accountID));
-    const issues = [];
-    (d.transactions || []).forEach((t) => {
-      const allEquity = (t.lines || []).every((l) => equityAccts.has(l.accountID));
-      if (allEquity && t.lines?.length > 0) {
-        if (!/resolution|sprendim|board|akcinink|share/i.test((t.description || "") + (t.sourceID || ""))) {
-          issues.push(`${t.transactionID}: equity-only, no resolution ref`);
-        }
-      }
-    });
-    return issues.length ? fail(`${issues.length} unreferenced equity movements`, issues) : ok();
-  }});
-
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY D — Source Documents: Sales Invoices (D-166 to D-200)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "D-166", category: "Sales", severity: "Block", type: "S",
-  title: "SalesInvoices/NumberOfEntries = count of Invoices",
-  check: (d) => {
-    const declared = d.sales?.meta?.numberOfEntries;
-    const actual = (d.sales?.items || []).length;
-    if (declared == null) return actual > 0 ? fail("NumberOfEntries missing") : ok();
-    return declared === actual ? ok() : fail(`Declared ${declared}, actual ${actual}`);
-  }});
-
-R({ id: "D-167", category: "Sales", severity: "Reject", type: "C",
-  title: "SalesInvoices/TotalDebit = sum of debit movements across invoice lines",
-  check: (d, _, T) => {
-    const declared = d.sales?.meta?.totalDebit;
-    if (declared == null) return ok();
-    const actual = (d.sales?.items || []).reduce((s, inv) =>
-      s + (inv.lines || []).reduce((ls, l) => ls + (l.debitAmount || 0), 0), 0);
-    const diff = Math.abs(declared - actual);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Declared €${declared.toFixed(2)} vs €${actual.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "D-168", category: "Sales", severity: "Reject", type: "C",
-  title: "SalesInvoices/TotalCredit = sum of credit movements across invoice lines",
-  check: (d, _, T) => {
-    const declared = d.sales?.meta?.totalCredit;
-    if (declared == null) return ok();
-    const actual = (d.sales?.items || []).reduce((s, inv) =>
-      s + (inv.lines || []).reduce((ls, l) => ls + (l.creditAmount || 0), 0), 0);
-    const diff = Math.abs(declared - actual);
-    return diff <= T.roundingToleranceEur ? ok() :
-      fail(`Declared €${declared.toFixed(2)} vs €${actual.toFixed(2)}, diff €${diff.toFixed(2)}`);
-  }});
-
-R({ id: "D-169", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/InvoiceNo populated, ≤ 70 chars, unique by InvoiceType",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => {
-      if (!inv.invoiceNo) issues.push("Invoice with no InvoiceNo");
-      else if (inv.invoiceNo.length > 70) issues.push(`'${inv.invoiceNo}' > 70`);
-      const k = `${inv.invoiceType}|${inv.invoiceNo}`;
-      seen.set(k, (seen.get(k) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([k]) => issues.push(`Duplicate ${k}`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "D-170", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/InvoiceDate must be valid date",
-  check: (d) => {
-    const issues = (d.sales?.items || []).filter((inv) => !isIsoDate(inv.invoiceDate)).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} invalid dates`, issues) : ok();
-  }});
-
-R({ id: "D-171", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/InvoiceType enum: I, VATI, D, VATD, C, VATC, A, OI, OD, OC, O",
-  check: (d) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      !INVOICE_TYPES.has(inv.invoiceType)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.invoiceType}'`);
-    return issues.length ? fail(`${issues.length} invalid types`, issues) : ok();
-  }});
-
-R({ id: "D-172", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/CustomerInfo (CustomerID) must reference Customers",
-  check: (d, ctx) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      inv.customerID && !ctx.customerMap.has(inv.customerID)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.customerID}'`);
-    return issues.length ? fail(`${issues.length} orphan customer refs`, issues) : ok();
-  }});
-
-R({ id: "D-173", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/SupplierInfo (self-billed) follows referential rule",
-  check: (d, ctx) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      inv.supplierID && !ctx.supplierMap.has(inv.supplierID)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.supplierID}'`);
-    return issues.length ? fail(`${issues.length} orphan supplier refs in self-billed`, issues) : ok();
-  }});
-
-R({ id: "D-174", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/AccountID must reference existing GL account",
-  check: (d, ctx) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      inv.accountID && !ctx.accountMap.has(inv.accountID)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.accountID}'`);
-    return issues.length ? fail(`${issues.length} orphan account refs`, issues) : ok();
-  }});
-
-R({ id: "D-175", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/GLPostingDate valid and within fiscal period",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    const issues = (d.sales?.items || []).filter((inv) => {
-      if (!isIsoDate(inv.glPostingDate)) return true;
-      if (f && t && (inv.glPostingDate < f || inv.glPostingDate > t)) return true;
-      return false;
-    }).map((inv) => `${inv.invoiceNo}: ${inv.glPostingDate}`);
-    return issues.length ? fail(`${issues.length} GLPostingDate issues`, issues) : ok();
-  }});
-
-R({ id: "D-176", category: "Sales", severity: "Reject", type: "C",
-  title: "InvoiceDate ≤ GLPostingDate",
-  check: (d) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      inv.invoiceDate && inv.glPostingDate && inv.invoiceDate > inv.glPostingDate
-    ).map((inv) => `${inv.invoiceNo}: inv=${inv.invoiceDate}, post=${inv.glPostingDate}`);
-    return issues.length ? fail(`${issues.length} date order issues`, issues) : ok();
-  }});
-
-R({ id: "D-177", category: "Sales", severity: "Block", type: "S",
-  title: "Invoice/SelfBillingIndicator if present must be 'V'",
-  check: (d) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      inv.selfBillingIndicator && inv.selfBillingIndicator !== SELF_BILLING_IND
-    ).map((inv) => `${inv.invoiceNo}: '${inv.selfBillingIndicator}'`);
-    return issues.length ? fail(`${issues.length} invalid SelfBillingIndicator`, issues) : ok();
-  }});
-
-R({ id: "D-178", category: "Sales", severity: "Reject", type: "B",
-  title: "Invoice/GLTransactionID must reference existing GL transaction",
-  check: (d, ctx) => {
-    if (!d.transactions?.length) return ok(); // GL section not in this file
-    const issues = (d.sales?.items || []).filter((inv) =>
-      inv.glTransactionID && !ctx.transactionMap.has(inv.glTransactionID)
-    ).map((inv) => `${inv.invoiceNo} → '${inv.glTransactionID}'`);
-    return issues.length ? fail(`${issues.length} orphan GLTransactionID refs`, issues) : ok();
-  }});
-
-R({ id: "D-179", category: "Sales", severity: "Block", type: "S",
-  title: "Each Line/RecordID mandatory and unique within invoice",
-  check: (d) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => {
-      const seen = new Set();
-      (inv.lines || []).forEach((l) => {
-        if (!l.recordID) issues.push(`${inv.invoiceNo}: line w/o RecordID`);
-        else if (seen.has(l.recordID)) issues.push(`${inv.invoiceNo}: dup RecordID ${l.recordID}`);
-        seen.add(l.recordID);
-      });
-    });
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "D-180", category: "Sales", severity: "Block", type: "S",
-  title: "Line/ProductCode must reference Products",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.productCode && !ctx.productMap.has(l.productCode)) {
-        issues.push(`${inv.invoiceNo}.${l.recordID} → '${l.productCode}'`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} orphan product refs`, issues) : ok();
-  }});
-
-R({ id: "D-181", category: "Sales", severity: "Block", type: "S",
-  title: "Line/Quantity and Line/UnitOfMeasure required; UOM must exist",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.quantity == null) issues.push(`${inv.invoiceNo}.${l.recordID}: no quantity`);
-      if (!l.unitOfMeasure) issues.push(`${inv.invoiceNo}.${l.recordID}: no UOM`);
-      else if (!ctx.uomSet.has(l.unitOfMeasure)) issues.push(`${inv.invoiceNo}.${l.recordID}: UOM '${l.unitOfMeasure}' not in table`);
-    }));
-    return issues.length ? fail(`${issues.length} qty/UOM issues`, issues) : ok();
-  }});
-
-R({ id: "D-182", category: "Sales", severity: "Block", type: "S",
-  title: "Line/UnitPrice and DebitAmount/CreditAmount supplied",
-  check: (d) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.unitPrice == null) issues.push(`${inv.invoiceNo}.${l.recordID}: no UnitPrice`);
-      if (l.debitAmount == null && l.creditAmount == null) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: no Debit/Credit`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} pricing issues`, issues) : ok();
-  }});
-
-R({ id: "D-183", category: "Sales", severity: "Reject", type: "C",
-  title: "Per line: UnitPrice × Quantity ± Settlement = Credit/Debit amount (±0.02)",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.unitPrice == null || l.quantity == null) return;
-      const expected = l.unitPrice * l.quantity - (l.settlementAmount || 0);
-      const actual = l.creditAmount ?? l.debitAmount;
-      if (actual == null) return;
-      if (Math.abs(expected - actual) > T.roundingToleranceEur) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: ${l.unitPrice}×${l.quantity}-${l.settlementAmount || 0}=€${expected.toFixed(2)}, got €${actual.toFixed(2)}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} line math errors`, issues) : ok();
-  }});
-
-R({ id: "D-184", category: "Sales", severity: "Block", type: "S",
-  title: "Line/Tax/TaxType+TaxCode must exist in TaxTable",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.tax && l.tax.taxType && l.tax.taxCode &&
-          !ctx.taxCodeMap.has(`${l.tax.taxType}|${l.tax.taxCode}`)) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: ${l.tax.taxType}|${l.tax.taxCode}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} orphan tax codes`, issues) : ok();
-  }});
-
-R({ id: "D-185", category: "Sales", severity: "Reject", type: "C",
-  title: "Recomputed line tax = TaxableAmount × TaxPercentage/100 ±0.02",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      const tx = l.tax;
-      if (!tx || tx.taxableAmount == null || tx.taxPercentage == null || tx.taxAmount == null) return;
-      const expected = tx.taxableAmount * tx.taxPercentage / 100;
-      if (Math.abs(expected - tx.taxAmount) > T.roundingToleranceEur) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: base €${tx.taxableAmount} × ${tx.taxPercentage}% = €${expected.toFixed(2)}, got €${tx.taxAmount.toFixed(2)}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} tax recomputation errors`, issues) : ok();
-  }});
-
-R({ id: "D-186", category: "Sales", severity: "Reject", type: "C",
-  title: "DocumentTotals/TaxPayable = Σ Line/Tax/TaxAmount",
-  check: (d, _, T) => {
-    const issues = (d.sales?.items || []).filter((inv) => {
-      if (!inv.documentTotals) return false;
-      const sum = (inv.lines || []).reduce((s, l) => s + (l.tax?.taxAmount || 0), 0);
-      return Math.abs(sum - inv.documentTotals.taxPayable) > T.roundingToleranceEur;
-    }).map((inv) => {
-      const sum = (inv.lines || []).reduce((s, l) => s + (l.tax?.taxAmount || 0), 0);
-      return `${inv.invoiceNo}: declared €${inv.documentTotals.taxPayable.toFixed(2)} vs sum €${sum.toFixed(2)}`;
-    });
-    return issues.length ? fail(`${issues.length} TaxPayable mismatches`, issues) : ok();
-  }});
-
-R({ id: "D-187", category: "Sales", severity: "Reject", type: "C",
-  title: "DocumentTotals/NetTotal = Σ taxable line amounts",
-  check: (d, _, T) => {
-    const issues = (d.sales?.items || []).filter((inv) => {
-      if (!inv.documentTotals) return false;
-      const sum = (inv.lines || []).reduce((s, l) => s + (l.tax?.taxableAmount || (l.creditAmount || l.debitAmount || 0)), 0);
-      return Math.abs(sum - inv.documentTotals.netTotal) > T.roundingToleranceEur;
-    }).map((inv) => `${inv.invoiceNo}: net €${inv.documentTotals.netTotal.toFixed(2)}`);
-    return issues.length ? fail(`${issues.length} NetTotal mismatches`, issues) : ok();
-  }});
-
-R({ id: "D-188", category: "Sales", severity: "Reject", type: "C",
-  title: "DocumentTotals/GrossTotal = NetTotal + TaxPayable",
-  check: (d, _, T) => {
-    const issues = (d.sales?.items || []).filter((inv) => {
-      const dt = inv.documentTotals;
-      if (!dt) return false;
-      const expected = (dt.netTotal || 0) + (dt.taxPayable || 0);
-      return Math.abs(expected - (dt.grossTotal || 0)) > T.roundingToleranceEur;
-    }).map((inv) => {
-      const dt = inv.documentTotals;
-      return `${inv.invoiceNo}: ${dt.netTotal}+${dt.taxPayable}=${(dt.netTotal + dt.taxPayable).toFixed(2)} vs ${dt.grossTotal}`;
-    });
-    return issues.length ? fail(`${issues.length} GrossTotal mismatches`, issues) : ok();
-  }});
-
-R({ id: "D-189", category: "Sales", severity: "Reject", type: "C",
-  title: "FX invoice: GrossTotal × ExchangeRate = CurrencyAmount ±0.02",
-  check: (d, _, T) => {
-    const issues = (d.sales?.items || []).filter((inv) => {
-      const dt = inv.documentTotals;
-      if (!dt?.currencyCode || dt.currencyCode === "EUR" || !dt.exchangeRate || !dt.currencyAmount) return false;
-      const expected = dt.grossTotal * dt.exchangeRate;
-      return Math.abs(expected - dt.currencyAmount) > T.roundingToleranceEur;
-    }).map((inv) => `${inv.invoiceNo}: ${inv.documentTotals.currencyCode} expected ${(inv.documentTotals.grossTotal * inv.documentTotals.exchangeRate).toFixed(2)}, got ${inv.documentTotals.currencyAmount}`);
-    return issues.length ? fail(`${issues.length} FX conversion errors`, issues) : ok();
-  }});
-
-R({ id: "D-190", category: "Sales", severity: "Warn", type: "B",
-  title: "Credit notes (C/VATC) must reference original invoice",
-  check: (d) => {
-    const issues = (d.sales?.items || []).filter((inv) =>
-      (inv.invoiceType === "C" || inv.invoiceType === "VATC") && !inv.references
-    ).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} credit notes without reference`, issues) : ok();
-  }});
-
-R({ id: "D-191", category: "Sales", severity: "Warn", type: "B",
-  title: "Annulled invoices (A) must not carry positive ledger-affecting values",
-  check: (d) => {
-    const issues = (d.sales?.items || []).filter((inv) => {
-      if (inv.invoiceType !== "A") return false;
-      const total = Math.abs(inv.documentTotals?.grossTotal || 0);
-      return total > 0.02;
-    }).map((inv) => `${inv.invoiceNo}: annulled but gross €${inv.documentTotals?.grossTotal}`);
-    return issues.length ? fail(`${issues.length} annulled invoices with values`, issues) : ok();
-  }});
-
-R({ id: "D-192", category: "Sales", severity: "Reject", type: "F",
-  title: "Standard LT VAT lines: TaxPercentage = 21.00 when invoice in 21% period",
-  check: (d) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (!l.tax) return;
-      const sti = (l.tax.taxCode || "").toUpperCase();
-      // Heuristic: codes ending in '21' or matching 'STD' typically represent standard rate
-      const standardCode = /21$/.test(sti) || /std|standard/i.test(sti);
-      if (standardCode && l.tax.taxPercentage != null && l.tax.taxPercentage !== 21 && inv.invoiceDate >= "2009-09-01") {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: code='${l.tax.taxCode}' but rate=${l.tax.taxPercentage}%`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} standard-rate VAT mismatches`, issues) : ok();
-  }});
-
-R({ id: "D-193", category: "Sales", severity: "Reject", type: "F",
-  title: "Reduced VAT rates (9% pre-2026 / 12% from 2026; 5% certain goods)",
-  check: (d) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (!l.tax || l.tax.taxPercentage == null) return;
-      const rate = l.tax.taxPercentage;
-      // Flag obviously stale 9% rates after 2026 cutover
-      if (rate === 9 && inv.invoiceDate >= "2026-01-01") {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: 9% post-2026 (replaced by 12%)`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} reduced-rate issues`, issues) : ok();
-  }});
-
-R({ id: "D-194", category: "Sales", severity: "Reject", type: "F",
-  title: "Zero-rated/exempt: TaxPercentage = 0 (or absent for exempt)",
-  check: (d) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (!l.tax) return;
-      const code = (l.tax.taxCode || "").toUpperCase();
-      const isZeroOrExempt = /0|zero|exempt|atleist|nul/i.test(code) || code === "PVM5" || code === "PVM33";
-      if (isZeroOrExempt && l.tax.taxPercentage != null && l.tax.taxPercentage !== 0) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: zero/exempt code '${l.tax.taxCode}' has rate ${l.tax.taxPercentage}%`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} zero/exempt rate issues`, issues) : ok();
-  }});
-
-R({ id: "D-195", category: "Sales", severity: "Warn", type: "F",
-  title: "Reverse-charge EU B2B: both parties' VAT IDs and zero-rated code",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => {
-      const cust = ctx.customerMap.get(inv.customerID);
-      if (!cust) return;
-      const isEu = cust.country && cust.country !== "LT" &&
-        ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"].includes(cust.country);
-      if (!isEu) return;
-      const hasVatId = cust.taxRegistrationNumber && /^[A-Z]{2}/.test(cust.taxRegistrationNumber);
-      const allZero = (inv.lines || []).every((l) => !l.tax || l.tax.taxPercentage === 0);
-      if (!hasVatId) issues.push(`${inv.invoiceNo}: EU customer ${inv.customerID} no VAT ID`);
-      if (!allZero) issues.push(`${inv.invoiceNo}: EU B2B but non-zero VAT lines`);
-    });
-    return issues.length ? fail(`${issues.length} reverse-charge issues`, issues) : ok();
-  }});
-
-R({ id: "D-196", category: "Sales", severity: "Warn", type: "F",
-  title: "Non-EU exports should reference customs documentation",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.sales?.items || []).forEach((inv) => {
-      const cust = ctx.customerMap.get(inv.customerID);
-      if (!cust || !cust.country) return;
-      const euCodes = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"];
-      const isNonEu = !euCodes.includes(cust.country);
-      if (isNonEu && !/customs|MRN|export|muitin/i.test((inv.references || "") + (inv.invoiceNo || ""))) {
-        issues.push(`${inv.invoiceNo}: ${cust.country} customer, no customs ref`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} unsupported exports`, issues) : ok();
-  }});
-
-R({ id: "D-197", category: "Sales", severity: "Warn", type: "F",
-  title: "Reverse-charge applied to LT customer (likely error)",
-  check: (d, ctx) => {
-    const issues = (d.sales?.items || []).filter((inv) => {
-      const cust = ctx.customerMap.get(inv.customerID);
-      if (!cust || cust.country !== "LT") return false;
-      // LT customer + zero-rated invoice with no clear export marker
-      const allZero = (inv.lines || []).every((l) => !l.tax || l.tax.taxPercentage === 0);
-      return allZero && (inv.lines || []).length > 0;
-    }).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} zero-VAT to LT customer`, issues) : ok();
-  }});
-
-R({ id: "D-198", category: "Sales", severity: "Reject", type: "F",
-  title: "Per-period VAT output reconciles to i.SAF (FR0600) — requires external file",
-  rationale: "External reconciliation; engine emits informational finding for review.",
-  check: (d) => {
-    const sumVat = (d.sales?.items || []).reduce((s, inv) => s + (inv.documentTotals?.taxPayable || 0), 0);
-    return sumVat > 0 ? fail(`Aggregate sales VAT €${sumVat.toFixed(2)} — manual reconciliation to FR0600 required`) : ok();
-  }});
-
-R({ id: "D-199", category: "Sales", severity: "Warn", type: "F",
-  title: "Monthly sales-invoice counts should match i.SAF ±1% (external check)",
-  check: () => ok()  // External dependency
-});
-
-R({ id: "D-200", category: "Sales", severity: "Warn", type: "F",
-  title: "Sales-invoice customers not appearing in i.SAF (external check)",
-  check: () => ok()  // External dependency
-});
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY E — Source Documents: Purchase Invoices (E-201 to E-230)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "E-201", category: "Purchases", severity: "Block", type: "S",
-  title: "PurchaseInvoices/NumberOfEntries = count of Invoices",
-  check: (d) => {
-    const declared = d.purchases?.meta?.numberOfEntries;
-    const actual = (d.purchases?.items || []).length;
-    if (declared == null) return actual > 0 ? fail("NumberOfEntries missing") : ok();
-    return declared === actual ? ok() : fail(`Declared ${declared}, actual ${actual}`);
-  }});
-
-R({ id: "E-202", category: "Purchases", severity: "Reject", type: "C",
-  title: "PurchaseInvoices/TotalDebit = sum of debit movements",
-  check: (d, _, T) => {
-    const declared = d.purchases?.meta?.totalDebit;
-    if (declared == null) return ok();
-    const actual = (d.purchases?.items || []).reduce((s, inv) =>
-      s + (inv.lines || []).reduce((ls, l) => ls + (l.debitAmount || 0), 0), 0);
-    return Math.abs(declared - actual) <= T.roundingToleranceEur ? ok() :
-      fail(`Declared €${declared.toFixed(2)} vs €${actual.toFixed(2)}`);
-  }});
-
-R({ id: "E-203", category: "Purchases", severity: "Reject", type: "C",
-  title: "PurchaseInvoices/TotalCredit = sum of credit movements",
-  check: (d, _, T) => {
-    const declared = d.purchases?.meta?.totalCredit;
-    if (declared == null) return ok();
-    const actual = (d.purchases?.items || []).reduce((s, inv) =>
-      s + (inv.lines || []).reduce((ls, l) => ls + (l.creditAmount || 0), 0), 0);
-    return Math.abs(declared - actual) <= T.roundingToleranceEur ? ok() :
-      fail(`Declared €${declared.toFixed(2)} vs €${actual.toFixed(2)}`);
-  }});
-
-R({ id: "E-204", category: "Purchases", severity: "Block", type: "S",
-  title: "Invoice/InvoiceNo populated, ≤ 70, unique by InvoiceType",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => {
-      if (!inv.invoiceNo) issues.push("PurchaseInvoice w/o InvoiceNo");
-      else if (inv.invoiceNo.length > 70) issues.push(`'${inv.invoiceNo}' > 70`);
-      const k = `${inv.invoiceType}|${inv.invoiceNo}`;
-      seen.set(k, (seen.get(k) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([k]) => issues.push(`Duplicate ${k}`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "E-205", category: "Purchases", severity: "Block", type: "S",
-  title: "Invoice/InvoiceDate valid",
-  check: (d) => {
-    const issues = (d.purchases?.items || []).filter((inv) => !isIsoDate(inv.invoiceDate)).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} invalid dates`, issues) : ok();
-  }});
-
-R({ id: "E-206", category: "Purchases", severity: "Block", type: "S",
-  title: "Invoice/InvoiceType from enum",
-  check: (d) => {
-    const issues = (d.purchases?.items || []).filter((inv) =>
-      !INVOICE_TYPES.has(inv.invoiceType)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.invoiceType}'`);
-    return issues.length ? fail(`${issues.length} invalid types`, issues) : ok();
-  }});
-
-R({ id: "E-207", category: "Purchases", severity: "Block", type: "S",
-  title: "Invoice/SupplierInfo (SupplierID) must reference Suppliers",
-  check: (d, ctx) => {
-    const issues = (d.purchases?.items || []).filter((inv) =>
-      inv.supplierID && !ctx.supplierMap.has(inv.supplierID)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.supplierID}'`);
-    return issues.length ? fail(`${issues.length} orphan supplier refs`, issues) : ok();
-  }});
-
-R({ id: "E-208", category: "Purchases", severity: "Block", type: "S",
-  title: "Invoice/AccountID must reference existing GL account",
-  check: (d, ctx) => {
-    const issues = (d.purchases?.items || []).filter((inv) =>
-      inv.accountID && !ctx.accountMap.has(inv.accountID)
-    ).map((inv) => `${inv.invoiceNo}: '${inv.accountID}'`);
-    return issues.length ? fail(`${issues.length} orphan account refs`, issues) : ok();
-  }});
-
-R({ id: "E-209", category: "Purchases", severity: "Block", type: "S",
-  title: "Invoice/GLPostingDate valid and within fiscal period",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      if (!isIsoDate(inv.glPostingDate)) return true;
-      if (f && t && (inv.glPostingDate < f || inv.glPostingDate > t)) return true;
-      return false;
-    }).map((inv) => `${inv.invoiceNo}: ${inv.glPostingDate}`);
-    return issues.length ? fail(`${issues.length} GLPostingDate issues`, issues) : ok();
-  }});
-
-R({ id: "E-210", category: "Purchases", severity: "Reject", type: "C",
-  title: "InvoiceDate ≤ GLPostingDate",
-  check: (d) => {
-    const issues = (d.purchases?.items || []).filter((inv) =>
-      inv.invoiceDate && inv.glPostingDate && inv.invoiceDate > inv.glPostingDate
-    ).map((inv) => `${inv.invoiceNo}`);
-    return issues.length ? fail(`${issues.length} date order issues`, issues) : ok();
-  }});
-
-R({ id: "E-211", category: "Purchases", severity: "Reject", type: "B",
-  title: "Invoice/GLTransactionID must reference existing GL transaction",
-  check: (d, ctx) => {
-    if (!d.transactions?.length) return ok();
-    const issues = (d.purchases?.items || []).filter((inv) =>
-      inv.glTransactionID && !ctx.transactionMap.has(inv.glTransactionID)
-    ).map((inv) => `${inv.invoiceNo} → '${inv.glTransactionID}'`);
-    return issues.length ? fail(`${issues.length} orphan refs`, issues) : ok();
-  }});
-
-R({ id: "E-212", category: "Purchases", severity: "Block", type: "S",
-  title: "Line/RecordID mandatory, unique within invoice",
-  check: (d) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => {
-      const seen = new Set();
-      (inv.lines || []).forEach((l) => {
-        if (!l.recordID) issues.push(`${inv.invoiceNo}: line w/o RecordID`);
-        else if (seen.has(l.recordID)) issues.push(`${inv.invoiceNo}: dup ${l.recordID}`);
-        seen.add(l.recordID);
-      });
-    });
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "E-213", category: "Purchases", severity: "Block", type: "S",
-  title: "Line/ProductCode must reference Products",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.productCode && !ctx.productMap.has(l.productCode)) {
-        issues.push(`${inv.invoiceNo}.${l.recordID} → '${l.productCode}'`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} orphan refs`, issues) : ok();
-  }});
-
-R({ id: "E-214", category: "Purchases", severity: "Block", type: "S",
-  title: "Line/Quantity, UnitOfMeasure required; UOM in table",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.quantity == null) issues.push(`${inv.invoiceNo}.${l.recordID}: no quantity`);
-      if (!l.unitOfMeasure) issues.push(`${inv.invoiceNo}.${l.recordID}: no UOM`);
-      else if (!ctx.uomSet.has(l.unitOfMeasure)) issues.push(`${inv.invoiceNo}.${l.recordID}: UOM '${l.unitOfMeasure}' not in table`);
-    }));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "E-215", category: "Purchases", severity: "Block", type: "S",
-  title: "Line/UnitPrice and amount required",
-  check: (d) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.unitPrice == null) issues.push(`${inv.invoiceNo}.${l.recordID}: no UnitPrice`);
-    }));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "E-216", category: "Purchases", severity: "Reject", type: "C",
-  title: "Per line: UnitPrice × Quantity ± Settlement = amount (±0.02)",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.unitPrice == null || l.quantity == null) return;
-      const expected = l.unitPrice * l.quantity - (l.settlementAmount || 0);
-      const actual = l.debitAmount ?? l.creditAmount;
-      if (actual == null) return;
-      if (Math.abs(expected - actual) > T.roundingToleranceEur) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: expected €${expected.toFixed(2)}, got €${actual.toFixed(2)}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} math errors`, issues) : ok();
-  }});
-
-R({ id: "E-217", category: "Purchases", severity: "Block", type: "S",
-  title: "Line/Tax/TaxType+TaxCode must exist in TaxTable",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (l.tax?.taxType && l.tax.taxCode &&
-          !ctx.taxCodeMap.has(`${l.tax.taxType}|${l.tax.taxCode}`)) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: ${l.tax.taxType}|${l.tax.taxCode}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} orphan tax codes`, issues) : ok();
-  }});
-
-R({ id: "E-218", category: "Purchases", severity: "Reject", type: "C",
-  title: "Recomputed line tax matches TaxableAmount × TaxPercentage ±0.02",
-  check: (d, _, T) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      const tx = l.tax;
-      if (!tx || tx.taxableAmount == null || tx.taxPercentage == null || tx.taxAmount == null) return;
-      const expected = tx.taxableAmount * tx.taxPercentage / 100;
-      if (Math.abs(expected - tx.taxAmount) > T.roundingToleranceEur) {
-        issues.push(`${inv.invoiceNo}.${l.recordID}: €${expected.toFixed(2)} ≠ €${tx.taxAmount.toFixed(2)}`);
-      }
-    }));
-    return issues.length ? fail(`${issues.length} tax errors`, issues) : ok();
-  }});
-
-R({ id: "E-219", category: "Purchases", severity: "Warn", type: "F",
-  title: "Input VAT on supplier with inactive/missing VAT ID (VIES check needed)",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => {
-      const sup = ctx.supplierMap.get(inv.supplierID);
-      if (!sup) return;
-      const hasVat = (inv.lines || []).some((l) => l.tax?.taxAmount > 0);
-      if (hasVat && !sup.taxRegistrationNumber) {
-        issues.push(`${inv.invoiceNo}: supplier ${sup.supplierID} no VAT ID, claims input VAT`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} VAT claims w/o supplier VAT ID`, issues) : ok();
-  }});
-
-R({ id: "E-220", category: "Purchases", severity: "Reject", type: "F",
-  title: "Input VAT on supplier with no TaxRegistration and no fallback = non-deductible",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => {
-      const sup = ctx.supplierMap.get(inv.supplierID);
-      if (!sup) return;
-      const claimed = (inv.lines || []).reduce((s, l) => s + (l.tax?.taxAmount || 0), 0);
-      if (claimed > 0 && !sup.taxRegistrationNumber && !sup.registrationNumber) {
-        issues.push(`${inv.invoiceNo}: €${claimed.toFixed(2)} VAT claimed, supplier has no registration data`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} non-deductible VAT claims`, issues) : ok();
-  }});
-
-R({ id: "E-221", category: "Purchases", severity: "Warn", type: "F",
-  title: "Purchase invoices booked > 6 months after invoice date (missed VAT recovery)",
-  check: (d, _, T) => {
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      if (!inv.invoiceDate || !inv.systemEntryDate) return false;
-      const months = (new Date(inv.systemEntryDate) - new Date(inv.invoiceDate)) / (1000 * 60 * 60 * 24 * 30);
-      return months > T.invoiceLateMonths;
-    }).map((inv) => `${inv.invoiceNo}: ${inv.invoiceDate} → entered ${inv.systemEntryDate}`);
-    return issues.length ? fail(`${issues.length} late entries — potential VAT recovery missed`, issues) : ok();
-  }});
-
-R({ id: "E-222", category: "Purchases", severity: "Warn", type: "F",
-  title: "Purchases from suppliers in offshore jurisdictions (target territories list)",
-  check: (d, ctx) => {
-    // LT VMI maintains an offshore list (e.g., includes: BS, BZ, GG, IM, KY, etc.)
-    const offshore = new Set(["AD","AG","AI","AW","BB","BS","BZ","BM","BN","CK","CW","DM","FO",
-      "GD","GG","GI","HK","IM","JE","KN","KY","LC","LI","LR","MC","MH","MO","MS","MU","NR",
-      "PA","PW","PM","SC","SM","TC","VC","VG","VU","WS"]);
-    const issues = [];
-    (d.purchases?.items || []).forEach((inv) => {
-      const sup = ctx.supplierMap.get(inv.supplierID);
-      if (sup && offshore.has(sup.country)) {
-        issues.push(`${inv.invoiceNo}: supplier ${sup.supplierID} in ${sup.country} (offshore)`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} offshore-jurisdiction purchases`, issues) : ok();
-  }});
-
-R({ id: "E-223", category: "Purchases", severity: "Warn", type: "F",
-  title: "Round-amount invoices to small/new suppliers",
-  check: (d) => {
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      const gross = inv.documentTotals?.grossTotal || 0;
-      if (gross < 100 || gross % 100 !== 0) return false; // Round number
-      return true; // Without history data, just flag round invoices for review
-    }).slice(0, 50).map((inv) => `${inv.invoiceNo}: €${inv.documentTotals?.grossTotal}`);
-    return issues.length > 5 ? fail(`${issues.length} round-amount invoices`, issues) : ok();
-  }});
-
-R({ id: "E-224", category: "Purchases", severity: "Reject", type: "F",
-  title: "Self-billed purchase invoices must have SelfBillingIndicator='V'",
-  check: (d) => {
-    const issues = (d.purchases?.items || []).filter((inv) =>
-      inv.selfBillingIndicator && inv.selfBillingIndicator !== "V"
-    ).map((inv) => `${inv.invoiceNo}: '${inv.selfBillingIndicator}'`);
-    return issues.length ? fail(`${issues.length} invalid SelfBillingIndicator`, issues) : ok();
-  }});
-
-R({ id: "E-225", category: "Purchases", severity: "Reject", type: "C",
-  title: "DocumentTotals/TaxPayable = Σ line tax",
-  check: (d, _, T) => {
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      if (!inv.documentTotals) return false;
-      const sum = (inv.lines || []).reduce((s, l) => s + (l.tax?.taxAmount || 0), 0);
-      return Math.abs(sum - inv.documentTotals.taxPayable) > T.roundingToleranceEur;
-    }).map((inv) => `${inv.invoiceNo}`);
-    return issues.length ? fail(`${issues.length} TaxPayable mismatches`, issues) : ok();
-  }});
-
-R({ id: "E-226", category: "Purchases", severity: "Reject", type: "C",
-  title: "DocumentTotals/NetTotal = Σ taxable amounts",
-  check: (d, _, T) => {
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      if (!inv.documentTotals) return false;
-      const sum = (inv.lines || []).reduce((s, l) => s + (l.tax?.taxableAmount || l.debitAmount || 0), 0);
-      return Math.abs(sum - inv.documentTotals.netTotal) > T.roundingToleranceEur;
-    }).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} NetTotal mismatches`, issues) : ok();
-  }});
-
-R({ id: "E-227", category: "Purchases", severity: "Reject", type: "C",
-  title: "DocumentTotals/GrossTotal = NetTotal + TaxPayable",
-  check: (d, _, T) => {
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      const dt = inv.documentTotals;
-      if (!dt) return false;
-      const expected = (dt.netTotal || 0) + (dt.taxPayable || 0);
-      return Math.abs(expected - (dt.grossTotal || 0)) > T.roundingToleranceEur;
-    }).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} GrossTotal mismatches`, issues) : ok();
-  }});
-
-R({ id: "E-228", category: "Purchases", severity: "Reject", type: "C",
-  title: "FX purchase: GrossTotal × ExchangeRate = CurrencyAmount ±0.02",
-  check: (d, _, T) => {
-    const issues = (d.purchases?.items || []).filter((inv) => {
-      const dt = inv.documentTotals;
-      if (!dt?.currencyCode || dt.currencyCode === "EUR" || !dt.exchangeRate || !dt.currencyAmount) return false;
-      return Math.abs(dt.grossTotal * dt.exchangeRate - dt.currencyAmount) > T.roundingToleranceEur;
-    }).map((inv) => inv.invoiceNo);
-    return issues.length ? fail(`${issues.length} FX conversion errors`, issues) : ok();
-  }});
-
-R({ id: "E-229", category: "Purchases", severity: "Reject", type: "F",
-  title: "Aggregate input VAT reconciles to i.SAF / FR0600 (external)",
-  check: (d) => {
-    const sumVat = (d.purchases?.items || []).reduce((s, inv) => s + (inv.documentTotals?.taxPayable || 0), 0);
-    return sumVat > 0 ? fail(`Aggregate input VAT €${sumVat.toFixed(2)} — manual FR0600 reconciliation required`) : ok();
-  }});
-
-R({ id: "E-230", category: "Purchases", severity: "Warn", type: "F",
-  title: "Same supplier, same date, identical amounts (potential duplication)",
-  check: (d) => {
-    const seen = new Map();
-    (d.purchases?.items || []).forEach((inv) => {
-      const k = `${inv.supplierID}|${inv.invoiceDate}|${(inv.documentTotals?.grossTotal || 0).toFixed(2)}`;
-      const arr = seen.get(k) || [];
-      arr.push(inv.invoiceNo);
-      seen.set(k, arr);
-    });
-    const dups = [...seen.entries()].filter(([, ids]) => ids.length > 1).map(([k, ids]) =>
-      `[${k}] ${ids.join(", ")}`);
-    return dups.length ? fail(`${dups.length} duplicate-pattern purchases`, dups) : ok();
-  }});
-
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY F — Source Documents: Payments (F-231 to F-250)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "F-231", category: "Payments", severity: "Block", type: "S",
-  title: "Payments NumberOfEntries, TotalDebit, TotalCredit consistent",
-  check: (d, _, T) => {
-    const declared = d.paymentsMeta;
-    const actual = d.payments || [];
-    if (!declared && actual.length === 0) return ok();
-    const issues = [];
-    if (declared?.numberOfEntries != null && declared.numberOfEntries !== actual.length) {
-      issues.push(`NumberOfEntries: declared ${declared.numberOfEntries}, actual ${actual.length}`);
-    }
-    const sumDb = actual.reduce((s, p) => s + (p.lines || []).reduce((ls, l) => ls + (l.debitAmount || 0), 0), 0);
-    const sumCr = actual.reduce((s, p) => s + (p.lines || []).reduce((ls, l) => ls + (l.creditAmount || 0), 0), 0);
-    if (declared?.totalDebit != null && Math.abs(declared.totalDebit - sumDb) > T.roundingToleranceEur) {
-      issues.push(`TotalDebit declared €${declared.totalDebit.toFixed(2)} vs €${sumDb.toFixed(2)}`);
-    }
-    if (declared?.totalCredit != null && Math.abs(declared.totalCredit - sumCr) > T.roundingToleranceEur) {
-      issues.push(`TotalCredit declared €${declared.totalCredit.toFixed(2)} vs €${sumCr.toFixed(2)}`);
-    }
-    return issues.length ? fail(`${issues.length} totals issues`, issues) : ok();
-  }});
-
-R({ id: "F-232", category: "Payments", severity: "Block", type: "S",
-  title: "Payment/PaymentRefNo ≤ 35 chars and unique",
-  check: (d) => {
-    const seen = new Map();
-    const issues = [];
-    (d.payments || []).forEach((p) => {
-      if (p.paymentRefNo?.length > LEN.mid1) issues.push(`'${p.paymentRefNo}' > 35`);
-      seen.set(p.paymentRefNo, (seen.get(p.paymentRefNo) || 0) + 1);
-    });
-    [...seen.entries()].filter(([, n]) => n > 1).forEach(([r]) => issues.push(`Duplicate ${r}`));
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "F-233", category: "Payments", severity: "Block", type: "S",
-  title: "PaymentMethod enum: BP, KPO, KIO, KV, CP, C, U, KT",
-  check: (d) => {
-    const issues = (d.payments || []).filter((p) =>
-      p.paymentMethod && !PAYMENT_METHODS.has(p.paymentMethod)
-    ).map((p) => `${p.paymentRefNo}: '${p.paymentMethod}'`);
-    return issues.length ? fail(`${issues.length} invalid methods`, issues) : ok();
-  }});
-
-R({ id: "F-234", category: "Payments", severity: "Block", type: "S",
-  title: "Payment/TransactionDate valid and within period",
-  check: (d) => {
-    const f = d.header?.fiscalYearFrom, t = d.header?.fiscalYearTo;
-    const issues = (d.payments || []).filter((p) => {
-      if (!isIsoDate(p.transactionDate)) return true;
-      if (f && t && (p.transactionDate < f || p.transactionDate > t)) return true;
-      return false;
-    }).map((p) => `${p.paymentRefNo}: ${p.transactionDate}`);
-    return issues.length ? fail(`${issues.length} date issues`, issues) : ok();
-  }});
-
-R({ id: "F-235", category: "Payments", severity: "Block", type: "S",
-  title: "Payment/BankAccount: valid IBAN; LT IBAN MOD-97 check",
-  check: (d) => {
-    const issues = (d.payments || []).filter((p) => {
-      if (!p.bankAccount) return false;
-      if (/^LT/.test(p.bankAccount)) return !isValidLtIban(p.bankAccount);
-      // For non-LT IBANs, basic length/format
-      return !/^[A-Z]{2}\d{2}[A-Z0-9]{1,30}$/.test(p.bankAccount.replace(/\s/g, ""));
-    }).map((p) => `${p.paymentRefNo}: '${p.bankAccount}'`);
-    return issues.length ? fail(`${issues.length} invalid IBANs`, issues) : ok();
-  }});
-
-R({ id: "F-236", category: "Payments", severity: "Block", type: "S",
-  title: "Payment/Line CustomerID or SupplierID resolves to MasterFiles",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => {
-      if (!l.customerID && !l.supplierID) {
-        issues.push(`${p.paymentRefNo}.${l.recordID}: no party ref`);
-        return;
-      }
-      if (l.customerID && !ctx.customerMap.has(l.customerID))
-        issues.push(`${p.paymentRefNo}.${l.recordID}: customer '${l.customerID}'`);
-      if (l.supplierID && !ctx.supplierMap.has(l.supplierID))
-        issues.push(`${p.paymentRefNo}.${l.recordID}: supplier '${l.supplierID}'`);
-    }));
-    return issues.length ? fail(`${issues.length} orphan refs`, issues) : ok();
-  }});
-
-R({ id: "F-237", category: "Payments", severity: "Reject", type: "C",
-  title: "Σ Line/Credit − Σ Line/Debit = GrossTotal ±0.02",
-  check: (d, _, T) => {
-    const issues = (d.payments || []).filter((p) => {
-      const cr = (p.lines || []).reduce((s, l) => s + (l.creditAmount || 0), 0);
-      const db = (p.lines || []).reduce((s, l) => s + (l.debitAmount || 0), 0);
-      return Math.abs((cr - db) - p.grossTotal) > T.roundingToleranceEur;
-    }).map((p) => {
-      const cr = (p.lines || []).reduce((s, l) => s + (l.creditAmount || 0), 0);
-      const db = (p.lines || []).reduce((s, l) => s + (l.debitAmount || 0), 0);
-      return `${p.paymentRefNo}: net €${(cr - db).toFixed(2)} ≠ gross €${p.grossTotal.toFixed(2)}`;
-    });
-    return issues.length ? fail(`${issues.length} payment-net mismatches`, issues) : ok();
-  }});
-
-R({ id: "F-238", category: "Payments", severity: "Reject", type: "C",
-  title: "Settling lines reference invoice via SourceDocumentID; amount ≤ unpaid balance",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => {
-      const amt = l.creditAmount || l.debitAmount || 0;
-      if (amt === 0) return;
-      if (!l.sourceDocumentID) {
-        issues.push(`${p.paymentRefNo}.${l.recordID}: no SourceDocumentID`);
-        return;
-      }
-      // Locate invoice
-      const inv = ctx.invoiceNoSetByType.has(`|${l.sourceDocumentID}`) ||
-        [...(d.sales?.items || []), ...(d.purchases?.items || [])].find((i) => i.invoiceNo === l.sourceDocumentID);
-      // Defer detailed amount check to availability of unpaid balance info
-    }));
-    return issues.length ? fail(`${issues.length} settling lines w/o invoice ref`, issues) : ok();
-  }});
-
-R({ id: "F-239", category: "Payments", severity: "Warn", type: "F",
-  title: "Cash receipts (KV/KIO/KPO) above statutory cash threshold",
-  check: (d, _, T) => {
-    const issues = (d.payments || []).filter((p) =>
-      ["KV", "KIO", "KPO"].includes(p.paymentMethod) && p.grossTotal > T.cashLimitEur
-    ).map((p) => `${p.paymentRefNo}: €${p.grossTotal} cash`);
-    return issues.length ? fail(`${issues.length} over-threshold cash payments`, issues) : ok();
-  }});
-
-R({ id: "F-240", category: "Payments", severity: "Warn", type: "F",
-  title: "Payments to accounts in jurisdictions other than party's country",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.payments || []).forEach((p) => {
-      if (!p.bankAccount) return;
-      const country = p.bankAccount.substring(0, 2);
-      (p.lines || []).forEach((l) => {
-        const partyID = l.supplierID || l.customerID;
-        const party = ctx.supplierMap.get(partyID) || ctx.customerMap.get(partyID);
-        if (party?.country && country !== party.country && country !== "LT") {
-          issues.push(`${p.paymentRefNo}: IBAN ${country} but party in ${party.country}`);
-        }
-      });
-    });
-    return issues.length ? fail(`${issues.length} cross-border bank-account anomalies`, issues) : ok();
-  }});
-
-R({ id: "F-241", category: "Payments", severity: "Warn", type: "F",
-  title: "Netting payments (U) must reference netting agreement",
-  check: (d) => {
-    const issues = (d.payments || []).filter((p) =>
-      p.paymentMethod === "U" && !/agreement|sutartis|netting|užskaitym/i.test(p.description || "")
-    ).map((p) => p.paymentRefNo);
-    return issues.length ? fail(`${issues.length} netting w/o agreement ref`, issues) : ok();
-  }});
-
-R({ id: "F-242", category: "Payments", severity: "Warn", type: "F",
-  title: "Weekend/holiday payments for non-24/7 entities",
-  check: (d) => {
-    const issues = (d.payments || []).filter((p) => {
-      if (!isIsoDate(p.transactionDate)) return false;
-      const wd = new Date(p.transactionDate).getDay();
-      return wd === 0 || wd === 6;
-    }).map((p) => `${p.paymentRefNo}: ${p.transactionDate}`);
-    return issues.length ? fail(`${issues.length} weekend payments`, issues) : ok();
-  }});
-
-R({ id: "F-243", category: "Payments", severity: "Warn", type: "F",
-  title: "Round-amount cash payments at thresholds (€2,999 / €4,999 / €14,999)",
-  check: (d) => {
-    const sus = [2999, 4999, 9999, 14999];
-    const issues = (d.payments || []).filter((p) =>
-      ["KV", "KIO", "KPO"].includes(p.paymentMethod) &&
-      sus.some((s) => Math.abs(p.grossTotal - s) < 1)
-    ).map((p) => `${p.paymentRefNo}: €${p.grossTotal}`);
-    return issues.length ? fail(`${issues.length} threshold-adjacent cash payments`, issues) : ok();
-  }});
-
-R({ id: "F-244", category: "Payments", severity: "Reject", type: "F",
-  title: "Payments to suppliers with no BankAccount in MasterFiles",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.payments || []).forEach((p) => {
-      if (p.paymentMethod !== "BP") return;
-      (p.lines || []).forEach((l) => {
-        if (!l.supplierID) return;
-        const sup = ctx.supplierMap.get(l.supplierID);
-        if (sup && !sup.bankAccount) {
-          issues.push(`${p.paymentRefNo}: bank transfer to ${l.supplierID} with no recorded BankAccount`);
-        }
-      });
-    });
-    return issues.length ? fail(`${issues.length} bank xfers to suppliers w/o bank data`, issues) : ok();
-  }});
-
-R({ id: "F-245", category: "Payments", severity: "Reject", type: "C",
-  title: "Payment Settlement must not exceed invoice value being settled",
-  check: () => ok()  // Settlement structure not granular enough in basic parse
-});
-
-R({ id: "F-246", category: "Payments", severity: "Warn", type: "F",
-  title: "Negative payments (refunds) must be tagged and reference original",
-  check: (d) => {
-    const issues = (d.payments || []).filter((p) =>
-      p.grossTotal < 0 && !/refund|reversal|grąžin|atstatym/i.test(p.description || "")
-    ).map((p) => `${p.paymentRefNo}: €${p.grossTotal} no refund tag`);
-    return issues.length ? fail(`${issues.length} unlabeled negative payments`, issues) : ok();
-  }});
-
-R({ id: "F-247", category: "Payments", severity: "Warn", type: "C",
-  title: "Aggregate customer payments should reconcile to customer balance change",
-  rationale: "Heuristic — flags large discrepancies between received payments and AR movement.",
-  check: (d, _, T) => {
-    const recvByCust = new Map();
-    (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => {
-      if (!l.customerID) return;
-      const amt = l.creditAmount || l.debitAmount || 0;
-      recvByCust.set(l.customerID, (recvByCust.get(l.customerID) || 0) + amt);
-    }));
-    const issues = [];
-    (d.customers || []).forEach((c) => {
-      const open = (c.openingDebitBalance || 0) - (c.openingCreditBalance || 0);
-      const close = (c.closingDebitBalance || 0) - (c.closingCreditBalance || 0);
-      const movement = open - close;
-      const received = recvByCust.get(c.customerID) || 0;
-      // Crude: if received ≫ movement, flag for review (allows for new invoicing)
-      if (received > 0 && Math.abs(received - movement) > Math.max(100, Math.abs(movement) * 0.5)) {
-        issues.push(`${c.customerID}: received €${received.toFixed(2)} vs AR change €${movement.toFixed(2)}`);
-      }
-    });
-    return issues.length > 5 ? fail(`${issues.length} AR-payment reconciliation gaps`, issues.slice(0, 10)) : ok();
-  }});
-
-R({ id: "F-248", category: "Payments", severity: "Warn", type: "C",
-  title: "Aggregate supplier payments reconcile to supplier balance change",
-  check: (d) => {
-    const paidBySup = new Map();
-    (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => {
-      if (!l.supplierID) return;
-      const amt = l.debitAmount || l.creditAmount || 0;
-      paidBySup.set(l.supplierID, (paidBySup.get(l.supplierID) || 0) + amt);
-    }));
-    const issues = [];
-    (d.suppliers || []).forEach((s) => {
-      const open = (s.openingCreditBalance || 0) - (s.openingDebitBalance || 0);
-      const close = (s.closingCreditBalance || 0) - (s.closingDebitBalance || 0);
-      const movement = open - close;
-      const paid = paidBySup.get(s.supplierID) || 0;
-      if (paid > 0 && Math.abs(paid - movement) > Math.max(100, Math.abs(movement) * 0.5)) {
-        issues.push(`${s.supplierID}: paid €${paid.toFixed(2)} vs AP change €${movement.toFixed(2)}`);
-      }
-    });
-    return issues.length > 5 ? fail(`${issues.length} AP-payment gaps`, issues.slice(0, 10)) : ok();
-  }});
-
-R({ id: "F-249", category: "Payments", severity: "Warn", type: "F",
-  title: "Payments to employees not posted via payroll journal",
-  check: (d) => {
-    // Without HR feed, flag direct employee payments by name patterns
-    const issues = (d.payments || []).filter((p) =>
-      /salary|atlyginim|wage|alga|payroll/i.test(p.description || "") &&
-      !/payroll|alg|hr/i.test((p.paymentRefNo || ""))
-    ).map((p) => p.paymentRefNo);
-    return issues.length ? fail(`${issues.length} salary payments outside payroll`, issues) : ok();
-  }});
-
-R({ id: "F-250", category: "Payments", severity: "Warn", type: "F",
-  title: "PaymentMethod = C (Cheque) is rare in LT — flag as potential master-data error",
-  check: (d) => {
-    const issues = (d.payments || []).filter((p) => p.paymentMethod === "C").map((p) =>
-      `${p.paymentRefNo}: cheque €${p.grossTotal}`);
-    return issues.length ? fail(`${issues.length} cheque payments (rare in LT)`, issues) : ok();
-  }});
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY G — Movement of Goods (G-251 to G-265)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "G-251", category: "Movements", severity: "Block", type: "S",
-  title: "MovementOfGoods NumberOfEntries and TotalQuantity match content",
-  check: (d) => {
-    const m = d.movementMeta;
-    const actual = (d.stockMovements || []).length;
-    if (!m && actual === 0) return ok();
-    const issues = [];
-    if (m?.numberOfEntries != null && m.numberOfEntries !== actual) {
-      issues.push(`NumberOfEntries declared ${m.numberOfEntries}, actual ${actual}`);
-    }
-    const sumQ = (d.stockMovements || []).reduce((s, x) => s + (x.quantity || 0), 0);
-    if (m?.totalQuantity != null && Math.abs(m.totalQuantity - sumQ) > 0.0001) {
-      issues.push(`TotalQuantity declared ${m.totalQuantity} vs ${sumQ}`);
-    }
-    return issues.length ? fail(`${issues.length} issues`, issues) : ok();
-  }});
-
-R({ id: "G-252", category: "Movements", severity: "Block", type: "S",
-  title: "StockMovement/MovementType must exist in MovementTypeTable",
-  check: (d, ctx) => {
-    const issues = (d.stockMovements || []).filter((m) =>
-      !ctx.movementTypeSet.has(m.movementType) && !MOVEMENT_TYPES.has(m.movementType)
-    ).map((m) => `${m.productCode} @ ${m.transactionDate}: '${m.movementType}'`);
-    return issues.length ? fail(`${issues.length} unknown movement types`, issues) : ok();
-  }});
-
-R({ id: "G-253", category: "Movements", severity: "Block", type: "S",
-  title: "StockMovement/ProductCode must exist in Products",
-  check: (d, ctx) => {
-    const issues = (d.stockMovements || []).filter((m) =>
-      !ctx.productMap.has(m.productCode)
-    ).map((m) => `${m.productCode}`);
-    return issues.length ? fail(`${issues.length} orphan product refs`, issues) : ok();
-  }});
-
-R({ id: "G-254", category: "Movements", severity: "Block", type: "S",
-  title: "WarehouseID required for inventory products (PR)",
-  check: (d, ctx) => {
-    const issues = (d.stockMovements || []).filter((m) => {
-      const p = ctx.productMap.get(m.productCode);
-      return p?.goodsServicesID === "PR" && !m.warehouseID;
-    }).map((m) => `${m.productCode}: no warehouse`);
-    return issues.length ? fail(`${issues.length} PR movements w/o warehouse`, issues) : ok();
-  }});
-
-R({ id: "G-255", category: "Movements", severity: "Block", type: "S",
-  title: "Quantity required; UOM required and in UOMTable",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.stockMovements || []).forEach((m) => {
-      if (m.quantity == null) issues.push(`${m.productCode}: no quantity`);
-      if (!m.uom) issues.push(`${m.productCode}: no UOM`);
-      else if (!ctx.uomSet.has(m.uom)) issues.push(`${m.productCode}: UOM '${m.uom}' not in table`);
-    });
-    return issues.length ? fail(`${issues.length} qty/UOM issues`, issues) : ok();
-  }});
-
-R({ id: "G-256", category: "Movements", severity: "Reject", type: "C",
-  title: "Per-product roll-forward: Open + Purchases + ReturnsIn − Sales − ReturnsOut − Writeoffs ± Transfers = Close",
-  check: (d, ctx, T) => {
-    const stockByProd = new Map();
-    (d.physicalStock || []).forEach((s) => stockByProd.set(s.productCode, s));
-    const moveByProd = new Map();
-    (d.stockMovements || []).forEach((m) => {
-      const v = moveByProd.get(m.productCode) || { in: 0, out: 0 };
-      // PIR/PG = inflow; PARD/PRG/N = outflow; VP nets to 0 internally
-      if (m.movementType === "PIR" || m.movementType === "PG") v.in += m.quantity;
-      else if (m.movementType === "PARD" || m.movementType === "PRG" || m.movementType === "N") v.out += m.quantity;
-      moveByProd.set(m.productCode, v);
-    });
-    const issues = [];
-    stockByProd.forEach((s, pc) => {
-      const mv = moveByProd.get(pc) || { in: 0, out: 0 };
-      const expected = (s.openingStockQuantity || 0) + mv.in - mv.out;
-      const diff = Math.abs(expected - (s.closingStockQuantity || 0));
-      if (diff > 0.001) {
-        issues.push(`${pc}: open ${s.openingStockQuantity} + in ${mv.in} - out ${mv.out} = ${expected}, close ${s.closingStockQuantity} (diff ${diff.toFixed(4)})`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} stock roll-forward errors`, issues) : ok();
-  }});
-
-R({ id: "G-257", category: "Movements", severity: "Warn", type: "F",
-  title: "Write-offs (N) exceeding threshold % of period inventory",
-  check: (d, ctx, T) => {
-    const totalIn = new Map();
-    (d.stockMovements || []).forEach((m) => {
-      if (m.movementType === "PIR") totalIn.set(m.productCode, (totalIn.get(m.productCode) || 0) + m.quantity);
-    });
-    const issues = [];
-    const writeOffsByProd = new Map();
-    (d.stockMovements || []).forEach((m) => {
-      if (m.movementType === "N") {
-        writeOffsByProd.set(m.productCode, (writeOffsByProd.get(m.productCode) || 0) + m.quantity);
-      }
-    });
-    writeOffsByProd.forEach((wo, pc) => {
-      const base = (totalIn.get(pc) || 0) + ((d.physicalStock || []).find((s) => s.productCode === pc)?.openingStockQuantity || 0);
-      if (base > 0 && wo / base * 100 > T.writeOffPercent) {
-        issues.push(`${pc}: write-off ${wo} of ${base} = ${(wo / base * 100).toFixed(1)}%`);
-      }
-    });
-    return issues.length ? fail(`${issues.length} excessive write-offs (>${T.writeOffPercent}%)`, issues) : ok();
-  }});
-
-R({ id: "G-258", category: "Movements", severity: "Warn", type: "F",
-  title: "Negative on-hand at any point in period",
-  check: (d) => {
-    const issues = (d.physicalStock || []).filter((s) =>
-      s.openingStockQuantity < 0 || s.closingStockQuantity < 0
-    ).map((s) => `${s.productCode}: open=${s.openingStockQuantity}, close=${s.closingStockQuantity}`);
-    return issues.length ? fail(`${issues.length} negative stocks`, issues) : ok();
-  }});
-
-R({ id: "G-259", category: "Movements", severity: "Warn", type: "F",
-  title: "WarehouseID at unregistered physical location (external check)",
-  check: (d) => {
-    const warehouses = new Set();
-    (d.stockMovements || []).forEach((m) => m.warehouseID && warehouses.add(m.warehouseID));
-    return warehouses.size > 0 ? fail(`${warehouses.size} warehouse(s) used; verify against registered locations`, [...warehouses]) : ok();
-  }});
-
-R({ id: "G-260", category: "Movements", severity: "Warn", type: "F",
-  title: "Internal transfers (VP) without matching equal-and-opposite movement",
-  check: (d) => {
-    const vps = (d.stockMovements || []).filter((m) => m.movementType === "VP");
-    const byProd = new Map();
-    vps.forEach((m) => {
-      const v = byProd.get(m.productCode) || 0;
-      byProd.set(m.productCode, v + m.quantity);
-    });
-    const issues = [...byProd.entries()].filter(([, q]) => Math.abs(q) > 0.001).map(([pc, q]) =>
-      `${pc}: net VP ${q.toFixed(4)} (should be 0)`);
-    return issues.length ? fail(`${issues.length} unmatched internal transfers`, issues) : ok();
-  }});
-
-R({ id: "G-261", category: "Movements", severity: "Warn", type: "F",
-  title: "Movements with type 'KT' (Other) without justification",
-  check: (d) => {
-    const issues = (d.stockMovements || []).filter((m) =>
-      m.movementType === "KT" && !m.sourceDocumentID
-    ).map((m) => `${m.productCode} @ ${m.transactionDate}`);
-    return issues.length ? fail(`${issues.length} 'Other' movements w/o source doc`, issues) : ok();
-  }});
-
-R({ id: "G-262", category: "Movements", severity: "Warn", type: "C",
-  title: "Stock movement values reconcile to GL inventory account",
-  rationale: "Value-side reconciliation requires per-movement value; flagged informationally.",
-  check: (d) => {
-    const invAccts = (d.accounts || []).filter((a) =>
-      /inventory|stock|atsarg|prek/i.test(a.accountDescription || "")
-    );
-    return invAccts.length > 0 ? ok() : fail("No GL inventory account identified — reconciliation impossible");
-  }});
-
-R({ id: "G-263", category: "Movements", severity: "Warn", type: "F",
-  title: "Stock movements on dates outside operating calendar (weekends)",
-  check: (d) => {
-    const issues = (d.stockMovements || []).filter((m) => {
-      if (!isIsoDate(m.transactionDate)) return false;
-      const wd = new Date(m.transactionDate).getDay();
-      return wd === 0 || wd === 6;
-    }).map((m) => `${m.productCode} @ ${m.transactionDate}`);
-    return issues.length ? fail(`${issues.length} weekend movements`, issues) : ok();
-  }});
-
-R({ id: "G-264", category: "Movements", severity: "Warn", type: "F",
-  title: "Customs-procedure movements must carry CustomsProcedure data",
-  check: (d) => {
-    const issues = (d.stockMovements || []).filter((m) =>
-      /import|export|customs|muitin/i.test((m.sourceDocumentID || "") + (m.movementType || "")) &&
-      !m.customsProcedure
-    ).map((m) => `${m.productCode}: no CustomsProcedure`);
-    return issues.length ? fail(`${issues.length} customs movements w/o procedure data`, issues) : ok();
-  }});
-
-R({ id: "G-265", category: "Movements", severity: "Warn", type: "F",
-  title: "Goods movements without linked source document",
-  check: (d) => {
-    const issues = (d.stockMovements || []).filter((m) => !m.sourceDocumentID).map((m) =>
-      `${m.productCode} ${m.movementType} @ ${m.transactionDate}`);
-    return issues.length ? fail(`${issues.length} movements w/o source doc`, issues) : ok();
-  }});
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY H — Asset Transactions (H-266 to H-275)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "H-266", category: "AssetTx", severity: "Block", type: "S",
-  title: "AssetTransactions NumberOfEntries matches content",
-  check: (d) => {
-    const declared = d.assetTxMeta?.numberOfEntries;
-    const actual = (d.assetTransactions || []).length;
-    if (declared == null) return actual > 0 ? ok() : ok();
-    return declared === actual ? ok() : fail(`Declared ${declared}, actual ${actual}`);
-  }});
-
-R({ id: "H-267", category: "AssetTx", severity: "Block", type: "S",
-  title: "AssetTransaction/AssetID must reference existing Asset",
-  check: (d, ctx) => {
-    const issues = (d.assetTransactions || []).filter((t) =>
-      !ctx.assetMap.has(t.assetID)
-    ).map((t) => `${t.assetID} @ ${t.transactionDate}`);
-    return issues.length ? fail(`${issues.length} orphan asset refs`, issues) : ok();
-  }});
-
-R({ id: "H-268", category: "AssetTx", severity: "Block", type: "S",
-  title: "TransactionType must be a recognized asset operation",
-  check: (d) => {
-    const VALID = new Set(["acquisition", "disposal", "transfer", "impairment", "depreciation", "revaluation",
-      "ACQ", "DISP", "TRSF", "IMP", "DEPR", "REV", "I", "P", "PT"]);
-    const issues = (d.assetTransactions || []).filter((t) =>
-      t.transactionType && !VALID.has(t.transactionType) && !VALID.has(t.transactionType.toLowerCase())
-    ).map((t) => `${t.assetID}: '${t.transactionType}'`);
-    return issues.length ? fail(`${issues.length} unknown transaction types`, issues) : ok();
-  }});
-
-R({ id: "H-269", category: "AssetTx", severity: "Reject", type: "C",
-  title: "Asset transactions reconcile to BookValueBegin → BookValueEnd (per B-104)",
-  rationale: "Already checked in B-104; here we verify transactions sum to the change.",
-  check: (d, ctx, T) => {
-    const txByAsset = new Map();
-    (d.assetTransactions || []).forEach((t) => {
-      const v = txByAsset.get(t.assetID) || 0;
-      txByAsset.set(t.assetID, v + (t.amount || 0));
-    });
-    const issues = [];
-    (d.assets || []).forEach((a) => {
-      if (!a.valuation) return;
-      const expectedChange = (a.valuation.bookValueEnd || 0) - (a.valuation.bookValueBegin || 0);
-      const txSum = txByAsset.get(a.assetID) || 0;
-      // Note: book value change ≠ sum of tx amounts directly (signs vary), but large gap = red flag
-      if (txSum !== 0 && Math.abs(txSum - expectedChange) > Math.max(1, Math.abs(expectedChange) * 0.05)) {
-        issues.push(`${a.assetID}: tx Σ €${txSum.toFixed(2)} vs Δbook €${expectedChange.toFixed(2)}`);
-      }
-    });
-    return issues.length > 5 ? fail(`${issues.length} asset roll-forward gaps`, issues.slice(0, 10)) : ok();
-  }});
-
-R({ id: "H-270", category: "AssetTx", severity: "Warn", type: "F",
-  title: "Asset disposal at material loss within 12 months of acquisition",
-  check: (d, ctx) => {
-    const issues = [];
-    (d.assetTransactions || []).forEach((t) => {
-      if (!/disp|sale/i.test(t.transactionType || "")) return;
-      const asset = ctx.assetMap.get(t.assetID);
-      if (!asset?.dateOfAcquisition || !t.transactionDate) return;
-      const months = (new Date(t.transactionDate) - new Date(asset.dateOfAcquisition)) / (1000 * 60 * 60 * 24 * 30);
-      if (months <= 12) {
-        const carrying = asset.valuation?.bookValueBegin || 0;
-        if (carrying > 0 && t.amount < carrying * 0.7) {
-          issues.push(`${t.assetID}: disposed €${t.amount} after ${months.toFixed(1)}m, carrying €${carrying}`);
-        }
-      }
-    });
-    return issues.length ? fail(`${issues.length} early disposals at loss`, issues) : ok();
-  }});
-
-R({ id: "H-271", category: "AssetTx", severity: "Warn", type: "F",
-  title: "Asset acquisitions without linked supplier invoice",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) =>
-      a.valuation?.acquisitionsInPeriod > 0 && !a.supplierID
-    ).map((a) => `${a.assetID}: acquired €${a.valuation.acquisitionsInPeriod} no supplier ref`);
-    return issues.length ? fail(`${issues.length} acquisitions w/o supplier`, issues) : ok();
-  }});
-
-R({ id: "H-272", category: "AssetTx", severity: "Warn", type: "F",
-  title: "Mass depreciation-rate changes mid-year affecting non-trivial asset value",
-  rationale: "Requires prior-period rate metadata; informational placeholder.",
-  check: () => ok()});
-
-R({ id: "H-273", category: "AssetTx", severity: "Warn", type: "F",
-  title: "Revaluations (Appreciation) without documented valuation reference",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) =>
-      a.valuation?.appreciation > 0 && !a.description
-    ).map((a) => `${a.assetID}: +€${a.valuation.appreciation} no narrative`);
-    return issues.length ? fail(`${issues.length} undocumented revaluations`, issues) : ok();
-  }});
-
-R({ id: "H-274", category: "AssetTx", severity: "Warn", type: "F",
-  title: "Assets disposed and reacquired within 24 months from same party (round-tripping)",
-  rationale: "Requires party tracking across acquisition/disposal cycles; informational.",
-  check: () => ok()});
-
-R({ id: "H-275", category: "AssetTx", severity: "Warn", type: "F",
-  title: "Assets with BookValueEnd > 0 and no depreciation for period",
-  check: (d) => {
-    const issues = (d.assets || []).filter((a) => {
-      const v = a.valuation;
-      return v && (v.bookValueEnd || 0) > 0 && (v.depreciationForPeriod || 0) === 0;
-    }).map((a) => `${a.assetID}: end €${a.valuation.bookValueEnd}, no depr`);
-    return issues.length > 5 ? fail(`${issues.length} assets w/o period depreciation`, issues.slice(0, 10)) : ok();
-  }});
-
-// ════════════════════════════════════════════════════════════════════
-// CATEGORY I — Cross-section integrity & reconciliations (I-276 to I-300)
-// ════════════════════════════════════════════════════════════════════
-
-R({ id: "I-276", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every CustomerID in GL/Sales/Payments exists in MasterFiles/Customers",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.transactions || []).forEach((t) => t.customerID && refs.add(t.customerID));
-    (d.sales?.items || []).forEach((inv) => inv.customerID && refs.add(inv.customerID));
-    (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => l.customerID && refs.add(l.customerID)));
-    const orphan = [...refs].filter((id) => !ctx.customerMap.has(id));
-    return orphan.length ? fail(`${orphan.length} orphan CustomerIDs`, orphan) : ok();
-  }});
-
-R({ id: "I-277", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every SupplierID in GL/Purchases/Payments exists in MasterFiles/Suppliers",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.transactions || []).forEach((t) => t.supplierID && refs.add(t.supplierID));
-    (d.purchases?.items || []).forEach((inv) => inv.supplierID && refs.add(inv.supplierID));
-    (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => l.supplierID && refs.add(l.supplierID)));
-    const orphan = [...refs].filter((id) => !ctx.supplierMap.has(id));
-    return orphan.length ? fail(`${orphan.length} orphan SupplierIDs`, orphan) : ok();
-  }});
-
-R({ id: "I-278", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every AccountID in GL/Sources/Owners exists in MasterFiles/Accounts",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => l.accountID && refs.add(l.accountID)));
-    (d.sales?.items || []).forEach((inv) => inv.accountID && refs.add(inv.accountID));
-    (d.purchases?.items || []).forEach((inv) => inv.accountID && refs.add(inv.accountID));
-    (d.owners || []).forEach((o) => o.accountID && refs.add(o.accountID));
-    (d.customers || []).forEach((c) => c.accountID && refs.add(c.accountID));
-    (d.suppliers || []).forEach((s) => s.accountID && refs.add(s.accountID));
-    (d.assets || []).forEach((a) => a.accountID && refs.add(a.accountID));
-    const orphan = [...refs].filter((id) => !ctx.accountMap.has(id));
-    return orphan.length ? fail(`${orphan.length} orphan AccountIDs`, orphan) : ok();
-  }});
-
-R({ id: "I-279", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every ProductCode in Sources/Stock exists in MasterFiles/Products",
-  check: (d, ctx) => {
-    const refs = new Set();
-    [...(d.sales?.items || []), ...(d.purchases?.items || [])].forEach((inv) =>
-      (inv.lines || []).forEach((l) => l.productCode && refs.add(l.productCode)));
-    (d.stockMovements || []).forEach((m) => m.productCode && refs.add(m.productCode));
-    (d.physicalStock || []).forEach((s) => s.productCode && refs.add(s.productCode));
-    const orphan = [...refs].filter((id) => !ctx.productMap.has(id));
-    return orphan.length ? fail(`${orphan.length} orphan ProductCodes`, orphan) : ok();
-  }});
-
-R({ id: "I-280", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every TaxType+TaxCode referenced exists in TaxTable",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
-      if (l.taxInfo?.taxType && l.taxInfo.taxCode) refs.add(`${l.taxInfo.taxType}|${l.taxInfo.taxCode}`);
-    }));
-    [...(d.sales?.items || []), ...(d.purchases?.items || [])].forEach((inv) =>
-      (inv.lines || []).forEach((l) => {
-        if (l.tax?.taxType && l.tax.taxCode) refs.add(`${l.tax.taxType}|${l.tax.taxCode}`);
-      }));
-    (d.products || []).forEach((p) => {
-      if (p.taxType && p.taxCode) refs.add(`${p.taxType}|${p.taxCode}`);
-    });
-    const orphan = [...refs].filter((k) => !ctx.taxCodeMap.has(k));
-    return orphan.length ? fail(`${orphan.length} orphan tax codes`, orphan) : ok();
-  }});
-
-R({ id: "I-281", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every UnitOfMeasure referenced exists in UOMTable",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.products || []).forEach((p) => {
-      if (p.uomBase) refs.add(p.uomBase);
-      if (p.uomStandard) refs.add(p.uomStandard);
-    });
-    [...(d.sales?.items || []), ...(d.purchases?.items || [])].forEach((inv) =>
-      (inv.lines || []).forEach((l) => l.unitOfMeasure && refs.add(l.unitOfMeasure)));
-    (d.stockMovements || []).forEach((m) => m.uom && refs.add(m.uom));
-    const orphan = [...refs].filter((u) => !ctx.uomSet.has(u));
-    return orphan.length ? fail(`${orphan.length} orphan UOMs`, orphan) : ok();
-  }});
-
-R({ id: "I-282", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every AnalysisType+AnalysisID referenced exists in AnalysisTable",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) =>
-      (l.analysis || []).forEach((a) => refs.add(`${a.analysisType}|${a.analysisID}`))));
-    const orphan = [...refs].filter((k) => !ctx.analysisMap.has(k));
-    return orphan.length ? fail(`${orphan.length} orphan analysis refs`, orphan) : ok();
-  }});
-
-R({ id: "I-283", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every MovementType referenced exists in MovementTypeTable",
-  check: (d, ctx) => {
-    const refs = new Set();
-    (d.stockMovements || []).forEach((m) => m.movementType && refs.add(m.movementType));
-    const orphan = [...refs].filter((t) => !ctx.movementTypeSet.has(t) && !MOVEMENT_TYPES.has(t));
-    return orphan.length ? fail(`${orphan.length} orphan movement types`, orphan) : ok();
-  }});
-
-R({ id: "I-284", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every AssetID in AssetTransactions exists in MasterFiles/Assets",
-  check: (d, ctx) => {
-    const orphan = (d.assetTransactions || []).filter((t) =>
-      t.assetID && !ctx.assetMap.has(t.assetID)
-    ).map((t) => t.assetID);
-    return orphan.length ? fail(`${orphan.length} orphan AssetIDs`, [...new Set(orphan)]) : ok();
-  }});
-
-R({ id: "I-285", category: "CrossRef", severity: "Reject", type: "C",
-  title: "Every GLTransactionID on a source document resolves to a GL Transaction",
-  check: (d, ctx) => {
-    if (!d.transactions?.length) return ok();
-    const refs = [];
-    [...(d.sales?.items || []), ...(d.purchases?.items || [])].forEach((inv) => {
-      if (inv.glTransactionID && !ctx.transactionMap.has(inv.glTransactionID)) {
-        refs.push(`${inv.invoiceNo} → ${inv.glTransactionID}`);
-      }
-    });
-    return refs.length ? fail(`${refs.length} orphan GLTransactionID refs`, refs) : ok();
-  }});
-
-R({ id: "I-286", category: "CrossRef", severity: "Reject", type: "C",
-  title: "OpenSalesInvoices reference invoices that exist or carried forward",
-  check: (d) => {
-    const issuedNos = new Set((d.sales?.items || []).map((i) => i.invoiceNo));
-    const issues = [];
-    (d.customers || []).forEach((c) => (c.openSalesInvoices || []).forEach((o) => {
-      if (!issuedNos.has(o.invoiceNo) && o.invoiceDate >= (d.header?.fiscalYearFrom || "0000-00-00")) {
-        issues.push(`${c.customerID}: open inv ${o.invoiceNo} not in period sales`);
-      }
-    }));
-    return issues.length > 5 ? fail(`${issues.length} open invoices not in period sales (likely opening carry-forward, verify)`, issues.slice(0, 10)) : ok();
-  }});
-
-R({ id: "I-287", category: "CrossRef", severity: "Reject", type: "C",
-  title: "OpenPurchaseInvoices reference invoices that exist or carried forward",
-  check: (d) => {
-    const issuedNos = new Set((d.purchases?.items || []).map((i) => i.invoiceNo));
-    const issues = [];
-    (d.suppliers || []).forEach((s) => (s.openPurchaseInvoices || []).forEach((o) => {
-      if (!issuedNos.has(o.invoiceNo) && o.invoiceDate >= (d.header?.fiscalYearFrom || "0000-00-00")) {
-        issues.push(`${s.supplierID}: open inv ${o.invoiceNo} not in period purchases`);
-      }
-    }));
-    return issues.length > 5 ? fail(`${issues.length} open purchase invoices not in period (verify carry-forward)`, issues.slice(0, 10)) : ok();
-  }});
-
-R({ id: "I-288", category: "CrossRef", severity: "Reject", type: "F",
-  title: "Aggregate VAT output per period reconciles to FR0600/i.SAF (external)",
-  check: (d) => {
-    const sumVat = (d.sales?.items || []).reduce((s, inv) => s + (inv.documentTotals?.taxPayable || 0), 0);
-    return sumVat > 0 ? fail(`Aggregate sales VAT €${sumVat.toFixed(2)} — manual FR0600 cross-check required`) : ok();
-  }});
-
-R({ id: "I-289", category: "CrossRef", severity: "Reject", type: "F",
-  title: "Aggregate VAT input per period reconciles to FR0600/i.SAF (external)",
-  check: (d) => {
-    const sumVat = (d.purchases?.items || []).reduce((s, inv) => s + (inv.documentTotals?.taxPayable || 0), 0);
-    return sumVat > 0 ? fail(`Aggregate input VAT €${sumVat.toFixed(2)} — manual FR0600 cross-check required`) : ok();
-  }});
-
-R({ id: "I-290", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Income (P) accounts reconcile to annual financial statements (external)",
-  check: (d) => {
-    const sumIncome = (d.accounts || []).filter((a) => a.accountType === "P").reduce((s, a) =>
-      s + (a.closingCreditBalance || 0) - (a.closingDebitBalance || 0), 0);
-    return sumIncome > 0 ? fail(`Total income €${sumIncome.toFixed(2)} — verify against filed financial statements (Register of Legal Entities)`) : ok();
-  }});
-
-R({ id: "I-291", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Cost (S) accounts reconcile to annual financial statements (external)",
-  check: (d) => {
-    const sumCost = (d.accounts || []).filter((a) => a.accountType === "S").reduce((s, a) =>
-      s + (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0), 0);
-    return sumCost > 0 ? fail(`Total costs €${sumCost.toFixed(2)} — verify against filed financial statements`) : ok();
-  }});
-
-R({ id: "I-292", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Net result (P-S) reconciles to retained-earnings movement in equity",
-  check: (d) => {
-    const income = (d.accounts || []).filter((a) => a.accountType === "P").reduce((s, a) =>
-      s + (a.closingCreditBalance || 0) - (a.closingDebitBalance || 0), 0);
-    const cost = (d.accounts || []).filter((a) => a.accountType === "S").reduce((s, a) =>
-      s + (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0), 0);
-    const netResult = income - cost;
-    if (netResult === 0) return ok();
-    return fail(`Computed net result €${netResult.toFixed(2)} — verify equity movement matches (retained earnings appropriation)`);
-  }});
-
-R({ id: "I-293", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Payroll-related GL postings reconcile to SODRA monthly filings (external)",
-  check: (d) => {
-    const payrollAccts = (d.accounts || []).filter((a) =>
-      /payroll|atlyginim|salary|wages|sodra|gpm/i.test(a.accountDescription || "")
-    );
-    return payrollAccts.length > 0 ?
-      fail(`${payrollAccts.length} payroll-tagged accounts identified — cross-check SODRA filings (SAM/SAV forms) for each month`) : ok();
-  }});
-
-R({ id: "I-294", category: "CrossRef", severity: "Warn", type: "F",
-  title: "GPM withheld reconciles to GPM313/GPM312 filings (external)",
-  check: (d) => {
-    const gpmAccts = (d.accounts || []).filter((a) =>
-      /gpm|income tax|gyventoj.*mokest/i.test(a.accountDescription || "")
-    );
-    return gpmAccts.length > 0 ?
-      fail(`${gpmAccts.length} GPM-related accounts — cross-check GPM313 (annual) and GPM312 (interim) filings`) : ok();
-  }});
-
-R({ id: "I-295", category: "CrossRef", severity: "Warn", type: "F",
-  title: "CIT items reconcile to PLN204/PLN204A return (external)",
-  check: (d) => {
-    const income = (d.accounts || []).filter((a) => a.accountType === "P").reduce((s, a) =>
-      s + (a.closingCreditBalance || 0) - (a.closingDebitBalance || 0), 0);
-    const cost = (d.accounts || []).filter((a) => a.accountType === "S").reduce((s, a) =>
-      s + (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0), 0);
-    const taxableBase = income - cost;
-    return taxableBase > 0 ? fail(`Accounting profit €${taxableBase.toFixed(2)} — adjust for non-deductible items and reconcile to PLN204A (line 28-29)`) : ok();
-  }});
-
-R({ id: "I-296", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Bank-account opening/closing balances reconcile to bank statements (external)",
-  check: (d) => {
-    const bankAccts = (d.accounts || []).filter((a) =>
-      /bank|sąskaita|banko/i.test(a.accountDescription || "")
-    );
-    return bankAccts.length > 0 ?
-      fail(`${bankAccts.length} bank accounts — pull bank statements for each and reconcile opening/closing balances`) : ok();
-  }});
-
-R({ id: "I-297", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Petty-cash closing balance reconciles to physical cash count (external)",
-  check: (d) => {
-    const cashAccts = (d.accounts || []).filter((a) =>
-      /cash|kasa|grynieji|petty/i.test(a.accountDescription || "")
-    );
-    const issues = cashAccts.filter((a) =>
-      Math.abs((a.closingDebitBalance || 0) - (a.closingCreditBalance || 0)) > 0.02
-    ).map((a) => `${a.accountID}: €${((a.closingDebitBalance || 0) - (a.closingCreditBalance || 0)).toFixed(2)}`);
-    return issues.length ? fail(`${issues.length} cash accounts — verify with kasos knyga / physical count`, issues) : ok();
-  }});
-
-R({ id: "I-298", category: "CrossRef", severity: "Reject", type: "F",
-  title: "Re-submission must preserve original Entity in audit logs (VA-127 §3.1)",
-  rationale: "Procedural rule; engine cannot verify external audit trail.",
-  check: () => ok()});
-
-R({ id: "I-299", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Records modified after period close must be flagged (ERP-dependent)",
-  check: (d) => {
-    const yearEnd = d.header?.fiscalYearTo;
-    if (!yearEnd) return ok();
-    const issues = (d.transactions || []).filter((t) => {
-      if (!t.systemEntryDate || !t.glPostingDate) return false;
-      return t.glPostingDate <= yearEnd && t.systemEntryDate.substring(0, 10) > yearEnd;
-    }).map((t) => `${t.transactionID}: posted ${t.glPostingDate}, entered ${t.systemEntryDate}`);
-    return issues.length ? fail(`${issues.length} entries modified post-close`, issues) : ok();
-  }});
-
-R({ id: "I-300", category: "CrossRef", severity: "Warn", type: "F",
-  title: "Pre-submission control: authorized representative confirms accuracy",
-  rationale: "Procedural; engine produces summary statistics for sign-off.",
-  check: (d, ctx) => {
-    const tx = (d.transactions || []).length;
-    const inv = (d.sales?.items?.length || 0) + (d.purchases?.items?.length || 0);
-    const stmt = `Pre-submission summary: ${d.counts?.accounts || 0} accounts, ${tx} transactions, ${inv} invoices, ${d.counts?.payments || 0} payments. Σ Debits €${ctx.sumDebits.toFixed(2)} / Credits €${ctx.sumCredits.toFixed(2)}. Authorized rep must confirm SAF-T represents the entity's accounting data without business-meaning-altering transformation.`;
-    return fail(stmt);
-  }});
-
-
-// ════════════════════════════════════════════════════════════════════
 // Public API: runAllRules + supporting orchestration
 // ════════════════════════════════════════════════════════════════════
 
@@ -4384,78 +1168,68 @@ R({ id: "I-300", category: "CrossRef", severity: "Warn", type: "F",
 function runAllRules(data, opts = {}) {
   if (!data || data._parseError) {
     return {
-      findings: [{
-        rule_id: "A-001",
-        category: "Header",
-        severity: "Block",
-        severityUi: "Critical",
-        type: "S",
-        typeName: "Schema",
-        title: "XML parse failed",
-        detail: data?._parseError || "Empty input",
-        evidence: [],
-      }],
-      summary: { total: 1, byRule: { "A-001": 1 } },
-      byRule: {},
-      byCategory: {},
-      bySeverity: { Block: 1, Reject: 0, Warn: 0 },
-      thresholds: { ...DEFAULT_THRESHOLDS, ...(opts.thresholds || {}) },
+      findings: [{ rule_id: "PARSE", category: "Schema", severity: "Block", severityUi: "Critical", type: "S", typeName: "Schema", title: "XML parse failed", detail: data?._parseError || "Empty input", evidence: [] }],
+      summary: { total: 1, rulesExecuted: AUDIT_RULES.length, Block: 1, Reject: 0, Warn: 0 },
+      byRule: {}, byCategory: {}, bySeverity: { Block: 1, Reject: 0, Warn: 0 },
+      audit: null,
     };
   }
-
-  const T = { ...DEFAULT_THRESHOLDS, ...(opts.thresholds || {}) };
-  const ctx = buildContext(data);
+  // Severity mapping from the source workbook: High -> Reject, Low -> Warn.
+  const sevMap = { High: "Reject", Low: "Warn" };
+  const uiMap = { Reject: "High", Warn: "Medium", Block: "Critical" };
+  const audit = runAuditRules(data);
   const findings = [];
-
-  for (const rule of RULES) {
-    try {
-      const results = rule.check(data, ctx, T) || [];
-      for (const r of results) {
-        findings.push(mkFinding(rule, r.detail, r.evidence));
-      }
-    } catch (e) {
-      // A rule throwing should not break the whole run; emit an internal-error finding
-      findings.push(mkFinding(rule, `Rule execution error: ${e.message}`, null));
-    }
-  }
-
-  // Aggregations
+  const ruleById = {}; AUDIT_RULES.forEach((a) => { ruleById[a.id] = a; });
+  audit.results.forEach((r) => {
+    if (r.status !== "flagged") return;
+    const severity = sevMap[r.severity] || "Warn";
+    const meta = ruleById[r.id] || {};
+    r.hits.forEach((h) => {
+      findings.push({
+        rule_id: r.id,
+        category: r.scope === "sales" ? "Sales VAT" : "Purchase VAT",
+        severity, severityUi: uiMap[severity] || "Medium",
+        type: "B", typeName: "Audit",
+        title: r.title,
+        detail: h.msg + "  —  " + (r.legal || ""),
+        evidence: [h.msg],
+        // rich metadata for the finding-detail page:
+        ruleMeta: {
+          titleLt: meta.title || r.title, titleEn: meta.titleEn || r.title,
+          descriptionLt: meta.description || "", legal: meta.legal || r.legal || "",
+          fixEn: meta.fixEn || "", fixLt: meta.fixLt || "",
+          dataTypes: meta.dataTypes || "", refType: meta.refType || "", scope: r.scope,
+        },
+        evidenceRow: h.row || null,   // structured @field values
+      });
+    });
+  });
   const byRule = {}, byCategory = {}, bySeverity = { Block: 0, Reject: 0, Warn: 0 };
   for (const f of findings) {
     byRule[f.rule_id] = (byRule[f.rule_id] || 0) + 1;
     byCategory[f.category] = (byCategory[f.category] || 0) + 1;
     bySeverity[f.severity] = (bySeverity[f.severity] || 0) + 1;
   }
-
   return {
     findings,
-    summary: { total: findings.length, rulesExecuted: RULES.length, ...bySeverity },
-    byRule,
-    byCategory,
-    bySeverity,
-    thresholds: T,
-    coverage: {
-      rulesTotal: 300,
-      rulesRegistered: RULES.length,
-      rulesTriggered: Object.keys(byRule).length,
-    },
+    summary: { total: findings.length, rulesExecuted: AUDIT_RULES.length, ...bySeverity },
+    byRule, byCategory, bySeverity,
+    coverage: { rulesTotal: AUDIT_RULES.length, rulesRegistered: AUDIT_RULES.length, rulesTriggered: Object.keys(byRule).length },
+    audit, // full structured audit-rule result (results[], summary)
   };
 }
 
-/**
- * Return the full RULES catalog (id, title, severity, type, category, rationale).
- * For UI rendering "show me all 300 rules", auditor reference, and AI context.
- */
 function getRuleCatalog() {
-  return RULES.map((r) => ({
+  const sevMap = { High: "Reject", Low: "Warn" };
+  return AUDIT_RULES.map((r) => ({
     id: r.id,
-    category: r.category,
-    severity: r.severity,
-    severityUi: severityToUi(r.severity),
-    type: r.type,
-    typeName: RULE_TYPE[r.type],
-    title: r.title,
-    rationale: r.rationale || "",
+    category: r.scope === "sales" ? "Sales VAT" : "Purchase VAT",
+    severity: sevMap[r.severity] || "Warn",
+    severityUi: r.severity === "High" ? "High" : "Medium",
+    type: "B", typeName: "Audit",
+    title: r.title, titleEn: r.titleEn,
+    rationale: r.description || "",
+    legal: r.legal, dataTypes: r.dataTypes, refType: r.refType,
   }));
 }
 
@@ -6323,7 +3097,7 @@ function evaluateGeneratedRule(rule, registry) {
 // ════════════════════════════════════════════════════════════════════
 // AI LAYER — the Adaptive Rule Architect proposes rules; we evaluate.
 // ════════════════════════════════════════════════════════════════════
-const SYSTEM_PROMPT_PERSONALIZED_RULES = `You are the **TAXAI Adaptive Rule Architect** — a forensic auditor + industry CFO who designs bespoke, company-specific audit & financial-health rules for a Lithuanian entity, on top of the fixed 300 deterministic SAF-T rules.
+const SYSTEM_PROMPT_PERSONALIZED_RULES = `You are the **TAXAI Adaptive Rule Architect** — a forensic auditor + industry CFO who designs bespoke, company-specific audit & financial-health rules for a Lithuanian entity, on top of the verified deterministic SAF-T audit rules.
 
 YOUR JOB: Given (a) the company's deterministically pre-computed METRIC REGISTRY, (b) a detected industry signal, and (c) the titles of the existing 300 rules, propose NEW rules that the 300 generic rules do NOT already cover. The rules must be (1) specific to this company's industry and data profile, and (2) genuinely useful — surfacing tax-compliance risk, fraud/error risk, OR financial-health insight that helps the company understand its finances.
 
@@ -6998,6 +3772,11 @@ const RULE_PROVENANCE_OVERRIDES = {
   "A-003": { reference: "SAF-T XSD v2.01 — AuditFileVersion = 2.01", status: "schema" },
 };
 function provenanceFor(rule) {
+  // Verified audit rules carry their own legal basis (PVMĮ articles). Prefer that.
+  const auditRule = (typeof AUDIT_RULES !== "undefined" && rule?.id) ? AUDIT_RULES.find((a) => a.id === rule.id) : null;
+  if (auditRule) {
+    return { authority: "VMI", reference: (auditRule.legal || "PVMĮ") + " · SAF-T XSD v2.01 (" + auditRule.refType + ")", status: "regulatory" };
+  }
   const base = CATEGORY_PROVENANCE[rule.category] || { authority: "VMI", reference: "SAF-T XSD v2.01", status: "review" };
   const ov = RULE_PROVENANCE_OVERRIDES[rule.id] || {};
   return { authority: ov.authority || base.authority, reference: ov.reference || base.reference, status: ov.status || base.status };
@@ -7052,26 +3831,33 @@ function resolveRatePack(dateStr) {
 // Built-in fixtures make the suite usable out of the box; teams can add
 // their own labelled files later.
 function buildConformanceFixtures() {
-  const wrap = (inner, opts = {}) => {
-    const decl = opts.noDecl ? "" : `<?xml version="1.0" encoding="${opts.enc || "UTF-8"}"?>\n`;
-    const ns = opts.badNs ? "http://example.org/notvmi" : "https://www.vmi.lt/cms/saf-t";
-    const ver = opts.version != null ? opts.version : "2.01";
-    const root = opts.noAuditFile ? "NotAuditFile" : "AuditFile";
-    return `${decl}<${root} xmlns="${ns}"><Header><AuditFileVersion>${ver}</AuditFileVersion><AuditFileCountry>LT</AuditFileCountry></Header>${inner}</${root}>`;
-  };
+  // Build a minimal valid SAF-T with one sales + one purchase invoice whose
+  // fields are controlled per-fixture, so a specific audit rule must fire.
+  const saft = (salesInner, purchInner) => `<?xml version="1.0" encoding="UTF-8"?>
+<AuditFile xmlns="https://www.vmi.lt/cms/saf-t"><Header><AuditFileVersion>2.01</AuditFileVersion><AuditFileCountry>LT</AuditFileCountry></Header>
+<MasterFiles><TaxTable><TaxTableEntry><TaxCodeDetails><TaxCode>PVM1</TaxCode><STITaxCode>PVM1</STITaxCode></TaxCodeDetails>
+<TaxCodeDetails><TaxCode>PVM13</TaxCode><STITaxCode>PVM13</STITaxCode></TaxCodeDetails>
+<TaxCodeDetails><TaxCode>PVM20</TaxCode><STITaxCode>PVM20</STITaxCode></TaxCodeDetails></TaxTableEntry></TaxTable></MasterFiles>
+<SourceDocuments><SalesInvoices>${salesInner || ""}</SalesInvoices><PurchaseInvoices>${purchInner || ""}</PurchaseInvoices></SourceDocuments></AuditFile>`;
+  const sInv = (no, shipFrom, shipTo, gs, taxCode, ref) =>
+    `<Invoice><InvoiceNo>${no}</InvoiceNo>${ref ? `<References><Reference>${ref}</Reference></References>` : ""}${shipFrom ? `<ShipFrom><Address><Country>${shipFrom}</Country></Address></ShipFrom>` : ""}${shipTo ? `<ShipTo><Address><Country>${shipTo}</Country></Address></ShipTo>` : ""}<DocumentTotals><NetTotal>1000</NetTotal><TaxPayable>0</TaxPayable><GrossTotal>1000</GrossTotal></DocumentTotals><Line><GoodsServicesID>${gs}</GoodsServicesID><Tax><TaxCode>${taxCode}</TaxCode><TaxPercentage>0</TaxPercentage></Tax></Line></Invoice>`;
+  const pInv = (no, regType, regCountry, addrCountry, taxCode) =>
+    `<Invoice><InvoiceNo>${no}</InvoiceNo><SupplierInfo><Address><Country>${addrCountry || ""}</Country></Address><TaxRegistration><TaxType>${regType || ""}</TaxType><Country>${regCountry || ""}</Country></TaxRegistration></SupplierInfo><DocumentTotals><NetTotal>1000</NetTotal><TaxPayable>0</TaxPayable><GrossTotal>1000</GrossTotal></DocumentTotals><Line><Tax><TaxCode>${taxCode}</TaxCode></Tax></Line></Invoice>`;
   return [
-    { id: "FX-01", name: "Missing XML declaration", expectFail: ["A-001"],
-      xml: wrap("", { noDecl: true }) },
-    { id: "FX-02", name: "Wrong encoding (ISO-8859-1)", expectFail: ["A-001"],
-      xml: wrap("", { enc: "ISO-8859-1" }) },
-    { id: "FX-03", name: "Non-VMI namespace", expectFail: ["A-002"],
-      xml: wrap("", { badNs: true }) },
-    { id: "FX-04", name: "Root not <AuditFile>", expectFail: ["A-002"],
-      xml: wrap("", { noAuditFile: true }) },
-    { id: "FX-05", name: "Wrong AuditFileVersion (1.0)", expectFail: ["A-003"],
-      xml: wrap("", { version: "1.0" }) },
-    { id: "FX-06", name: "Clean header (control — no header failures)", expectPass: ["A-001", "A-002", "A-003"],
-      xml: wrap("") },
+    { id: "FX-01", name: "Local goods PVM1, Ship-From LT, no Ship-To", expectFail: ["PP_LT_PVM_106"],
+      xml: saft(sInv("S1", "LT", "", "PR", "PVM1", ""), "") },
+    { id: "FX-02", name: "Local PVM1 but goods ended in EU (DE)", expectFail: ["PP_LT_PVM_100"],
+      xml: saft(sInv("S2", "LT", "DE", "PS", "PVM1", "x"), "") },
+    { id: "FX-03", name: "Intra-EU PVM13 starting outside LT", expectFail: ["PP_LT_PVM_010"],
+      xml: saft(sInv("S3", "DE", "FR", "PR", "PVM13", "ref"), "") },
+    { id: "FX-04", name: "Intra-EU PVM13 with no 0%-rate reference", expectFail: ["PP_LT_PVM_021"],
+      xml: saft(sInv("S4", "LT", "FR", "PR", "PVM13", ""), "") },
+    { id: "FX-05", name: "Purchase PVM1, foreign supplier reg but LT address", expectFail: ["PP_LT_PVM_070"],
+      xml: saft("", pInv("P1", "VAT", "DE", "LT", "PVM1")) },
+    { id: "FX-06", name: "Purchase PVM20 from non-EU supplier (US)", expectFail: ["PP_LT_PVM_061"],
+      xml: saft("", pInv("P2", "VAT", "US", "US", "PVM20")) },
+    { id: "FX-07", name: "Clean local sale (control — no flags)", expectPass: ["PP_LT_PVM_106", "PP_LT_PVM_100", "PP_LT_PVM_010"],
+      xml: saft(sInv("S5", "LT", "LT", "PR", "PVM1", "r"), "") },
   ];
 }
 // runner: deps = { parse(xml)->data, run(data)->{byRule} }
@@ -8167,6 +4953,121 @@ function SourcesPanel({ grounding, lang }) {
   );
 }
 
+// Stable identifier for a finding (rule + the specific evidence line).
+function findingKey(f) {
+  if (!f) return "";
+  const ev = (f.evidence && f.evidence[0]) || f.detail || "";
+  return `${f.rule_id || "?"}::${ev}`.slice(0, 220);
+}
+
+// Full-page finding detail: clearly defines the rule, what was flagged, what
+// to fix, the legal basis, and an auditor's note (in-accordance + justification)
+// that persists and can be re-edited — mirroring an auditor working paper.
+function FindingDetail({ finding, lang, note, onSave, onBack, company, period }) {
+  const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
+  const L = (en, lt) => (lang === "lt" ? lt : en);
+  const m = finding.ruleMeta || {};
+  const SCc = { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" }[finding.severity] || "#aaa";
+  const [accord, setAccord] = useState(note?.disposition === "accordance");
+  const [notAccord, setNotAccord] = useState(note?.disposition === "not");
+  const [just, setJust] = useState(note?.justification || "");
+  const [saved, setSaved] = useState(false);
+
+  // parse the evidence row into field/value pairs (from the @field template)
+  const fields = finding.evidenceRow && typeof finding.evidenceRow === "object"
+    ? Object.entries(finding.evidenceRow)
+    : ((finding.evidence?.[0] || "").split("|").map((p) => { const ix = p.indexOf("="); return ix > -1 ? [p.slice(0, ix).trim(), p.slice(ix + 1).trim()] : null; }).filter(Boolean));
+
+  const disposition = accord ? "accordance" : notAccord ? "not" : null;
+  const save = () => { onSave({ disposition, justification: just }); setSaved(true); setTimeout(() => setSaved(false), 2200); };
+  const exportPaper = () => {
+    const lines = [
+      `AUDIT FINDING — ${finding.rule_id}`,
+      company ? `Entity: ${company}` : "", period ? `Period: ${period}` : "", "",
+      `Rule: ${lang === "lt" ? m.titleLt : m.titleEn}`,
+      `Severity: ${finding.severity}    Category: ${finding.category}    Refers to: ${m.refType || "—"}`,
+      `Legal basis: ${m.legal || "—"}`, "",
+      `What the rule checks:`, (lang === "lt" ? m.descriptionLt : (m.descriptionLt || "")) || "(see rule description)", "",
+      `Flagged record:`, ...fields.map(([k, v]) => `  ${k} = ${v}`), "",
+      `What to check / fix:`, (lang === "lt" ? m.fixLt : m.fixEn) || "—", "",
+      `AUDITOR NOTE`,
+      `In accordance: ${disposition === "accordance" ? "YES" : disposition === "not" ? "NO" : "(not set)"}`,
+      `Justification: ${just || "(none)"}`,
+      note?.updatedAt ? `Last updated: ${new Date(note.updatedAt).toLocaleString()}` : "",
+    ].filter((x) => x !== "").join("\n");
+    const blob = new Blob([lines], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `finding-${finding.rule_id}.txt`; a.click();
+  };
+
+  const Field = ({ label, children }) => <div><div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 5 }}>{label}</div><div style={{ fontSize: 13.5, color: "#fff", fontFamily: "var(--s)" }}>{children}</div></div>;
+
+  return (
+    <div style={{ maxWidth: 980, margin: "0 auto" }}>
+      <button onClick={onBack} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: `1px solid ${PL_LINE}`, color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".06em", padding: "7px 14px", cursor: "pointer", textTransform: "uppercase", marginBottom: 18 }}>← {L("Back to findings", "Atgal į radinius")}</button>
+
+      {/* breadcrumb + title */}
+      <div style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", letterSpacing: ".08em", marginBottom: 10 }}>{L("AUDIT", "AUDITAS")} · {L("FINDING", "RADINYS")} · {finding.rule_id}</div>
+      <h2 style={{ fontSize: 26, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: 1.2, margin: "0 0 16px" }}>{lang === "lt" ? m.titleLt : (m.titleEn || finding.title)}</h2>
+
+      {/* metadata row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 18, padding: "16px 18px", border: `1px solid ${PL_LINE}`, background: "var(--bg2)", marginBottom: 18 }}>
+        <Field label={L("Type", "Tipas")}>RulesFinding</Field>
+        <Field label={L("Severity", "Reikšmingumas")}><span style={{ color: SCc, fontWeight: 600 }}>{finding.severity}</span></Field>
+        <Field label={L("Category", "Kategorija")}>{finding.category}</Field>
+        <Field label={L("Refers to", "Susiję su")}>{m.refType || "—"}</Field>
+        <Field label={L("Data types", "Duomenų tipai")}>{m.dataTypes || "—"}</Field>
+      </div>
+
+      {/* what the rule checks */}
+      <Section title={L("What this rule checks", "Ką tikrina ši taisyklė")}>
+        <p style={{ fontSize: 13.5, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.65, margin: 0 }}>{m.descriptionLt || finding.title}</p>
+        {m.legal && <div style={{ marginTop: 10, fontSize: 11.5, color: "#9ae6a4", fontFamily: "var(--m)" }}>§ {L("Legal basis", "Teisinis pagrindas")}: {m.legal}</div>}
+      </Section>
+
+      {/* what's flagged */}
+      <Section title={L("What was flagged", "Kas pažymėta")} accent="#ff8a8a">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 14 }}>
+          {fields.map(([k, v], i) => <div key={i} style={{ padding: "10px 12px", background: "#000", border: `1px solid ${PL_SOFT}` }}>
+            <div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>{k}</div>
+            <div style={{ fontSize: 14, color: "#fff", fontFamily: "var(--m)", wordBreak: "break-word" }}>{String(v)}</div>
+          </div>)}
+        </div>
+      </Section>
+
+      {/* what to fix */}
+      <Section title={L("What needs to be checked or corrected", "Ką reikia patikrinti ar pataisyti")} accent="#7cc4ff">
+        <p style={{ fontSize: 13.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.65, margin: 0 }}>{(lang === "lt" ? m.fixLt : m.fixEn) || L("Review this item against the supporting documentation.", "Peržiūrėkite šį įrašą pagal pagrindžiančius dokumentus.")}</p>
+      </Section>
+
+      {/* auditor note */}
+      <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "18px 20px", marginTop: 18 }}>
+        <div style={{ fontSize: 15, color: "#fff", fontFamily: "var(--f)", marginBottom: 14 }}>{L("Auditor note", "Auditoriaus pastaba")}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
+          <span style={{ fontSize: 12.5, color: "#d2d2ce", fontFamily: "var(--s)" }}>{L("In accordance?", "Atitinka?")}</span>
+          <button onClick={() => { setAccord(true); setNotAccord(false); }} style={{ padding: "6px 14px", border: `1px solid ${accord ? "#69db7c" : PL_LINE}`, background: accord ? "#69db7c" : "transparent", color: accord ? "#000" : "#69db7c", fontFamily: "var(--m)", fontSize: 11, fontWeight: 700, cursor: "pointer", textTransform: "uppercase", letterSpacing: ".06em" }}>✓ {L("Yes — in accordance", "Taip — atitinka")}</button>
+          <button onClick={() => { setNotAccord(true); setAccord(false); }} style={{ padding: "6px 14px", border: `1px solid ${notAccord ? "#ff8a8a" : PL_LINE}`, background: notAccord ? "#ff8a8a" : "transparent", color: notAccord ? "#000" : "#ff8a8a", fontFamily: "var(--m)", fontSize: 11, fontWeight: 700, cursor: "pointer", textTransform: "uppercase", letterSpacing: ".06em" }}>✕ {L("No — needs action", "Ne — reikia veiksmų")}</button>
+          {note?.updatedAt && <span style={{ marginLeft: "auto", fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)" }}>{L("Last saved", "Išsaugota")}: {new Date(note.updatedAt).toLocaleString(lang === "lt" ? "lt-LT" : "en-GB")}</span>}
+        </div>
+        <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 6 }}>{L("Justification", "Pagrindimas")}</div>
+        <textarea value={just} onChange={(e) => setJust(e.target.value)} placeholder={L("Record your reasoning, the documents reviewed, and any conclusion…", "Įrašykite savo argumentus, peržiūrėtus dokumentus ir išvadą…")} style={{ width: "100%", minHeight: 120, background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--s)", fontSize: 13, padding: "12px 14px", lineHeight: 1.6, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={save} style={{ background: "#fff", color: "#000", border: "none", padding: "9px 20px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>{note?.updatedAt ? L("Update note", "Atnaujinti pastabą") : L("Save note", "Išsaugoti pastabą")}</button>
+          <button onClick={exportPaper} style={{ background: "transparent", color: "#d2d2ce", border: `1px solid ${PL_LINE}`, padding: "9px 16px", fontSize: 11, fontWeight: 600, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↧ {L("Export working paper", "Eksportuoti darbo dokumentą")}</button>
+          {saved && <span style={{ fontSize: 12, color: "#69db7c", fontFamily: "var(--m)" }}>✓ {L("Saved", "Išsaugota")}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+function Section({ title, accent, children }) {
+  const PL_LINE = "rgba(255,255,255,0.12)";
+  return <div style={{ border: `1px solid ${PL_LINE}`, borderLeft: `3px solid ${accent || PL_LINE}`, background: "var(--bg2)", padding: "14px 18px", marginBottom: 14 }}>
+    <div style={{ fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 10 }}>{title}</div>
+    {children}
+  </div>;
+}
+
 // Compact, collapsible panel that shows how well an AI narrative is grounded
 // in the deterministic results. Purely a transparency aid for the reviewer.
 function DefensibilityPanel({ verification, lang }) {
@@ -8235,6 +5136,14 @@ function TAXAI({ onExit, initialView } = {}) {
   const [saftLoading, setSaftLoading] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(true);
   const [overrides, setOverrides] = useState({});
+  // Finding-detail flow: selected finding + persisted auditor notes/dispositions
+  const [selectedFinding, setSelectedFinding] = useState(null);
+  const [findingNotes, setFindingNotes] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_finding_notes") || "{}"); } catch { return {}; } });
+  const setFindingNote = useCallback((key, patch) => setFindingNotes((m) => {
+    const next = { ...m, [key]: { ...(m[key] || {}), ...patch, updatedAt: new Date().toISOString() } };
+    try { localStorage.setItem("taxai_finding_notes", JSON.stringify(next)); } catch {}
+    return next;
+  }), []);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [agentMsgs, setAgentMsgs] = useState({}); // { agentId: [msgs] }
   const [agentInput, setAgentInput] = useState("");
@@ -8315,7 +5224,7 @@ function TAXAI({ onExit, initialView } = {}) {
     setFileName(name);
     setAiResult(null); setSmartResult(null); setSmartAnalysisResult(null);
     setEnterpriseResult(null); setEnterpriseKpis(null); setIntel(null);
-    setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null);
+    setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null); setSelectedFinding(null);
     setIsafData(null); setIsafFileName(""); setReconResult(null);
     const parsed = parseSAFTFull(c);
     const result = runAllRules(parsed);
@@ -8779,7 +5688,7 @@ function TAXAI({ onExit, initialView } = {}) {
             {/* animated count-up metrics */}
             <div style={{ padding: "52px 56px 8px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
-                {[[300, "", lang === "lt" ? "SAF-T taisyklės" : "SAF-T rules"], [7, "", lang === "lt" ? "Forensikos varikliai" : "Forensic engines"], [AGENTS.length, "", lang === "lt" ? "Agentai" : "Agents"], [20, "+", lang === "lt" ? "Oficialūs šaltiniai" : "Official sources"]].map(([to, suf, k], i) =>
+                {[[AUDIT_RULES.length, "", lang === "lt" ? "Audito taisyklės" : "Audit rules"], [7, "", lang === "lt" ? "Forensikos varikliai" : "Forensic engines"], [AGENTS.length, "", lang === "lt" ? "Agentai" : "Agents"], [20, "+", lang === "lt" ? "Oficialūs šaltiniai" : "Official sources"]].map(([to, suf, k], i) =>
                   <div key={i} style={{ padding: "30px 24px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
                     <div style={{ fontSize: 46, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: 1 }}><CountUp to={to} suffix={suf} /></div>
                     <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase", marginTop: 12 }}>{k}</div>
@@ -8793,7 +5702,7 @@ function TAXAI({ onExit, initialView } = {}) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
                 {[
                   ["01", lang === "lt" ? "Įkelkite SAF-T" : "Upload SAF-T", lang === "lt" ? "XML iš jūsų ERP — apdorojama jūsų naršyklėje." : "XML from your ERP — parsed right in your browser."],
-                  ["02", lang === "lt" ? "300 taisyklių" : "300 rules", lang === "lt" ? "Deterministinis variklis pažymi kiekvieną neatitikimą su įrodymais." : "A deterministic engine flags every breach with cited evidence."],
+                  ["02", lang === "lt" ? "Audito taisyklės" : "Audit rules", lang === "lt" ? "Patikrintos PVM taisyklės pažymi kiekvieną neatitikimą su įrodymais ir teisės nuoroda." : "Verified VAT rules flag every breach with evidence and a legal citation."],
                   ["03", lang === "lt" ? "7 varikliai + AI" : "7 engines + AI", lang === "lt" ? "Forensinė analizė ir jūsų sektoriui pritaikytos taisyklės." : "Forensic analysis plus rules adapted to your sector."],
                   ["04", lang === "lt" ? "Ataskaita" : "Report", lang === "lt" ? "Eksportuokite forensinę ataskaitą ir CSV vienu paspaudimu." : "Export a forensic report and CSV in one click."],
                 ].map(([n, title, desc], i) =>
@@ -8858,7 +5767,17 @@ function TAXAI({ onExit, initialView } = {}) {
         {/* ═══════════ SAF-T INTELLIGENCE ═══════════ */}
         {view === "saftview" && <div key="saftview" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease", backgroundImage: "linear-gradient(rgba(0,0,0,0.74), rgba(0,0,0,0.93)), url(/saft-bg.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed", }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? "300 deterministinių taisyklių pagal XSD v2.01 ir VA-127 — vykdoma įkėlus, su įrodymais kiekvienam radiniui." : "300 deterministic rules per XSD v2.01 and Order VA-127 — executed on upload, with cited evidence for every finding."} right={findings.length > 0 ? <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button> : null} />
+            {selectedFinding && <FindingDetail
+              finding={selectedFinding}
+              lang={lang}
+              note={findingNotes[findingKey(selectedFinding)]}
+              onSave={(patch) => setFindingNote(findingKey(selectedFinding), patch)}
+              onBack={() => setSelectedFinding(null)}
+              company={fileData?.parsed?.header?.company?.name}
+              period={fileData?.parsed?.header ? `${fileData.parsed.header.fiscalYearFrom?.slice(0,10)} — ${fileData.parsed.header.fiscalYearTo?.slice(0,10)}` : ""}
+            />}
+            {!selectedFinding && <>
+            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length} patikrintos PVM audito taisyklės, susietos su duomenimis ir teisės aktais — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length} verified VAT audit rules, connected to your data and the law — executed on upload, with cited evidence for every finding.`} right={findings.length > 0 ? <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button> : null} />
 
             <div style={{ border: `1px dashed ${fileData ? "#fff" : PL_LINE}`, padding: 28, textAlign: "center", cursor: "pointer", marginBottom: 16, background: "var(--bg2)", transition: "border-color .2s" }} onClick={() => fileRef.current?.click()}>
               <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 8 }}>{fileData ? "File loaded" : (lang === "lt" ? "Vilkite failą čia arba spustelėkite" : "Drag a file here or click")}</div>
@@ -8874,7 +5793,7 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "smart", en: "Smart Filter", lt: "Išmanus filtras" },
                   { id: "smartanalysis", en: "Smart Analysis", lt: "Išmanioji analizė" },
                   { id: "enterprise", en: "Enterprise Audit", lt: "Įmonės auditas" },
-                  { id: "rules", en: `Rules · 300${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}`, lt: `Taisyklės · 300${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}` },
+                  { id: "rules", en: `Audit Rules · ${AUDIT_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}`, lt: `Audito taisyklės · ${AUDIT_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}` },
                   { id: "reconcile", en: `i.SAF Reconcile${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}`, lt: `i.SAF sutikrinimas${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}` },
                   { id: "vatclose", en: `VAT Close${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}`, lt: `PVM uždarymas${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}` },
                 ].map(tab =>
@@ -8905,28 +5824,33 @@ function TAXAI({ onExit, initialView } = {}) {
                   <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                     {["Critical", "High", "Medium", "Low"].map(s => { const c = findings.filter(f => f.severity === s).length; return c > 0 ? <div key={s} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 14px", border: `1px solid ${SC(s)}`, fontSize: 12, fontWeight: 600, color: SC(s), fontFamily: "var(--m)", letterSpacing: ".04em" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: SC(s) }} />{lang === "lt" ? t[s.toLowerCase()] : s}: {c}</div> : null; })}
                   </div>
-                  {findings.map((f, i) => <div key={i} style={{ display: "flex", gap: 14, padding: "16px 18px", background: "var(--bg2)", borderLeft: `2px solid ${SC(f.severity)}`, border: `1px solid ${PL_LINE}`, borderLeftWidth: 2, marginBottom: 8, opacity: f.status === "rejected" ? 0.4 : 1 }}>
+                  {findings.map((f, i) => { const fk = findingKey(f); const fnote = findingNotes[fk]; const disp = fnote?.disposition;
+                  return <div key={i} onClick={() => { setSelectedFinding(f); audit.log("FINDING_OPENED", f.rule_id || f.title); }} title={lang === "lt" ? "Atidaryti radinį" : "Open finding"} style={{ display: "flex", gap: 14, padding: "16px 18px", background: "var(--bg2)", borderLeft: `2px solid ${SC(f.severity)}`, border: `1px solid ${PL_LINE}`, borderLeftWidth: 2, marginBottom: 8, opacity: f.status === "rejected" ? 0.4 : 1, cursor: "pointer", transition: "border-color .15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.32)"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 9, padding: "3px 9px", background: SC(f.severity), color: "#000", fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase" }}>{f.severity}</span>
                         <span style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontWeight: 600 }}>{f.rule_id || `L${f.level}`}</span>
                         <span style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontFamily: "var(--m)" }}>{f.typeName || f.type || "—"}: {f.category}</span>
-                        {f.status !== "open" && <span style={{ fontSize: 10, padding: "3px 8px", color: f.status === "accepted" ? "#69db7c" : "#ff8a8a", border: `1px solid ${f.status === "accepted" ? "#69db7c" : "#ff8a8a"}`, fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{f.status}</span>}
+                        {disp && <span style={{ fontSize: 10, padding: "3px 8px", color: disp === "accordance" ? "#69db7c" : "#ff8a8a", border: `1px solid ${disp === "accordance" ? "#69db7c" : "#ff8a8a"}`, fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{disp === "accordance" ? (lang === "lt" ? "✓ Atitinka" : "✓ In accordance") : (lang === "lt" ? "✕ Reikia veiksmų" : "✕ Needs action")}</span>}
+                        {!disp && fnote?.justification && <span style={{ fontSize: 10, padding: "3px 8px", color: "#ffd43b", border: "1px solid #ffd43b", fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{lang === "lt" ? "✎ Peržiūrėta" : "✎ Reviewed"}</span>}
                       </div>
                       <div style={{ fontSize: 16, fontWeight: 500, color: "#fff", fontFamily: "var(--f)", marginBottom: 5 }}>{f.title}</div>
                       <div style={{ fontSize: 13.5, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6 }}>{f.detail}</div>
-                      {f.evidence && f.evidence.length > 0 && <details style={{ marginTop: 10 }}>
+                      {f.evidence && f.evidence.length > 0 && <details onClick={(e) => e.stopPropagation()} style={{ marginTop: 10 }}>
                         <summary style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", cursor: "pointer", fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase" }}>+ Evidence ({f.evidence.length} sample{f.evidence.length === 1 ? "" : "s"})</summary>
                         <div style={{ marginTop: 8, padding: "10px 14px", background: "#000", border: `1px solid ${PL_SOFT}`, fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8", lineHeight: 1.7 }}>
                           {f.evidence.slice(0, 10).map((ev, j) => <div key={j} style={{ marginBottom: 3 }}>· {typeof ev === "string" ? ev : JSON.stringify(ev)}</div>)}
                         </div>
                       </details>}
                     </div>
-                    {f.status === "open" && <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-                      <button onClick={() => { setOverrides(p => ({ ...p, [f._idx]: "accepted" })); audit.log("FINDING_ACCEPTED", f.title); }} style={{ padding: "5px 12px", border: "1px solid #69db7c", background: "transparent", color: "#69db7c", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase" }}>✓ {t.accept}</button>
-                      <button onClick={() => { setOverrides(p => ({ ...p, [f._idx]: "rejected" })); audit.log("FINDING_REJECTED", f.title); }} style={{ padding: "5px 12px", border: "1px solid #ff8a8a", background: "transparent", color: "#ff8a8a", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase" }}>✕ {t.reject}</button>
-                    </div>}
-                  </div>)}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, alignItems: "flex-end" }}>
+                      <span style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{lang === "lt" ? "Atidaryti →" : "Open →"}</span>
+                      {f.status === "open" && <div style={{ display: "flex", flexDirection: "column", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => { setOverrides(p => ({ ...p, [f._idx]: "accepted" })); audit.log("FINDING_ACCEPTED", f.title); }} style={{ padding: "5px 12px", border: "1px solid #69db7c", background: "transparent", color: "#69db7c", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase" }}>✓ {t.accept}</button>
+                        <button onClick={() => { setOverrides(p => ({ ...p, [f._idx]: "rejected" })); audit.log("FINDING_REJECTED", f.title); }} style={{ padding: "5px 12px", border: "1px solid #ff8a8a", background: "transparent", color: "#ff8a8a", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase" }}>✕ {t.reject}</button>
+                      </div>}
+                    </div>
+                  </div>; })}
                 </div>}
 
                 {fileData.parsed?.sales?.items?.length > 0 && <div style={{ marginTop: 28 }}>
@@ -8950,7 +5874,7 @@ function TAXAI({ onExit, initialView } = {}) {
                   {!aiResult && !saftLoading && <button onClick={runAI} style={{ ...bP, marginLeft: "auto" }}>{lang === "lt" ? "Analizuoti →" : "Analyze →"}</button>}
                 </div>
                 <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 18, lineHeight: 1.65, maxWidth: 760 }}>
-                  {lang === "lt" ? "AI interpretuoja 300 taisyklių variklio rezultatus: paaiškina kiekvieną reikšmingą radinį Lietuvos mokesčių teisės kontekste (PVMĮ, PMĮ, MAĮ, VA-127), nustato pagrindines priežastis ir siūlo skubias korekcijas." : "AI interprets the 300-rule engine results: explains every material finding in the context of Lithuanian tax law (PVMĮ, PMĮ, MAĮ, VA-127), identifies root causes and suggests immediate corrections."}
+                  {lang === "lt" ? "AI interpretuoja audito taisyklių variklio rezultatus: paaiškina kiekvieną reikšmingą radinį Lietuvos mokesčių teisės kontekste (PVMĮ, VA-49), nustato pagrindines priežastis ir siūlo skubias korekcijas." : "AI interprets the audit-rule engine results: explains every material finding in the context of Lithuanian tax law (PVMĮ, VA-49), identifies root causes and suggests immediate corrections."}
                 </p>
                 {saftLoading && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 20 }}>{dots()}<span style={{ fontSize: 13, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em" }}>{lang === "lt" ? "ANALIZUOJAMA..." : "ANALYZING..."}</span></div>}
                 {aiResult && <Md text={aiResult} />}
@@ -9060,10 +5984,10 @@ function TAXAI({ onExit, initialView } = {}) {
               {saftTab === "rules" && <div style={panel}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
                   <SEC n="02·E" en="Rule Catalog" lt="Taisyklių katalogas" />
-                  <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #fff", color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>300</span>
+                  <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #fff", color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>{AUDIT_RULES.length}</span>
                 </div>
                 <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 20, lineHeight: 1.65, maxWidth: 820 }}>
-                  {lang === "lt" ? "Visi 300 SAF-T atitikties tikrinimai pagal XSD v2.01 ir VA-127 įsakymą. Tikrinimai: S = Schema, B = Verslo, C = Konsistencijos, F = Finansinė rizika. Lygiai: Block = stabdoma, Reject = atmesta VMI, Warn = peržiūrai." : "All 300 SAF-T compliance checks per XSD v2.01 and Order VA-127. Types: S = Schema, B = Business, C = Consistency, F = Financial-risk. Severity: Block = halt, Reject = VMI rejection, Warn = review queue."}
+                  {lang === "lt" ? `${AUDIT_RULES.length} patikrintos PVM audito taisyklės. Kiekviena susieta su konkrečia SAF-T duomenų sąlyga ir teisės aktu (PVMĮ, VA-49). Reikšmingumas: Reject = peržiūrėti prieš teikimą, Warn = informaciniam patikrinimui.` : `${AUDIT_RULES.length} verified VAT audit rules. Each is tied to a specific SAF-T data condition and legal basis (PVMĮ, VA-49). Severity: Reject = review before filing, Warn = informational review.`}
                 </p>
 
                 {/* ── Active rate pack + versioned packs ── */}
@@ -9191,12 +6115,12 @@ function TAXAI({ onExit, initialView } = {}) {
                   return <div style={{ marginTop: 40, paddingTop: 28, borderTop: `1px solid #fff` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
                       <SEC n="02·F" en="Adaptive Rules · AI" lt="Pritaikytos taisyklės · AI" />
-                      {pr?.rules?.length ? <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #74c0fc", color: "#74c0fc", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>+{pr.rules.length}</span> : <span style={{ marginLeft: "auto", padding: "6px 14px", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em" }}>BEYOND THE 300</span>}
+                      {pr?.rules?.length ? <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #74c0fc", color: "#74c0fc", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>+{pr.rules.length}</span> : <span style={{ marginLeft: "auto", padding: "6px 14px", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em" }}>COMPANY-SPECIFIC</span>}
                     </div>
                     <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 18, lineHeight: 1.65, maxWidth: 880 }}>
                       {lang === "lt"
                         ? "Po 300 fiksuotų taisyklių AI agentas išanalizuoja šios konkrečios įmonės duomenis, nustato veiklos sektorių ir suprojektuoja papildomas, šiai įmonei pritaikytas taisykles. Kiekviena AI pasiūlyta taisyklė vertinama DETERMINISTIŠKAI pagal apskaičiuotus rodiklius — todėl PASS/FAIL yra pagrįstas tikrais skaičiais, o ne AI nuomone."
-                        : "After the fixed 300 rules, an AI agent studies this specific company's data, infers its industry, and designs additional rules tailored to this business. Every AI-proposed rule is scored DETERMINISTICALLY against the computed metrics — so PASS/FAIL is grounded in real figures, not an LLM opinion."}
+                        : "On top of the verified audit rules, an AI agent studies this specific company's data, infers its industry, and designs additional rules tailored to this business. Every AI-proposed rule is scored DETERMINISTICALLY against the computed metrics — so PASS/FAIL is grounded in real figures, not an LLM opinion."}
                     </p>
 
                     {!pr && !saftLoading && <div style={{ border: `1px solid ${PL_LINE}`, padding: 22, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
@@ -9362,6 +6286,7 @@ function TAXAI({ onExit, initialView } = {}) {
               </div>}
             </>}
             {!fileData && <div style={{ ...panel, padding: 48, textAlign: "center" }}><div style={{ ...lbl, justifyContent: "center", marginBottom: 16 }}><span style={rule} />{lang === "lt" ? "Nėra duomenų" : "No data"}</div><h3 style={{ fontSize: 28, fontWeight: 300, color: "#fff", fontFamily: "var(--f)" }}>{lang === "lt" ? "Įkelkite SAF-T duomenis" : "Upload SAF-T data"}</h3></div>}
+            </>}
           </div>
         </div>}
 
