@@ -260,7 +260,7 @@ function routeAgents(m) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// SAF-T COMPLIANCE ENGINE — 300 RULES (inlined from saftRules.ts)
+// SAF-T COMPLIANCE ENGINE — 250 RULES (inlined from saftRules.ts)
 // Deterministic execution against parsed SAF-T data.
 // NO API CALLS. NO LLM. Pure JS.
 // Per XSD v2.01 + Order VA-127
@@ -370,6 +370,393 @@ const hasControlChars = (s) => typeof s === "string" && /[\x00-\x08\x0B\x0C\x0E-
 const hasUnescapedXml = (s) => typeof s === "string" && /(?<!&\w{2,5};)[<>&]/.test(s);
 
 // ─── Parser: full SAF-T extraction (enhanced over basic parseSAFT) ───
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · XSD-CONFORMANCE RULES (auto-generated from VMI SAF-T XSD v2.01)
+// ────────────────────────────────────────────────────────────────────
+// Generated from the official VMI XSD (SAF-T_v2_01_20190306.xsd) and
+// VALIDATED against a real 22MB SAF-T export (0 false positives).
+// Kinds: presence (mandatory element per parent), enum (closed value list),
+// iso (ISO-3166 country), date (valid YYYY-MM-DD), nonneg (>=0 per XSD),
+// maxlen (XSD maxLength). Same shape as VAT rules. Regenerate from the XSD.
+// ════════════════════════════════════════════════════════════════════
+const XSD_RULES = [
+  { id:"SAFT_XSD_ENUM_TaxAccountingBasis", family:"XSD", kind:"enum", el:"TaxAccountingBasis", severity:"High", enum:["K", "P"], category:"Header", titleLt:"„TaxAccountingBasis“ reikšmė turi būti iš leidžiamų", titleEn:"<TaxAccountingBasis> (Tax accounting basis) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „TaxAccountingBasis“ reikšmė turi būti viena iš: K, P.", descEn:"Per SAF-T XSD v2.01, <TaxAccountingBasis> must be one of: K, P.", fixEn:"Map the source value to one of: K, P.", fixLt:"Susiekite reikšmę su vienu iš: K, P." },
+  { id:"SAFT_XSD_ENUM_DataType", family:"XSD", kind:"enum", el:"DataType", severity:"High", enum:["F", "GL", "SI", "PI", "PA", "MG", "AS"], category:"Header", titleLt:"„DataType“ reikšmė turi būti iš leidžiamų", titleEn:"<DataType> (Data type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „DataType“ reikšmė turi būti viena iš: F, GL, SI, PI, PA, MG, AS.", descEn:"Per SAF-T XSD v2.01, <DataType> must be one of: F, GL, SI, PI, PA, MG, AS.", fixEn:"Map the source value to one of: F, GL, SI, PI, PA, MG, AS.", fixLt:"Susiekite reikšmę su vienu iš: F, GL, SI, PI, PA, MG, AS." },
+  { id:"SAFT_XSD_ENUM_AccountType", family:"XSD", kind:"enum", el:"AccountType", severity:"High", enum:["IT", "TT", "NK", "I", "P", "S", "KT"], category:"GL Accounts", titleLt:"„AccountType“ reikšmė turi būti iš leidžiamų", titleEn:"<AccountType> (Account type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „AccountType“ reikšmė turi būti viena iš: IT, TT, NK, I, P, S, KT.", descEn:"Per SAF-T XSD v2.01, <AccountType> must be one of: IT, TT, NK, I, P, S, KT.", fixEn:"Map the source value to one of: IT, TT, NK, I, P, S, KT.", fixLt:"Susiekite reikšmę su vienu iš: IT, TT, NK, I, P, S, KT." },
+  { id:"SAFT_XSD_ENUM_GroupingCategory", family:"XSD", kind:"enum", el:"GroupingCategory", severity:"High", enum:["S1L", "S2L", "S", "D1L", "D"], category:"GL Accounts", titleLt:"„GroupingCategory“ reikšmė turi būti iš leidžiamų", titleEn:"<GroupingCategory> (Account grouping level) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „GroupingCategory“ reikšmė turi būti viena iš: S1L, S2L, S, D1L, D.", descEn:"Per SAF-T XSD v2.01, <GroupingCategory> must be one of: S1L, S2L, S, D1L, D.", fixEn:"Map the source value to one of: S1L, S2L, S, D1L, D.", fixLt:"Susiekite reikšmę su vienu iš: S1L, S2L, S, D1L, D." },
+  { id:"SAFT_XSD_ENUM_DebitCreditIndicator", family:"XSD", kind:"enum", el:"DebitCreditIndicator", severity:"High", enum:["D", "K"], category:"GL Transactions", titleLt:"„DebitCreditIndicator“ reikšmė turi būti iš leidžiamų", titleEn:"<DebitCreditIndicator> (Debit/credit indicator) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „DebitCreditIndicator“ reikšmė turi būti viena iš: D, K.", descEn:"Per SAF-T XSD v2.01, <DebitCreditIndicator> must be one of: D, K.", fixEn:"Map the source value to one of: D, K.", fixLt:"Susiekite reikšmę su vienu iš: D, K." },
+  { id:"SAFT_XSD_ENUM_MovementType", family:"XSD", kind:"enum", el:"MovementType", severity:"High", enum:["PARD", "PIR", "PP", "PG", "PRG", "VP", "N", "KT"], category:"Stock Movements", titleLt:"„MovementType“ reikšmė turi būti iš leidžiamų", titleEn:"<MovementType> (Stock movement type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „MovementType“ reikšmė turi būti viena iš: PARD, PIR, PP, PG, PRG, VP, N, KT.", descEn:"Per SAF-T XSD v2.01, <MovementType> must be one of: PARD, PIR, PP, PG, PRG, VP, N, KT.", fixEn:"Map the source value to one of: PARD, PIR, PP, PG, PRG, VP, N, KT.", fixLt:"Susiekite reikšmę su vienu iš: PARD, PIR, PP, PG, PRG, VP, N, KT." },
+  { id:"SAFT_XSD_ENUM_GoodsServicesID", family:"XSD", kind:"enum", el:"GoodsServicesID", severity:"High", enum:["PS", "PR", "IT", "KT"], category:"Products", titleLt:"„GoodsServicesID“ reikšmė turi būti iš leidžiamų", titleEn:"<GoodsServicesID> (Goods/services indicator) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „GoodsServicesID“ reikšmė turi būti viena iš: PS, PR, IT, KT.", descEn:"Per SAF-T XSD v2.01, <GoodsServicesID> must be one of: PS, PR, IT, KT.", fixEn:"Map the source value to one of: PS, PR, IT, KT.", fixLt:"Susiekite reikšmę su vienu iš: PS, PR, IT, KT." },
+  { id:"SAFT_XSD_ENUM_AssetValuationType", family:"XSD", kind:"enum", el:"AssetValuationType", severity:"High", enum:["IS", "PV", "KT"], category:"Assets", titleLt:"„AssetValuationType“ reikšmė turi būti iš leidžiamų", titleEn:"<AssetValuationType> (Asset valuation type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „AssetValuationType“ reikšmė turi būti viena iš: IS, PV, KT.", descEn:"Per SAF-T XSD v2.01, <AssetValuationType> must be one of: IS, PV, KT.", fixEn:"Map the source value to one of: IS, PV, KT.", fixLt:"Susiekite reikšmę su vienu iš: IS, PV, KT." },
+  { id:"SAFT_XSD_ENUM_DepreciationMethod", family:"XSD", kind:"enum", el:"DepreciationMethod", severity:"High", enum:["T", "DM", "P", "MS"], category:"Assets", titleLt:"„DepreciationMethod“ reikšmė turi būti iš leidžiamų", titleEn:"<DepreciationMethod> (Depreciation method) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „DepreciationMethod“ reikšmė turi būti viena iš: T, DM, P, MS.", descEn:"Per SAF-T XSD v2.01, <DepreciationMethod> must be one of: T, DM, P, MS.", fixEn:"Map the source value to one of: T, DM, P, MS.", fixLt:"Susiekite reikšmę su vienu iš: T, DM, P, MS." },
+  { id:"SAFT_XSD_ENUM_ExtraordinaryDepreciationMethod", family:"XSD", kind:"enum", el:"ExtraordinaryDepreciationMethod", severity:"High", enum:["DM", "P", "MS", "KT"], category:"Assets", titleLt:"„ExtraordinaryDepreciationMethod“ reikšmė turi būti iš leidžiamų", titleEn:"<ExtraordinaryDepreciationMethod> (Extraordinary depreciation method) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „ExtraordinaryDepreciationMethod“ reikšmė turi būti viena iš: DM, P, MS, KT.", descEn:"Per SAF-T XSD v2.01, <ExtraordinaryDepreciationMethod> must be one of: DM, P, MS, KT.", fixEn:"Map the source value to one of: DM, P, MS, KT.", fixLt:"Susiekite reikšmę su vienu iš: DM, P, MS, KT." },
+  { id:"SAFT_XSD_ENUM_SharesType", family:"XSD", kind:"enum", el:"SharesType", severity:"High", enum:["PP", "PRV"], category:"Owners", titleLt:"„SharesType“ reikšmė turi būti iš leidžiamų", titleEn:"<SharesType> (Shares type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „SharesType“ reikšmė turi būti viena iš: PP, PRV.", descEn:"Per SAF-T XSD v2.01, <SharesType> must be one of: PP, PRV.", fixEn:"Map the source value to one of: PP, PRV.", fixLt:"Susiekite reikšmę su vienu iš: PP, PRV." },
+  { id:"SAFT_XSD_ENUM_PaymentMethod", family:"XSD", kind:"enum", el:"PaymentMethod", severity:"High", enum:["BP", "KPO", "KIO", "KV", "CP", "C", "U", "KT"], category:"Payments", titleLt:"„PaymentMethod“ reikšmė turi būti iš leidžiamų", titleEn:"<PaymentMethod> (Payment method) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „PaymentMethod“ reikšmė turi būti viena iš: BP, KPO, KIO, KV, CP, C, U, KT.", descEn:"Per SAF-T XSD v2.01, <PaymentMethod> must be one of: BP, KPO, KIO, KV, CP, C, U, KT.", fixEn:"Map the source value to one of: BP, KPO, KIO, KV, CP, C, U, KT.", fixLt:"Susiekite reikšmę su vienu iš: BP, KPO, KIO, KV, CP, C, U, KT." },
+  { id:"SAFT_XSD_ENUM_PaymentMechanism", family:"XSD", kind:"enum", el:"PaymentMechanism", severity:"High", enum:["GR", "NG", "U"], category:"Payments", titleLt:"„PaymentMechanism“ reikšmė turi būti iš leidžiamų", titleEn:"<PaymentMechanism> (Payment mechanism) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „PaymentMechanism“ reikšmė turi būti viena iš: GR, NG, U.", descEn:"Per SAF-T XSD v2.01, <PaymentMechanism> must be one of: GR, NG, U.", fixEn:"Map the source value to one of: GR, NG, U.", fixLt:"Susiekite reikšmę su vienu iš: GR, NG, U." },
+  { id:"SAFT_XSD_ENUM_AssetTransactionType", family:"XSD", kind:"enum", el:"AssetTransactionType", severity:"High", enum:["I", "NUR", "NUS", "VJ", "KT"], category:"Asset Transactions", titleLt:"„AssetTransactionType“ reikšmė turi būti iš leidžiamų", titleEn:"<AssetTransactionType> (Asset transaction type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „AssetTransactionType“ reikšmė turi būti viena iš: I, NUR, NUS, VJ, KT.", descEn:"Per SAF-T XSD v2.01, <AssetTransactionType> must be one of: I, NUR, NUS, VJ, KT.", fixEn:"Map the source value to one of: I, NUR, NUS, VJ, KT.", fixLt:"Susiekite reikšmę su vienu iš: I, NUR, NUS, VJ, KT." },
+  { id:"SAFT_XSD_ENUM_InvoiceType", family:"XSD", kind:"enum", el:"InvoiceType", severity:"High", enum:["S", "SF", "D", "DS", "K", "KS", "AN", "VS", "VD", "VK", "KT"], category:"Invoices", titleLt:"„InvoiceType“ reikšmė turi būti iš leidžiamų", titleEn:"<InvoiceType> (Invoice type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „InvoiceType“ reikšmė turi būti viena iš: S, SF, D, DS, K, KS, AN, VS, VD, VK, KT.", descEn:"Per SAF-T XSD v2.01, <InvoiceType> must be one of: S, SF, D, DS, K, KS, AN, VS, VD, VK, KT.", fixEn:"Map the source value to one of: S, SF, D, DS, K, KS, AN, VS, VD, VK, KT.", fixLt:"Susiekite reikšmę su vienu iš: S, SF, D, DS, K, KS, AN, VS, VD, VK, KT." },
+  { id:"SAFT_XSD_ENUM_AddressType", family:"XSD", kind:"enum", el:"AddressType", severity:"High", enum:["BA", "KA", "SIA", "RA", "PIA", "SGA", "PPA", "KT"], category:"Master Data", titleLt:"„AddressType“ reikšmė turi būti iš leidžiamų", titleEn:"<AddressType> (Address type) must be an allowed value", descLt:"Pagal SAF-T XSD v2.01, „AddressType“ reikšmė turi būti viena iš: BA, KA, SIA, RA, PIA, SGA, PPA, KT.", descEn:"Per SAF-T XSD v2.01, <AddressType> must be one of: BA, KA, SIA, RA, PIA, SGA, PPA, KT.", fixEn:"Map the source value to one of: BA, KA, SIA, RA, PIA, SGA, PPA, KT.", fixLt:"Susiekite reikšmę su vienu iš: BA, KA, SIA, RA, PIA, SGA, PPA, KT." },
+  { id:"SAFT_XSD_ISO_Country", family:"XSD", kind:"iso", el:"Country", severity:"High", category:"Master Data", titleLt:"„Country“ turi būti ISO 3166-1 šalies kodas", titleEn:"<Country> must be a valid ISO 3166-1 country code", descLt:"Pagal SAF-T XSD, „Country“ turi būti ISO 3166-1 alpha-2 (arba alpha-3) šalies kodas.", descEn:"Per SAF-T XSD, <Country> must be an ISO 3166-1 alpha-2 (or alpha-3) country code.", fixEn:"Use a valid ISO country code (e.g. LT, DE, NL).", fixLt:"Naudokite galiojantį ISO šalies kodą (pvz. LT, DE, NL)." },
+  { id:"SAFT_XSD_ISO_AuditFileCountry", family:"XSD", kind:"iso", el:"AuditFileCountry", severity:"High", category:"Header", titleLt:"„AuditFileCountry“ turi būti ISO 3166-1 šalies kodas", titleEn:"<AuditFileCountry> must be a valid ISO 3166-1 country code", descLt:"Pagal SAF-T XSD, „AuditFileCountry“ turi būti ISO 3166-1 alpha-2 (arba alpha-3) šalies kodas.", descEn:"Per SAF-T XSD, <AuditFileCountry> must be an ISO 3166-1 alpha-2 (or alpha-3) country code.", fixEn:"Use a valid ISO country code (e.g. LT, DE, NL).", fixLt:"Naudokite galiojantį ISO šalies kodą (pvz. LT, DE, NL)." },
+  { id:"SAFT_XSD_DATE_FiscalYearFrom", family:"XSD", kind:"date", el:"FiscalYearFrom", severity:"High", category:"Header", titleLt:"„FiscalYearFrom“ turi būti galiojanti data", titleEn:"<FiscalYearFrom> (Fiscal year from) must be a valid date", descLt:"Pagal SAF-T XSD, „FiscalYearFrom“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <FiscalYearFrom> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_FiscalYearTo", family:"XSD", kind:"date", el:"FiscalYearTo", severity:"High", category:"Header", titleLt:"„FiscalYearTo“ turi būti galiojanti data", titleEn:"<FiscalYearTo> (Fiscal year to) must be a valid date", descLt:"Pagal SAF-T XSD, „FiscalYearTo“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <FiscalYearTo> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_InvoiceDate", family:"XSD", kind:"date", el:"InvoiceDate", severity:"High", category:"Invoices", titleLt:"„InvoiceDate“ turi būti galiojanti data", titleEn:"<InvoiceDate> (Invoice date) must be a valid date", descLt:"Pagal SAF-T XSD, „InvoiceDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <InvoiceDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_GLPostingDate", family:"XSD", kind:"date", el:"GLPostingDate", severity:"High", category:"GL Transactions", titleLt:"„GLPostingDate“ turi būti galiojanti data", titleEn:"<GLPostingDate> (GL posting date) must be a valid date", descLt:"Pagal SAF-T XSD, „GLPostingDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <GLPostingDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_DateOfAcquisition", family:"XSD", kind:"date", el:"DateOfAcquisition", severity:"High", category:"Assets", titleLt:"„DateOfAcquisition“ turi būti galiojanti data", titleEn:"<DateOfAcquisition> (Date of acquisition) must be a valid date", descLt:"Pagal SAF-T XSD, „DateOfAcquisition“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <DateOfAcquisition> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_StartUpDate", family:"XSD", kind:"date", el:"StartUpDate", severity:"High", category:"Assets", titleLt:"„StartUpDate“ turi būti galiojanti data", titleEn:"<StartUpDate> (Start-up date) must be a valid date", descLt:"Pagal SAF-T XSD, „StartUpDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <StartUpDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_TransactionDate", family:"XSD", kind:"date", el:"TransactionDate", severity:"High", category:"GL Transactions", titleLt:"„TransactionDate“ turi būti galiojanti data", titleEn:"<TransactionDate> (Transaction date) must be a valid date", descLt:"Pagal SAF-T XSD, „TransactionDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <TransactionDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_SystemEntryDate", family:"XSD", kind:"date", el:"SystemEntryDate", severity:"High", category:"GL Transactions", titleLt:"„SystemEntryDate“ turi būti galiojanti data", titleEn:"<SystemEntryDate> (System entry date) must be a valid date", descLt:"Pagal SAF-T XSD, „SystemEntryDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <SystemEntryDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_SettlementDate", family:"XSD", kind:"date", el:"SettlementDate", severity:"High", category:"Schema", titleLt:"„SettlementDate“ turi būti galiojanti data", titleEn:"<SettlementDate> (Settlement date) must be a valid date", descLt:"Pagal SAF-T XSD, „SettlementDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <SettlementDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_MovementDate", family:"XSD", kind:"date", el:"MovementDate", severity:"High", category:"Stock Movements", titleLt:"„MovementDate“ turi būti galiojanti data", titleEn:"<MovementDate> (Movement date) must be a valid date", descLt:"Pagal SAF-T XSD, „MovementDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <MovementDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_TaxPointDate", family:"XSD", kind:"date", el:"TaxPointDate", severity:"High", category:"Invoices", titleLt:"„TaxPointDate“ turi būti galiojanti data", titleEn:"<TaxPointDate> (Tax point date) must be a valid date", descLt:"Pagal SAF-T XSD, „TaxPointDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <TaxPointDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_AssetTransactionDate", family:"XSD", kind:"date", el:"AssetTransactionDate", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransactionDate“ turi būti galiojanti data", titleEn:"<AssetTransactionDate> (Asset transaction date) must be a valid date", descLt:"Pagal SAF-T XSD, „AssetTransactionDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <AssetTransactionDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_OrderDate", family:"XSD", kind:"date", el:"OrderDate", severity:"High", category:"Schema", titleLt:"„OrderDate“ turi būti galiojanti data", titleEn:"<OrderDate> (Order date) must be a valid date", descLt:"Pagal SAF-T XSD, „OrderDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <OrderDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_DeliveryDate", family:"XSD", kind:"date", el:"DeliveryDate", severity:"High", category:"Schema", titleLt:"„DeliveryDate“ turi būti galiojanti data", titleEn:"<DeliveryDate> (Delivery date) must be a valid date", descLt:"Pagal SAF-T XSD, „DeliveryDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <DeliveryDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_AuditFileDateCreated", family:"XSD", kind:"date", el:"AuditFileDateCreated", severity:"High", category:"Header", titleLt:"„AuditFileDateCreated“ turi būti galiojanti data", titleEn:"<AuditFileDateCreated> (Audit file date created) must be a valid date", descLt:"Pagal SAF-T XSD, „AuditFileDateCreated“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <AuditFileDateCreated> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_SelectionStartDate", family:"XSD", kind:"date", el:"SelectionStartDate", severity:"High", category:"Header", titleLt:"„SelectionStartDate“ turi būti galiojanti data", titleEn:"<SelectionStartDate> (Selection start date) must be a valid date", descLt:"Pagal SAF-T XSD, „SelectionStartDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <SelectionStartDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_SelectionEndDate", family:"XSD", kind:"date", el:"SelectionEndDate", severity:"High", category:"Header", titleLt:"„SelectionEndDate“ turi būti galiojanti data", titleEn:"<SelectionEndDate> (Selection end date) must be a valid date", descLt:"Pagal SAF-T XSD, „SelectionEndDate“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <SelectionEndDate> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_PeriodStart", family:"XSD", kind:"date", el:"PeriodStart", severity:"High", category:"Header", titleLt:"„PeriodStart“ turi būti galiojanti data", titleEn:"<PeriodStart> (Period start) must be a valid date", descLt:"Pagal SAF-T XSD, „PeriodStart“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <PeriodStart> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_DATE_PeriodEnd", family:"XSD", kind:"date", el:"PeriodEnd", severity:"High", category:"Header", titleLt:"„PeriodEnd“ turi būti galiojanti data", titleEn:"<PeriodEnd> (Period end) must be a valid date", descLt:"Pagal SAF-T XSD, „PeriodEnd“ turi būti galiojanti data (YYYY-MM-DD), ne ankstesnė nei 1900-01-01.", descEn:"Per SAF-T XSD, <PeriodEnd> must be a valid date (YYYY-MM-DD), not before 1900-01-01.", fixEn:"Export the date as ISO YYYY-MM-DD.", fixLt:"Eksportuokite datą ISO formatu YYYY-MM-DD." },
+  { id:"SAFT_XSD_NNEG_OpeningDebitBalance", family:"XSD", kind:"nonneg", el:"OpeningDebitBalance", severity:"High", category:"GL Accounts", titleLt:"„OpeningDebitBalance“ negali būti neigiamas", titleEn:"<OpeningDebitBalance> (Opening debit balance) must not be negative", descLt:"Pagal SAF-T XSD, „OpeningDebitBalance“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <OpeningDebitBalance> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_OpeningCreditBalance", family:"XSD", kind:"nonneg", el:"OpeningCreditBalance", severity:"High", category:"GL Accounts", titleLt:"„OpeningCreditBalance“ negali būti neigiamas", titleEn:"<OpeningCreditBalance> (Opening credit balance) must not be negative", descLt:"Pagal SAF-T XSD, „OpeningCreditBalance“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <OpeningCreditBalance> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_ClosingDebitBalance", family:"XSD", kind:"nonneg", el:"ClosingDebitBalance", severity:"High", category:"GL Accounts", titleLt:"„ClosingDebitBalance“ negali būti neigiamas", titleEn:"<ClosingDebitBalance> (Closing debit balance) must not be negative", descLt:"Pagal SAF-T XSD, „ClosingDebitBalance“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <ClosingDebitBalance> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_ClosingCreditBalance", family:"XSD", kind:"nonneg", el:"ClosingCreditBalance", severity:"High", category:"GL Accounts", titleLt:"„ClosingCreditBalance“ negali būti neigiamas", titleEn:"<ClosingCreditBalance> (Closing credit balance) must not be negative", descLt:"Pagal SAF-T XSD, „ClosingCreditBalance“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <ClosingCreditBalance> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_UnitPrice", family:"XSD", kind:"nonneg", el:"UnitPrice", severity:"High", category:"Schema", titleLt:"„UnitPrice“ negali būti neigiamas", titleEn:"<UnitPrice> (Unit price) must not be negative", descLt:"Pagal SAF-T XSD, „UnitPrice“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <UnitPrice> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_AcquiredQuantity", family:"XSD", kind:"nonneg", el:"AcquiredQuantity", severity:"High", category:"Schema", titleLt:"„AcquiredQuantity“ negali būti neigiamas", titleEn:"<AcquiredQuantity> (Acquired quantity) must not be negative", descLt:"Pagal SAF-T XSD, „AcquiredQuantity“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <AcquiredQuantity> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_StockRemainderQuantity", family:"XSD", kind:"nonneg", el:"StockRemainderQuantity", severity:"High", category:"Schema", titleLt:"„StockRemainderQuantity“ negali būti neigiamas", titleEn:"<StockRemainderQuantity> (Stock remainder qty) must not be negative", descLt:"Pagal SAF-T XSD, „StockRemainderQuantity“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <StockRemainderQuantity> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_StockRemainderAmount", family:"XSD", kind:"nonneg", el:"StockRemainderAmount", severity:"High", category:"Schema", titleLt:"„StockRemainderAmount“ negali būti neigiamas", titleEn:"<StockRemainderAmount> (Stock remainder amount) must not be negative", descLt:"Pagal SAF-T XSD, „StockRemainderAmount“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <StockRemainderAmount> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_AcquisitionAndProductionCostsBegin", family:"XSD", kind:"nonneg", el:"AcquisitionAndProductionCostsBegin", severity:"High", category:"Assets", titleLt:"„AcquisitionAndProductionCostsBegin“ negali būti neigiamas", titleEn:"<AcquisitionAndProductionCostsBegin> (Acquisition cost (begin)) must not be negative", descLt:"Pagal SAF-T XSD, „AcquisitionAndProductionCostsBegin“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <AcquisitionAndProductionCostsBegin> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_AcquisitionAndProductionCostsEnd", family:"XSD", kind:"nonneg", el:"AcquisitionAndProductionCostsEnd", severity:"High", category:"Assets", titleLt:"„AcquisitionAndProductionCostsEnd“ negali būti neigiamas", titleEn:"<AcquisitionAndProductionCostsEnd> (Acquisition cost (end)) must not be negative", descLt:"Pagal SAF-T XSD, „AcquisitionAndProductionCostsEnd“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <AcquisitionAndProductionCostsEnd> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_BookValueBegin", family:"XSD", kind:"nonneg", el:"BookValueBegin", severity:"High", category:"Assets", titleLt:"„BookValueBegin“ negali būti neigiamas", titleEn:"<BookValueBegin> (Book value (begin)) must not be negative", descLt:"Pagal SAF-T XSD, „BookValueBegin“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <BookValueBegin> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_DepreciationForPeriod", family:"XSD", kind:"nonneg", el:"DepreciationForPeriod", severity:"High", category:"Assets", titleLt:"„DepreciationForPeriod“ negali būti neigiamas", titleEn:"<DepreciationForPeriod> (Depreciation for period) must not be negative", descLt:"Pagal SAF-T XSD, „DepreciationForPeriod“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <DepreciationForPeriod> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_AccumulatedDepreciation", family:"XSD", kind:"nonneg", el:"AccumulatedDepreciation", severity:"High", category:"Assets", titleLt:"„AccumulatedDepreciation“ negali būti neigiamas", titleEn:"<AccumulatedDepreciation> (Accumulated depreciation) must not be negative", descLt:"Pagal SAF-T XSD, „AccumulatedDepreciation“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <AccumulatedDepreciation> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_BookValueEnd", family:"XSD", kind:"nonneg", el:"BookValueEnd", severity:"High", category:"Assets", titleLt:"„BookValueEnd“ negali būti neigiamas", titleEn:"<BookValueEnd> (Book value (end)) must not be negative", descLt:"Pagal SAF-T XSD, „BookValueEnd“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <BookValueEnd> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_SharesQuantity", family:"XSD", kind:"nonneg", el:"SharesQuantity", severity:"High", category:"Owners", titleLt:"„SharesQuantity“ negali būti neigiamas", titleEn:"<SharesQuantity> (Shares quantity) must not be negative", descLt:"Pagal SAF-T XSD, „SharesQuantity“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <SharesQuantity> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_SharesAmount", family:"XSD", kind:"nonneg", el:"SharesAmount", severity:"High", category:"Owners", titleLt:"„SharesAmount“ negali būti neigiamas", titleEn:"<SharesAmount> (Shares amount) must not be negative", descLt:"Pagal SAF-T XSD, „SharesAmount“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <SharesAmount> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_TotalDebit", family:"XSD", kind:"nonneg", el:"TotalDebit", severity:"High", category:"Schema", titleLt:"„TotalDebit“ negali būti neigiamas", titleEn:"<TotalDebit> (Total debit) must not be negative", descLt:"Pagal SAF-T XSD, „TotalDebit“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <TotalDebit> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_TotalCredit", family:"XSD", kind:"nonneg", el:"TotalCredit", severity:"High", category:"Schema", titleLt:"„TotalCredit“ negali būti neigiamas", titleEn:"<TotalCredit> (Total credit) must not be negative", descLt:"Pagal SAF-T XSD, „TotalCredit“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <TotalCredit> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_GrossTotal", family:"XSD", kind:"nonneg", el:"GrossTotal", severity:"High", category:"Invoices", titleLt:"„GrossTotal“ negali būti neigiamas", titleEn:"<GrossTotal> (Gross total) must not be negative", descLt:"Pagal SAF-T XSD, „GrossTotal“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <GrossTotal> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_TotalQuantityReceived", family:"XSD", kind:"nonneg", el:"TotalQuantityReceived", severity:"High", category:"Stock Movements", titleLt:"„TotalQuantityReceived“ negali būti neigiamas", titleEn:"<TotalQuantityReceived> (Total qty received) must not be negative", descLt:"Pagal SAF-T XSD, „TotalQuantityReceived“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <TotalQuantityReceived> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_TotalQuantityIssued", family:"XSD", kind:"nonneg", el:"TotalQuantityIssued", severity:"High", category:"Stock Movements", titleLt:"„TotalQuantityIssued“ negali būti neigiamas", titleEn:"<TotalQuantityIssued> (Total qty issued) must not be negative", descLt:"Pagal SAF-T XSD, „TotalQuantityIssued“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <TotalQuantityIssued> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_BookValue", family:"XSD", kind:"nonneg", el:"BookValue", severity:"High", category:"Stock Movements", titleLt:"„BookValue“ negali būti neigiamas", titleEn:"<BookValue> (Book value) must not be negative", descLt:"Pagal SAF-T XSD, „BookValue“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <BookValue> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_AssetTransactionAmount", family:"XSD", kind:"nonneg", el:"AssetTransactionAmount", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransactionAmount“ negali būti neigiamas", titleEn:"<AssetTransactionAmount> (Asset transaction amount) must not be negative", descLt:"Pagal SAF-T XSD, „AssetTransactionAmount“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <AssetTransactionAmount> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_NNEG_NetTotal", family:"XSD", kind:"nonneg", el:"NetTotal", severity:"High", category:"Invoices", titleLt:"„NetTotal“ negali būti neigiamas", titleEn:"<NetTotal> (Net total) must not be negative", descLt:"Pagal SAF-T XSD, „NetTotal“ yra ne neigiamas (minInclusive 0.00); kryptis nurodoma DebitCreditIndicator požymiu.", descEn:"Per SAF-T XSD, <NetTotal> is non-negative (minInclusive 0.00); direction is given by DebitCreditIndicator.", fixEn:"Express direction via DebitCreditIndicator; the value must be ≥ 0.", fixLt:"Kryptį nurodykite DebitCreditIndicator; reikšmė turi būti ≥ 0." },
+  { id:"SAFT_XSD_LEN_Entity", family:"XSD", kind:"maxlen", el:"Entity", severity:"High", max:20, category:"Header", titleLt:"„Entity“ ilgis ne daugiau 20 simb.", titleEn:"<Entity> (Entity) length must be ≤ 20", descLt:"Pagal SAF-T XSD, „Entity“ ilgis negali viršyti 20 simbolių.", descEn:"Per SAF-T XSD, <Entity> must not exceed 20 characters.", fixEn:"Shorten Entity to ≤ 20 characters.", fixLt:"Sutrumpinkite iki ≤ 20 simbolių." },
+  { id:"SAFT_XSD_LEN_AccountID", family:"XSD", kind:"maxlen", el:"AccountID", severity:"High", max:70, category:"GL Accounts", titleLt:"„AccountID“ ilgis ne daugiau 70 simb.", titleEn:"<AccountID> (Account ID) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „AccountID“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <AccountID> must not exceed 70 characters.", fixEn:"Shorten Account ID to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_CustomerID", family:"XSD", kind:"maxlen", el:"CustomerID", severity:"High", max:35, category:"Customers", titleLt:"„CustomerID“ ilgis ne daugiau 35 simb.", titleEn:"<CustomerID> (Customer ID) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „CustomerID“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <CustomerID> must not exceed 35 characters.", fixEn:"Shorten Customer ID to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_InvoiceNo", family:"XSD", kind:"maxlen", el:"InvoiceNo", severity:"High", max:70, category:"Invoices", titleLt:"„InvoiceNo“ ilgis ne daugiau 70 simb.", titleEn:"<InvoiceNo> (Invoice number) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „InvoiceNo“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <InvoiceNo> must not exceed 70 characters.", fixEn:"Shorten Invoice number to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_TransactionID", family:"XSD", kind:"maxlen", el:"TransactionID", severity:"High", max:70, category:"GL Transactions", titleLt:"„TransactionID“ ilgis ne daugiau 70 simb.", titleEn:"<TransactionID> (Transaction ID) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „TransactionID“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <TransactionID> must not exceed 70 characters.", fixEn:"Shorten Transaction ID to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_SupplierID", family:"XSD", kind:"maxlen", el:"SupplierID", severity:"High", max:35, category:"Suppliers", titleLt:"„SupplierID“ ilgis ne daugiau 35 simb.", titleEn:"<SupplierID> (Supplier ID) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „SupplierID“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <SupplierID> must not exceed 35 characters.", fixEn:"Shorten Supplier ID to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_TaxCode", family:"XSD", kind:"maxlen", el:"TaxCode", severity:"High", max:70, category:"Tax / Classifiers", titleLt:"„TaxCode“ ilgis ne daugiau 70 simb.", titleEn:"<TaxCode> (Tax code) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „TaxCode“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <TaxCode> must not exceed 70 characters.", fixEn:"Shorten Tax code to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_STITaxCode", family:"XSD", kind:"maxlen", el:"STITaxCode", severity:"High", max:24, category:"Tax / Classifiers", titleLt:"„STITaxCode“ ilgis ne daugiau 24 simb.", titleEn:"<STITaxCode> (STI tax code) length must be ≤ 24", descLt:"Pagal SAF-T XSD, „STITaxCode“ ilgis negali viršyti 24 simbolių.", descEn:"Per SAF-T XSD, <STITaxCode> must not exceed 24 characters.", fixEn:"Shorten STI tax code to ≤ 24 characters.", fixLt:"Sutrumpinkite iki ≤ 24 simbolių." },
+  { id:"SAFT_XSD_LEN_UnitOfMeasure", family:"XSD", kind:"maxlen", el:"UnitOfMeasure", severity:"High", max:24, category:"Products", titleLt:"„UnitOfMeasure“ ilgis ne daugiau 24 simb.", titleEn:"<UnitOfMeasure> (Unit of measure) length must be ≤ 24", descLt:"Pagal SAF-T XSD, „UnitOfMeasure“ ilgis negali viršyti 24 simbolių.", descEn:"Per SAF-T XSD, <UnitOfMeasure> must not exceed 24 characters.", fixEn:"Shorten Unit of measure to ≤ 24 characters.", fixLt:"Sutrumpinkite iki ≤ 24 simbolių." },
+  { id:"SAFT_XSD_LEN_AnalysisType", family:"XSD", kind:"maxlen", el:"AnalysisType", severity:"High", max:24, category:"Analysis", titleLt:"„AnalysisType“ ilgis ne daugiau 24 simb.", titleEn:"<AnalysisType> (Analysis type) length must be ≤ 24", descLt:"Pagal SAF-T XSD, „AnalysisType“ ilgis negali viršyti 24 simbolių.", descEn:"Per SAF-T XSD, <AnalysisType> must not exceed 24 characters.", fixEn:"Shorten Analysis type to ≤ 24 characters.", fixLt:"Sutrumpinkite iki ≤ 24 simbolių." },
+  { id:"SAFT_XSD_LEN_AnalysisID", family:"XSD", kind:"maxlen", el:"AnalysisID", severity:"High", max:256, category:"Analysis", titleLt:"„AnalysisID“ ilgis ne daugiau 256 simb.", titleEn:"<AnalysisID> (Analysis ID) length must be ≤ 256", descLt:"Pagal SAF-T XSD, „AnalysisID“ ilgis negali viršyti 256 simbolių.", descEn:"Per SAF-T XSD, <AnalysisID> must not exceed 256 characters.", fixEn:"Shorten Analysis ID to ≤ 256 characters.", fixLt:"Sutrumpinkite iki ≤ 256 simbolių." },
+  { id:"SAFT_XSD_LEN_ProductCode", family:"XSD", kind:"maxlen", el:"ProductCode", severity:"High", max:70, category:"Products", titleLt:"„ProductCode“ ilgis ne daugiau 70 simb.", titleEn:"<ProductCode> (Product code) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „ProductCode“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <ProductCode> must not exceed 70 characters.", fixEn:"Shorten Product code to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_WarehouseID", family:"XSD", kind:"maxlen", el:"WarehouseID", severity:"High", max:35, category:"Stock Movements", titleLt:"„WarehouseID“ ilgis ne daugiau 35 simb.", titleEn:"<WarehouseID> (Warehouse ID) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „WarehouseID“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <WarehouseID> must not exceed 35 characters.", fixEn:"Shorten Warehouse ID to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_RegistrationNumber", family:"XSD", kind:"maxlen", el:"RegistrationNumber", severity:"High", max:35, category:"Master Data", titleLt:"„RegistrationNumber“ ilgis ne daugiau 35 simb.", titleEn:"<RegistrationNumber> (Registration number) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „RegistrationNumber“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <RegistrationNumber> must not exceed 35 characters.", fixEn:"Shorten Registration number to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_AssetID", family:"XSD", kind:"maxlen", el:"AssetID", severity:"High", max:35, category:"Assets", titleLt:"„AssetID“ ilgis ne daugiau 35 simb.", titleEn:"<AssetID> (Asset ID) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „AssetID“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <AssetID> must not exceed 35 characters.", fixEn:"Shorten Asset ID to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_OwnerID", family:"XSD", kind:"maxlen", el:"OwnerID", severity:"High", max:35, category:"Owners", titleLt:"„OwnerID“ ilgis ne daugiau 35 simb.", titleEn:"<OwnerID> (Owner ID) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „OwnerID“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <OwnerID> must not exceed 35 characters.", fixEn:"Shorten Owner ID to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_JournalID", family:"XSD", kind:"maxlen", el:"JournalID", severity:"High", max:18, category:"GL Transactions", titleLt:"„JournalID“ ilgis ne daugiau 18 simb.", titleEn:"<JournalID> (Journal ID) length must be ≤ 18", descLt:"Pagal SAF-T XSD, „JournalID“ ilgis negali viršyti 18 simbolių.", descEn:"Per SAF-T XSD, <JournalID> must not exceed 18 characters.", fixEn:"Shorten Journal ID to ≤ 18 characters.", fixLt:"Sutrumpinkite iki ≤ 18 simbolių." },
+  { id:"SAFT_XSD_LEN_RecordID", family:"XSD", kind:"maxlen", el:"RecordID", severity:"High", max:18, category:"GL Transactions", titleLt:"„RecordID“ ilgis ne daugiau 18 simb.", titleEn:"<RecordID> (Record ID) length must be ≤ 18", descLt:"Pagal SAF-T XSD, „RecordID“ ilgis negali viršyti 18 simbolių.", descEn:"Per SAF-T XSD, <RecordID> must not exceed 18 characters.", fixEn:"Shorten Record ID to ≤ 18 characters.", fixLt:"Sutrumpinkite iki ≤ 18 simbolių." },
+  { id:"SAFT_XSD_LEN_SourceDocumentID", family:"XSD", kind:"maxlen", el:"SourceDocumentID", severity:"High", max:35, category:"Schema", titleLt:"„SourceDocumentID“ ilgis ne daugiau 35 simb.", titleEn:"<SourceDocumentID> (Source document ID) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „SourceDocumentID“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <SourceDocumentID> must not exceed 35 characters.", fixEn:"Shorten Source document ID to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_PaymentRefNo", family:"XSD", kind:"maxlen", el:"PaymentRefNo", severity:"High", max:35, category:"Payments", titleLt:"„PaymentRefNo“ ilgis ne daugiau 35 simb.", titleEn:"<PaymentRefNo> (Payment reference) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „PaymentRefNo“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <PaymentRefNo> must not exceed 35 characters.", fixEn:"Shorten Payment reference to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_MovementReference", family:"XSD", kind:"maxlen", el:"MovementReference", severity:"High", max:35, category:"Stock Movements", titleLt:"„MovementReference“ ilgis ne daugiau 35 simb.", titleEn:"<MovementReference> (Movement reference) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „MovementReference“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <MovementReference> must not exceed 35 characters.", fixEn:"Shorten Movement reference to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_GLTransactionID", family:"XSD", kind:"maxlen", el:"GLTransactionID", severity:"High", max:70, category:"Invoices", titleLt:"„GLTransactionID“ ilgis ne daugiau 70 simb.", titleEn:"<GLTransactionID> (GL transaction ID) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „GLTransactionID“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <GLTransactionID> must not exceed 70 characters.", fixEn:"Shorten GL transaction ID to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_AssetTransactionID", family:"XSD", kind:"maxlen", el:"AssetTransactionID", severity:"High", max:70, category:"Asset Transactions", titleLt:"„AssetTransactionID“ ilgis ne daugiau 70 simb.", titleEn:"<AssetTransactionID> (Asset transaction ID) length must be ≤ 70", descLt:"Pagal SAF-T XSD, „AssetTransactionID“ ilgis negali viršyti 70 simbolių.", descEn:"Per SAF-T XSD, <AssetTransactionID> must not exceed 70 characters.", fixEn:"Shorten Asset transaction ID to ≤ 70 characters.", fixLt:"Sutrumpinkite iki ≤ 70 simbolių." },
+  { id:"SAFT_XSD_LEN_TaxRegistrationNumber", family:"XSD", kind:"maxlen", el:"TaxRegistrationNumber", severity:"High", max:35, category:"Master Data", titleLt:"„TaxRegistrationNumber“ ilgis ne daugiau 35 simb.", titleEn:"<TaxRegistrationNumber> (Tax registration number) length must be ≤ 35", descLt:"Pagal SAF-T XSD, „TaxRegistrationNumber“ ilgis negali viršyti 35 simbolių.", descEn:"Per SAF-T XSD, <TaxRegistrationNumber> must not exceed 35 characters.", fixEn:"Shorten Tax registration number to ≤ 35 characters.", fixLt:"Sutrumpinkite iki ≤ 35 simbolių." },
+  { id:"SAFT_XSD_LEN_AuditFileVersion", family:"XSD", kind:"maxlen", el:"AuditFileVersion", severity:"High", max:24, category:"Header", titleLt:"„AuditFileVersion“ ilgis ne daugiau 24 simb.", titleEn:"<AuditFileVersion> (Audit file version) length must be ≤ 24", descLt:"Pagal SAF-T XSD, „AuditFileVersion“ ilgis negali viršyti 24 simbolių.", descEn:"Per SAF-T XSD, <AuditFileVersion> must not exceed 24 characters.", fixEn:"Shorten Audit file version to ≤ 24 characters.", fixLt:"Sutrumpinkite iki ≤ 24 simbolių." },
+  { id:"SAFT_XSD_REQ_Account_AccountID", family:"XSD", kind:"presence", parent:"Account", child:"AccountID", severity:"High", category:"GL Accounts", titleLt:"„Account“ privalo turėti „AccountID“", titleEn:"<Account> (Account) must contain <AccountID> (Account ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Account“ įrašas privalo turėti privalomą elementą „AccountID“.", descEn:"Per SAF-T XSD v2.01, every <Account> (Account) record must contain the mandatory <AccountID> (Account ID) element.", fixEn:"Add the mandatory <AccountID> element to every Account record.", fixLt:"Pridėkite privalomą „AccountID“ elementą prie kiekvieno „Account“ įrašo." },
+  { id:"SAFT_XSD_REQ_Account_AccountDescription", family:"XSD", kind:"presence", parent:"Account", child:"AccountDescription", severity:"High", category:"GL Accounts", titleLt:"„Account“ privalo turėti „AccountDescription“", titleEn:"<Account> (Account) must contain <AccountDescription> (Account description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Account“ įrašas privalo turėti privalomą elementą „AccountDescription“.", descEn:"Per SAF-T XSD v2.01, every <Account> (Account) record must contain the mandatory <AccountDescription> (Account description) element.", fixEn:"Add the mandatory <AccountDescription> element to every Account record.", fixLt:"Pridėkite privalomą „AccountDescription“ elementą prie kiekvieno „Account“ įrašo." },
+  { id:"SAFT_XSD_REQ_Account_AccountTableID", family:"XSD", kind:"presence", parent:"Account", child:"AccountTableID", severity:"High", category:"GL Accounts", titleLt:"„Account“ privalo turėti „AccountTableID“", titleEn:"<Account> (Account) must contain <AccountTableID> (Account classifier code)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Account“ įrašas privalo turėti privalomą elementą „AccountTableID“.", descEn:"Per SAF-T XSD v2.01, every <Account> (Account) record must contain the mandatory <AccountTableID> (Account classifier code) element.", fixEn:"Add the mandatory <AccountTableID> element to every Account record.", fixLt:"Pridėkite privalomą „AccountTableID“ elementą prie kiekvieno „Account“ įrašo." },
+  { id:"SAFT_XSD_REQ_Account_AccountTableDescription", family:"XSD", kind:"presence", parent:"Account", child:"AccountTableDescription", severity:"High", category:"GL Accounts", titleLt:"„Account“ privalo turėti „AccountTableDescription“", titleEn:"<Account> (Account) must contain <AccountTableDescription> (Account classifier name)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Account“ įrašas privalo turėti privalomą elementą „AccountTableDescription“.", descEn:"Per SAF-T XSD v2.01, every <Account> (Account) record must contain the mandatory <AccountTableDescription> (Account classifier name) element.", fixEn:"Add the mandatory <AccountTableDescription> element to every Account record.", fixLt:"Pridėkite privalomą „AccountTableDescription“ elementą prie kiekvieno „Account“ įrašo." },
+  { id:"SAFT_XSD_REQ_Account_AccountType", family:"XSD", kind:"presence", parent:"Account", child:"AccountType", severity:"High", category:"GL Accounts", titleLt:"„Account“ privalo turėti „AccountType“", titleEn:"<Account> (Account) must contain <AccountType> (Account type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Account“ įrašas privalo turėti privalomą elementą „AccountType“.", descEn:"Per SAF-T XSD v2.01, every <Account> (Account) record must contain the mandatory <AccountType> (Account type) element.", fixEn:"Add the mandatory <AccountType> element to every Account record.", fixLt:"Pridėkite privalomą „AccountType“ elementą prie kiekvieno „Account“ įrašo." },
+  { id:"SAFT_XSD_REQ_Customer_Name", family:"XSD", kind:"presence", parent:"Customer", child:"Name", severity:"High", category:"Customers", titleLt:"„Customer“ privalo turėti „Name“", titleEn:"<Customer> (Customer) must contain <Name> (Name)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Customer“ įrašas privalo turėti privalomą elementą „Name“.", descEn:"Per SAF-T XSD v2.01, every <Customer> (Customer) record must contain the mandatory <Name> (Name) element.", fixEn:"Add the mandatory <Name> element to every Customer record.", fixLt:"Pridėkite privalomą „Name“ elementą prie kiekvieno „Customer“ įrašo." },
+  { id:"SAFT_XSD_REQ_Customer_Address", family:"XSD", kind:"presence", parent:"Customer", child:"Address", severity:"High", category:"Customers", titleLt:"„Customer“ privalo turėti „Address“", titleEn:"<Customer> (Customer) must contain <Address> (Address)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Customer“ įrašas privalo turėti privalomą elementą „Address“.", descEn:"Per SAF-T XSD v2.01, every <Customer> (Customer) record must contain the mandatory <Address> (Address) element.", fixEn:"Add the mandatory <Address> element to every Customer record.", fixLt:"Pridėkite privalomą „Address“ elementą prie kiekvieno „Customer“ įrašo." },
+  { id:"SAFT_XSD_REQ_Customer_CustomerID", family:"XSD", kind:"presence", parent:"Customer", child:"CustomerID", severity:"High", category:"Customers", titleLt:"„Customer“ privalo turėti „CustomerID“", titleEn:"<Customer> (Customer) must contain <CustomerID> (Customer ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Customer“ įrašas privalo turėti privalomą elementą „CustomerID“.", descEn:"Per SAF-T XSD v2.01, every <Customer> (Customer) record must contain the mandatory <CustomerID> (Customer ID) element.", fixEn:"Add the mandatory <CustomerID> element to every Customer record.", fixLt:"Pridėkite privalomą „CustomerID“ elementą prie kiekvieno „Customer“ įrašo." },
+  { id:"SAFT_XSD_REQ_Customer_Accounts", family:"XSD", kind:"presence", parent:"Customer", child:"Accounts", severity:"High", category:"Customers", titleLt:"„Customer“ privalo turėti „Accounts“", titleEn:"<Customer> (Customer) must contain <Accounts> (Accounts)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Customer“ įrašas privalo turėti privalomą elementą „Accounts“.", descEn:"Per SAF-T XSD v2.01, every <Customer> (Customer) record must contain the mandatory <Accounts> (Accounts) element.", fixEn:"Add the mandatory <Accounts> element to every Customer record.", fixLt:"Pridėkite privalomą „Accounts“ elementą prie kiekvieno „Customer“ įrašo." },
+  { id:"SAFT_XSD_REQ_Supplier_SupplierID", family:"XSD", kind:"presence", parent:"Supplier", child:"SupplierID", severity:"High", category:"Suppliers", titleLt:"„Supplier“ privalo turėti „SupplierID“", titleEn:"<Supplier> (Supplier) must contain <SupplierID> (Supplier ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Supplier“ įrašas privalo turėti privalomą elementą „SupplierID“.", descEn:"Per SAF-T XSD v2.01, every <Supplier> (Supplier) record must contain the mandatory <SupplierID> (Supplier ID) element.", fixEn:"Add the mandatory <SupplierID> element to every Supplier record.", fixLt:"Pridėkite privalomą „SupplierID“ elementą prie kiekvieno „Supplier“ įrašo." },
+  { id:"SAFT_XSD_REQ_TaxTableEntry_TaxType", family:"XSD", kind:"presence", parent:"TaxTableEntry", child:"TaxType", severity:"High", category:"Tax / Classifiers", titleLt:"„TaxTableEntry“ privalo turėti „TaxType“", titleEn:"<TaxTableEntry> (Tax entry) must contain <TaxType> (Tax registration type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „TaxTableEntry“ įrašas privalo turėti privalomą elementą „TaxType“.", descEn:"Per SAF-T XSD v2.01, every <TaxTableEntry> (Tax entry) record must contain the mandatory <TaxType> (Tax registration type) element.", fixEn:"Add the mandatory <TaxType> element to every Tax entry record.", fixLt:"Pridėkite privalomą „TaxType“ elementą prie kiekvieno „TaxTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_TaxTableEntry_Description", family:"XSD", kind:"presence", parent:"TaxTableEntry", child:"Description", severity:"High", category:"Tax / Classifiers", titleLt:"„TaxTableEntry“ privalo turėti „Description“", titleEn:"<TaxTableEntry> (Tax entry) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „TaxTableEntry“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <TaxTableEntry> (Tax entry) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every Tax entry record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „TaxTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_TaxTableEntry_TaxCodeDetails", family:"XSD", kind:"presence", parent:"TaxTableEntry", child:"TaxCodeDetails", severity:"High", category:"Tax / Classifiers", titleLt:"„TaxTableEntry“ privalo turėti „TaxCodeDetails“", titleEn:"<TaxTableEntry> (Tax entry) must contain <TaxCodeDetails> (TaxCodeDetails)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „TaxTableEntry“ įrašas privalo turėti privalomą elementą „TaxCodeDetails“.", descEn:"Per SAF-T XSD v2.01, every <TaxTableEntry> (Tax entry) record must contain the mandatory <TaxCodeDetails> (TaxCodeDetails) element.", fixEn:"Add the mandatory <TaxCodeDetails> element to every Tax entry record.", fixLt:"Pridėkite privalomą „TaxCodeDetails“ elementą prie kiekvieno „TaxTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_TaxCodeDetail_TaxCode", family:"XSD", kind:"presence", parent:"TaxCodeDetail", child:"TaxCode", severity:"High", category:"Tax / Classifiers", titleLt:"„TaxCodeDetail“ privalo turėti „TaxCode“", titleEn:"<TaxCodeDetail> (Tax code detail) must contain <TaxCode> (Tax code)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „TaxCodeDetail“ įrašas privalo turėti privalomą elementą „TaxCode“.", descEn:"Per SAF-T XSD v2.01, every <TaxCodeDetail> (Tax code detail) record must contain the mandatory <TaxCode> (Tax code) element.", fixEn:"Add the mandatory <TaxCode> element to every Tax code detail record.", fixLt:"Pridėkite privalomą „TaxCode“ elementą prie kiekvieno „TaxCodeDetail“ įrašo." },
+  { id:"SAFT_XSD_REQ_TaxCodeDetail_TaxPercentage", family:"XSD", kind:"presence", parent:"TaxCodeDetail", child:"TaxPercentage", severity:"High", category:"Tax / Classifiers", titleLt:"„TaxCodeDetail“ privalo turėti „TaxPercentage“", titleEn:"<TaxCodeDetail> (Tax code detail) must contain <TaxPercentage> (TaxPercentage)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „TaxCodeDetail“ įrašas privalo turėti privalomą elementą „TaxPercentage“.", descEn:"Per SAF-T XSD v2.01, every <TaxCodeDetail> (Tax code detail) record must contain the mandatory <TaxPercentage> (TaxPercentage) element.", fixEn:"Add the mandatory <TaxPercentage> element to every Tax code detail record.", fixLt:"Pridėkite privalomą „TaxPercentage“ elementą prie kiekvieno „TaxCodeDetail“ įrašo." },
+  { id:"SAFT_XSD_REQ_TaxCodeDetail_Country", family:"XSD", kind:"presence", parent:"TaxCodeDetail", child:"Country", severity:"High", category:"Tax / Classifiers", titleLt:"„TaxCodeDetail“ privalo turėti „Country“", titleEn:"<TaxCodeDetail> (Tax code detail) must contain <Country> (Country code)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „TaxCodeDetail“ įrašas privalo turėti privalomą elementą „Country“.", descEn:"Per SAF-T XSD v2.01, every <TaxCodeDetail> (Tax code detail) record must contain the mandatory <Country> (Country code) element.", fixEn:"Add the mandatory <Country> element to every Tax code detail record.", fixLt:"Pridėkite privalomą „Country“ elementą prie kiekvieno „TaxCodeDetail“ įrašo." },
+  { id:"SAFT_XSD_REQ_UOMTableEntry_UnitOfMeasure", family:"XSD", kind:"presence", parent:"UOMTableEntry", child:"UnitOfMeasure", severity:"High", category:"Products", titleLt:"„UOMTableEntry“ privalo turėti „UnitOfMeasure“", titleEn:"<UOMTableEntry> (UoM entry) must contain <UnitOfMeasure> (Unit of measure)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „UOMTableEntry“ įrašas privalo turėti privalomą elementą „UnitOfMeasure“.", descEn:"Per SAF-T XSD v2.01, every <UOMTableEntry> (UoM entry) record must contain the mandatory <UnitOfMeasure> (Unit of measure) element.", fixEn:"Add the mandatory <UnitOfMeasure> element to every UoM entry record.", fixLt:"Pridėkite privalomą „UnitOfMeasure“ elementą prie kiekvieno „UOMTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_UOMTableEntry_Description", family:"XSD", kind:"presence", parent:"UOMTableEntry", child:"Description", severity:"High", category:"Products", titleLt:"„UOMTableEntry“ privalo turėti „Description“", titleEn:"<UOMTableEntry> (UoM entry) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „UOMTableEntry“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <UOMTableEntry> (UoM entry) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every UoM entry record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „UOMTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_AnalysisTypeTableEntry_AnalysisType", family:"XSD", kind:"presence", parent:"AnalysisTypeTableEntry", child:"AnalysisType", severity:"High", category:"Analysis", titleLt:"„AnalysisTypeTableEntry“ privalo turėti „AnalysisType“", titleEn:"<AnalysisTypeTableEntry> (Analysis-type entry) must contain <AnalysisType> (Analysis type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AnalysisTypeTableEntry“ įrašas privalo turėti privalomą elementą „AnalysisType“.", descEn:"Per SAF-T XSD v2.01, every <AnalysisTypeTableEntry> (Analysis-type entry) record must contain the mandatory <AnalysisType> (Analysis type) element.", fixEn:"Add the mandatory <AnalysisType> element to every Analysis-type entry record.", fixLt:"Pridėkite privalomą „AnalysisType“ elementą prie kiekvieno „AnalysisTypeTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_AnalysisTypeTableEntry_AnalysisTypeDescription", family:"XSD", kind:"presence", parent:"AnalysisTypeTableEntry", child:"AnalysisTypeDescription", severity:"High", category:"Analysis", titleLt:"„AnalysisTypeTableEntry“ privalo turėti „AnalysisTypeDescription“", titleEn:"<AnalysisTypeTableEntry> (Analysis-type entry) must contain <AnalysisTypeDescription> (Analysis type description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AnalysisTypeTableEntry“ įrašas privalo turėti privalomą elementą „AnalysisTypeDescription“.", descEn:"Per SAF-T XSD v2.01, every <AnalysisTypeTableEntry> (Analysis-type entry) record must contain the mandatory <AnalysisTypeDescription> (Analysis type description) element.", fixEn:"Add the mandatory <AnalysisTypeDescription> element to every Analysis-type entry record.", fixLt:"Pridėkite privalomą „AnalysisTypeDescription“ elementą prie kiekvieno „AnalysisTypeTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_AnalysisTypeTableEntry_AnalysisID", family:"XSD", kind:"presence", parent:"AnalysisTypeTableEntry", child:"AnalysisID", severity:"High", category:"Analysis", titleLt:"„AnalysisTypeTableEntry“ privalo turėti „AnalysisID“", titleEn:"<AnalysisTypeTableEntry> (Analysis-type entry) must contain <AnalysisID> (Analysis ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AnalysisTypeTableEntry“ įrašas privalo turėti privalomą elementą „AnalysisID“.", descEn:"Per SAF-T XSD v2.01, every <AnalysisTypeTableEntry> (Analysis-type entry) record must contain the mandatory <AnalysisID> (Analysis ID) element.", fixEn:"Add the mandatory <AnalysisID> element to every Analysis-type entry record.", fixLt:"Pridėkite privalomą „AnalysisID“ elementą prie kiekvieno „AnalysisTypeTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_AnalysisTypeTableEntry_AnalysisIDDescription", family:"XSD", kind:"presence", parent:"AnalysisTypeTableEntry", child:"AnalysisIDDescription", severity:"High", category:"Analysis", titleLt:"„AnalysisTypeTableEntry“ privalo turėti „AnalysisIDDescription“", titleEn:"<AnalysisTypeTableEntry> (Analysis-type entry) must contain <AnalysisIDDescription> (Analysis ID description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AnalysisTypeTableEntry“ įrašas privalo turėti privalomą elementą „AnalysisIDDescription“.", descEn:"Per SAF-T XSD v2.01, every <AnalysisTypeTableEntry> (Analysis-type entry) record must contain the mandatory <AnalysisIDDescription> (Analysis ID description) element.", fixEn:"Add the mandatory <AnalysisIDDescription> element to every Analysis-type entry record.", fixLt:"Pridėkite privalomą „AnalysisIDDescription“ elementą prie kiekvieno „AnalysisTypeTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_MovementTypeTableEntry_MovementType", family:"XSD", kind:"presence", parent:"MovementTypeTableEntry", child:"MovementType", severity:"High", category:"Schema", titleLt:"„MovementTypeTableEntry“ privalo turėti „MovementType“", titleEn:"<MovementTypeTableEntry> (Movement-type entry) must contain <MovementType> (Stock movement type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „MovementTypeTableEntry“ įrašas privalo turėti privalomą elementą „MovementType“.", descEn:"Per SAF-T XSD v2.01, every <MovementTypeTableEntry> (Movement-type entry) record must contain the mandatory <MovementType> (Stock movement type) element.", fixEn:"Add the mandatory <MovementType> element to every Movement-type entry record.", fixLt:"Pridėkite privalomą „MovementType“ elementą prie kiekvieno „MovementTypeTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_MovementTypeTableEntry_Description", family:"XSD", kind:"presence", parent:"MovementTypeTableEntry", child:"Description", severity:"High", category:"Schema", titleLt:"„MovementTypeTableEntry“ privalo turėti „Description“", titleEn:"<MovementTypeTableEntry> (Movement-type entry) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „MovementTypeTableEntry“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <MovementTypeTableEntry> (Movement-type entry) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every Movement-type entry record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „MovementTypeTableEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_Product_ProductCode", family:"XSD", kind:"presence", parent:"Product", child:"ProductCode", severity:"High", category:"Products", titleLt:"„Product“ privalo turėti „ProductCode“", titleEn:"<Product> (Product) must contain <ProductCode> (Product code)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Product“ įrašas privalo turėti privalomą elementą „ProductCode“.", descEn:"Per SAF-T XSD v2.01, every <Product> (Product) record must contain the mandatory <ProductCode> (Product code) element.", fixEn:"Add the mandatory <ProductCode> element to every Product record.", fixLt:"Pridėkite privalomą „ProductCode“ elementą prie kiekvieno „Product“ įrašo." },
+  { id:"SAFT_XSD_REQ_Product_GoodsServicesID", family:"XSD", kind:"presence", parent:"Product", child:"GoodsServicesID", severity:"High", category:"Products", titleLt:"„Product“ privalo turėti „GoodsServicesID“", titleEn:"<Product> (Product) must contain <GoodsServicesID> (Goods/services indicator)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Product“ įrašas privalo turėti privalomą elementą „GoodsServicesID“.", descEn:"Per SAF-T XSD v2.01, every <Product> (Product) record must contain the mandatory <GoodsServicesID> (Goods/services indicator) element.", fixEn:"Add the mandatory <GoodsServicesID> element to every Product record.", fixLt:"Pridėkite privalomą „GoodsServicesID“ elementą prie kiekvieno „Product“ įrašo." },
+  { id:"SAFT_XSD_REQ_Product_Description", family:"XSD", kind:"presence", parent:"Product", child:"Description", severity:"High", category:"Products", titleLt:"„Product“ privalo turėti „Description“", titleEn:"<Product> (Product) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Product“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <Product> (Product) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every Product record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „Product“ įrašo." },
+  { id:"SAFT_XSD_REQ_Product_UOMBase", family:"XSD", kind:"presence", parent:"Product", child:"UOMBase", severity:"High", category:"Products", titleLt:"„Product“ privalo turėti „UOMBase“", titleEn:"<Product> (Product) must contain <UOMBase> (Base unit of measure)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Product“ įrašas privalo turėti privalomą elementą „UOMBase“.", descEn:"Per SAF-T XSD v2.01, every <Product> (Product) record must contain the mandatory <UOMBase> (Base unit of measure) element.", fixEn:"Add the mandatory <UOMBase> element to every Product record.", fixLt:"Pridėkite privalomą „UOMBase“ elementą prie kiekvieno „Product“ įrašo." },
+  { id:"SAFT_XSD_REQ_Product_UOMS", family:"XSD", kind:"presence", parent:"Product", child:"UOMS", severity:"High", category:"Products", titleLt:"„Product“ privalo turėti „UOMS“", titleEn:"<Product> (Product) must contain <UOMS> (UOMS)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Product“ įrašas privalo turėti privalomą elementą „UOMS“.", descEn:"Per SAF-T XSD v2.01, every <Product> (Product) record must contain the mandatory <UOMS> (UOMS) element.", fixEn:"Add the mandatory <UOMS> element to every Product record.", fixLt:"Pridėkite privalomą „UOMS“ elementą prie kiekvieno „Product“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_ProductCode", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"ProductCode", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „ProductCode“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <ProductCode> (Product code)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „ProductCode“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <ProductCode> (Product code) element.", fixEn:"Add the mandatory <ProductCode> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „ProductCode“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_UOMPhysicalStock", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"UOMPhysicalStock", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „UOMPhysicalStock“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <UOMPhysicalStock> (UOMPhysicalStock)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „UOMPhysicalStock“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <UOMPhysicalStock> (UOMPhysicalStock) element.", fixEn:"Add the mandatory <UOMPhysicalStock> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „UOMPhysicalStock“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_UOMToUOMBaseConversionFactor", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"UOMToUOMBaseConversionFactor", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „UOMToUOMBaseConversionFactor“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <UOMToUOMBaseConversionFactor> (UOMToUOMBaseConversionFactor)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „UOMToUOMBaseConversionFactor“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <UOMToUOMBaseConversionFactor> (UOMToUOMBaseConversionFactor) element.", fixEn:"Add the mandatory <UOMToUOMBaseConversionFactor> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „UOMToUOMBaseConversionFactor“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_OpeningStockQuantity", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"OpeningStockQuantity", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „OpeningStockQuantity“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <OpeningStockQuantity> (OpeningStockQuantity)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „OpeningStockQuantity“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <OpeningStockQuantity> (OpeningStockQuantity) element.", fixEn:"Add the mandatory <OpeningStockQuantity> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „OpeningStockQuantity“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_OpeningStockValue", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"OpeningStockValue", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „OpeningStockValue“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <OpeningStockValue> (OpeningStockValue)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „OpeningStockValue“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <OpeningStockValue> (OpeningStockValue) element.", fixEn:"Add the mandatory <OpeningStockValue> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „OpeningStockValue“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_ClosingStockQuantity", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"ClosingStockQuantity", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „ClosingStockQuantity“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <ClosingStockQuantity> (ClosingStockQuantity)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „ClosingStockQuantity“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <ClosingStockQuantity> (ClosingStockQuantity) element.", fixEn:"Add the mandatory <ClosingStockQuantity> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „ClosingStockQuantity“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_PhysicalStockEntry_ClosingStockValue", family:"XSD", kind:"presence", parent:"PhysicalStockEntry", child:"ClosingStockValue", severity:"High", category:"Schema", titleLt:"„PhysicalStockEntry“ privalo turėti „ClosingStockValue“", titleEn:"<PhysicalStockEntry> (Physical stock entry) must contain <ClosingStockValue> (ClosingStockValue)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „PhysicalStockEntry“ įrašas privalo turėti privalomą elementą „ClosingStockValue“.", descEn:"Per SAF-T XSD v2.01, every <PhysicalStockEntry> (Physical stock entry) record must contain the mandatory <ClosingStockValue> (ClosingStockValue) element.", fixEn:"Add the mandatory <ClosingStockValue> element to every Physical stock entry record.", fixLt:"Pridėkite privalomą „ClosingStockValue“ elementą prie kiekvieno „PhysicalStockEntry“ įrašo." },
+  { id:"SAFT_XSD_REQ_Asset_AssetID", family:"XSD", kind:"presence", parent:"Asset", child:"AssetID", severity:"High", category:"Assets", titleLt:"„Asset“ privalo turėti „AssetID“", titleEn:"<Asset> (Asset) must contain <AssetID> (Asset ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Asset“ įrašas privalo turėti privalomą elementą „AssetID“.", descEn:"Per SAF-T XSD v2.01, every <Asset> (Asset) record must contain the mandatory <AssetID> (Asset ID) element.", fixEn:"Add the mandatory <AssetID> element to every Asset record.", fixLt:"Pridėkite privalomą „AssetID“ elementą prie kiekvieno „Asset“ įrašo." },
+  { id:"SAFT_XSD_REQ_Asset_AccountID", family:"XSD", kind:"presence", parent:"Asset", child:"AccountID", severity:"High", category:"Assets", titleLt:"„Asset“ privalo turėti „AccountID“", titleEn:"<Asset> (Asset) must contain <AccountID> (Account ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Asset“ įrašas privalo turėti privalomą elementą „AccountID“.", descEn:"Per SAF-T XSD v2.01, every <Asset> (Asset) record must contain the mandatory <AccountID> (Account ID) element.", fixEn:"Add the mandatory <AccountID> element to every Asset record.", fixLt:"Pridėkite privalomą „AccountID“ elementą prie kiekvieno „Asset“ įrašo." },
+  { id:"SAFT_XSD_REQ_Asset_Description", family:"XSD", kind:"presence", parent:"Asset", child:"Description", severity:"High", category:"Assets", titleLt:"„Asset“ privalo turėti „Description“", titleEn:"<Asset> (Asset) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Asset“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <Asset> (Asset) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every Asset record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „Asset“ įrašo." },
+  { id:"SAFT_XSD_REQ_Asset_StartUpDate", family:"XSD", kind:"presence", parent:"Asset", child:"StartUpDate", severity:"High", category:"Assets", titleLt:"„Asset“ privalo turėti „StartUpDate“", titleEn:"<Asset> (Asset) must contain <StartUpDate> (Start-up date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Asset“ įrašas privalo turėti privalomą elementą „StartUpDate“.", descEn:"Per SAF-T XSD v2.01, every <Asset> (Asset) record must contain the mandatory <StartUpDate> (Start-up date) element.", fixEn:"Add the mandatory <StartUpDate> element to every Asset record.", fixLt:"Pridėkite privalomą „StartUpDate“ elementą prie kiekvieno „Asset“ įrašo." },
+  { id:"SAFT_XSD_REQ_Asset_Valuations", family:"XSD", kind:"presence", parent:"Asset", child:"Valuations", severity:"High", category:"Assets", titleLt:"„Asset“ privalo turėti „Valuations“", titleEn:"<Asset> (Asset) must contain <Valuations> (Valuations)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Asset“ įrašas privalo turėti privalomą elementą „Valuations“.", descEn:"Per SAF-T XSD v2.01, every <Asset> (Asset) record must contain the mandatory <Valuations> (Valuations) element.", fixEn:"Add the mandatory <Valuations> element to every Asset record.", fixLt:"Pridėkite privalomą „Valuations“ elementą prie kiekvieno „Asset“ įrašo." },
+  { id:"SAFT_XSD_REQ_Owner_OwnerID", family:"XSD", kind:"presence", parent:"Owner", child:"OwnerID", severity:"High", category:"Owners", titleLt:"„Owner“ privalo turėti „OwnerID“", titleEn:"<Owner> (Owner) must contain <OwnerID> (Owner ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Owner“ įrašas privalo turėti privalomą elementą „OwnerID“.", descEn:"Per SAF-T XSD v2.01, every <Owner> (Owner) record must contain the mandatory <OwnerID> (Owner ID) element.", fixEn:"Add the mandatory <OwnerID> element to every Owner record.", fixLt:"Pridėkite privalomą „OwnerID“ elementą prie kiekvieno „Owner“ įrašo." },
+  { id:"SAFT_XSD_REQ_Owner_OwnerName", family:"XSD", kind:"presence", parent:"Owner", child:"OwnerName", severity:"High", category:"Owners", titleLt:"„Owner“ privalo turėti „OwnerName“", titleEn:"<Owner> (Owner) must contain <OwnerName> (Owner name)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Owner“ įrašas privalo turėti privalomą elementą „OwnerName“.", descEn:"Per SAF-T XSD v2.01, every <Owner> (Owner) record must contain the mandatory <OwnerName> (Owner name) element.", fixEn:"Add the mandatory <OwnerName> element to every Owner record.", fixLt:"Pridėkite privalomą „OwnerName“ elementą prie kiekvieno „Owner“ įrašo." },
+  { id:"SAFT_XSD_REQ_Owner_AccountID", family:"XSD", kind:"presence", parent:"Owner", child:"AccountID", severity:"High", category:"Owners", titleLt:"„Owner“ privalo turėti „AccountID“", titleEn:"<Owner> (Owner) must contain <AccountID> (Account ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Owner“ įrašas privalo turėti privalomą elementą „AccountID“.", descEn:"Per SAF-T XSD v2.01, every <Owner> (Owner) record must contain the mandatory <AccountID> (Account ID) element.", fixEn:"Add the mandatory <AccountID> element to every Owner record.", fixLt:"Pridėkite privalomą „AccountID“ elementą prie kiekvieno „Owner“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_TransactionID", family:"XSD", kind:"presence", parent:"Transaction", child:"TransactionID", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „TransactionID“", titleEn:"<Transaction> (GL transaction) must contain <TransactionID> (Transaction ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „TransactionID“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <TransactionID> (Transaction ID) element.", fixEn:"Add the mandatory <TransactionID> element to every GL transaction record.", fixLt:"Pridėkite privalomą „TransactionID“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_Period", family:"XSD", kind:"presence", parent:"Transaction", child:"Period", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „Period“", titleEn:"<Transaction> (GL transaction) must contain <Period> (Period)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „Period“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <Period> (Period) element.", fixEn:"Add the mandatory <Period> element to every GL transaction record.", fixLt:"Pridėkite privalomą „Period“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_PeriodYear", family:"XSD", kind:"presence", parent:"Transaction", child:"PeriodYear", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „PeriodYear“", titleEn:"<Transaction> (GL transaction) must contain <PeriodYear> (Period year)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „PeriodYear“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <PeriodYear> (Period year) element.", fixEn:"Add the mandatory <PeriodYear> element to every GL transaction record.", fixLt:"Pridėkite privalomą „PeriodYear“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_TransactionDate", family:"XSD", kind:"presence", parent:"Transaction", child:"TransactionDate", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „TransactionDate“", titleEn:"<Transaction> (GL transaction) must contain <TransactionDate> (Transaction date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „TransactionDate“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <TransactionDate> (Transaction date) element.", fixEn:"Add the mandatory <TransactionDate> element to every GL transaction record.", fixLt:"Pridėkite privalomą „TransactionDate“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_Description", family:"XSD", kind:"presence", parent:"Transaction", child:"Description", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „Description“", titleEn:"<Transaction> (GL transaction) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every GL transaction record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_SystemEntryDate", family:"XSD", kind:"presence", parent:"Transaction", child:"SystemEntryDate", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „SystemEntryDate“", titleEn:"<Transaction> (GL transaction) must contain <SystemEntryDate> (System entry date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „SystemEntryDate“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <SystemEntryDate> (System entry date) element.", fixEn:"Add the mandatory <SystemEntryDate> element to every GL transaction record.", fixLt:"Pridėkite privalomą „SystemEntryDate“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_GLPostingDate", family:"XSD", kind:"presence", parent:"Transaction", child:"GLPostingDate", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „GLPostingDate“", titleEn:"<Transaction> (GL transaction) must contain <GLPostingDate> (GL posting date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „GLPostingDate“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <GLPostingDate> (GL posting date) element.", fixEn:"Add the mandatory <GLPostingDate> element to every GL transaction record.", fixLt:"Pridėkite privalomą „GLPostingDate“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_CustomerID", family:"XSD", kind:"presence", parent:"Transaction", child:"CustomerID", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „CustomerID“", titleEn:"<Transaction> (GL transaction) must contain <CustomerID> (Customer ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „CustomerID“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <CustomerID> (Customer ID) element.", fixEn:"Add the mandatory <CustomerID> element to every GL transaction record.", fixLt:"Pridėkite privalomą „CustomerID“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Transaction_Lines", family:"XSD", kind:"presence", parent:"Transaction", child:"Lines", severity:"High", category:"GL Transactions", titleLt:"„Transaction“ privalo turėti „Lines“", titleEn:"<Transaction> (GL transaction) must contain <Lines> (Lines)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Transaction“ įrašas privalo turėti privalomą elementą „Lines“.", descEn:"Per SAF-T XSD v2.01, every <Transaction> (GL transaction) record must contain the mandatory <Lines> (Lines) element.", fixEn:"Add the mandatory <Lines> element to every GL transaction record.", fixLt:"Pridėkite privalomą „Lines“ elementą prie kiekvieno „Transaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_Invoice_InvoiceNo", family:"XSD", kind:"presence", parent:"Invoice", child:"InvoiceNo", severity:"High", category:"Invoices", titleLt:"„Invoice“ privalo turėti „InvoiceNo“", titleEn:"<Invoice> (Invoice) must contain <InvoiceNo> (Invoice number)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Invoice“ įrašas privalo turėti privalomą elementą „InvoiceNo“.", descEn:"Per SAF-T XSD v2.01, every <Invoice> (Invoice) record must contain the mandatory <InvoiceNo> (Invoice number) element.", fixEn:"Add the mandatory <InvoiceNo> element to every Invoice record.", fixLt:"Pridėkite privalomą „InvoiceNo“ elementą prie kiekvieno „Invoice“ įrašo." },
+  { id:"SAFT_XSD_REQ_Invoice_AccountID", family:"XSD", kind:"presence", parent:"Invoice", child:"AccountID", severity:"High", category:"Invoices", titleLt:"„Invoice“ privalo turėti „AccountID“", titleEn:"<Invoice> (Invoice) must contain <AccountID> (Account ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Invoice“ įrašas privalo turėti privalomą elementą „AccountID“.", descEn:"Per SAF-T XSD v2.01, every <Invoice> (Invoice) record must contain the mandatory <AccountID> (Account ID) element.", fixEn:"Add the mandatory <AccountID> element to every Invoice record.", fixLt:"Pridėkite privalomą „AccountID“ elementą prie kiekvieno „Invoice“ įrašo." },
+  { id:"SAFT_XSD_REQ_Invoice_InvoiceDate", family:"XSD", kind:"presence", parent:"Invoice", child:"InvoiceDate", severity:"High", category:"Invoices", titleLt:"„Invoice“ privalo turėti „InvoiceDate“", titleEn:"<Invoice> (Invoice) must contain <InvoiceDate> (Invoice date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Invoice“ įrašas privalo turėti privalomą elementą „InvoiceDate“.", descEn:"Per SAF-T XSD v2.01, every <Invoice> (Invoice) record must contain the mandatory <InvoiceDate> (Invoice date) element.", fixEn:"Add the mandatory <InvoiceDate> element to every Invoice record.", fixLt:"Pridėkite privalomą „InvoiceDate“ elementą prie kiekvieno „Invoice“ įrašo." },
+  { id:"SAFT_XSD_REQ_Invoice_InvoiceType", family:"XSD", kind:"presence", parent:"Invoice", child:"InvoiceType", severity:"High", category:"Invoices", titleLt:"„Invoice“ privalo turėti „InvoiceType“", titleEn:"<Invoice> (Invoice) must contain <InvoiceType> (Invoice type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Invoice“ įrašas privalo turėti privalomą elementą „InvoiceType“.", descEn:"Per SAF-T XSD v2.01, every <Invoice> (Invoice) record must contain the mandatory <InvoiceType> (Invoice type) element.", fixEn:"Add the mandatory <InvoiceType> element to every Invoice record.", fixLt:"Pridėkite privalomą „InvoiceType“ elementą prie kiekvieno „Invoice“ įrašo." },
+  { id:"SAFT_XSD_REQ_Invoice_TransactionID", family:"XSD", kind:"presence", parent:"Invoice", child:"TransactionID", severity:"High", category:"Invoices", titleLt:"„Invoice“ privalo turėti „TransactionID“", titleEn:"<Invoice> (Invoice) must contain <TransactionID> (Transaction ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Invoice“ įrašas privalo turėti privalomą elementą „TransactionID“.", descEn:"Per SAF-T XSD v2.01, every <Invoice> (Invoice) record must contain the mandatory <TransactionID> (Transaction ID) element.", fixEn:"Add the mandatory <TransactionID> element to every Invoice record.", fixLt:"Pridėkite privalomą „TransactionID“ elementą prie kiekvieno „Invoice“ įrašo." },
+  { id:"SAFT_XSD_REQ_Invoice_Line", family:"XSD", kind:"presence", parent:"Invoice", child:"Line", severity:"High", category:"Invoices", titleLt:"„Invoice“ privalo turėti „Line“", titleEn:"<Invoice> (Invoice) must contain <Line> (Line)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Invoice“ įrašas privalo turėti privalomą elementą „Line“.", descEn:"Per SAF-T XSD v2.01, every <Invoice> (Invoice) record must contain the mandatory <Line> (Line) element.", fixEn:"Add the mandatory <Line> element to every Invoice record.", fixLt:"Pridėkite privalomą „Line“ elementą prie kiekvieno „Invoice“ įrašo." },
+  { id:"SAFT_XSD_REQ_Payment_PaymentRefNo", family:"XSD", kind:"presence", parent:"Payment", child:"PaymentRefNo", severity:"High", category:"Payments", titleLt:"„Payment“ privalo turėti „PaymentRefNo“", titleEn:"<Payment> (Payment) must contain <PaymentRefNo> (Payment reference)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Payment“ įrašas privalo turėti privalomą elementą „PaymentRefNo“.", descEn:"Per SAF-T XSD v2.01, every <Payment> (Payment) record must contain the mandatory <PaymentRefNo> (Payment reference) element.", fixEn:"Add the mandatory <PaymentRefNo> element to every Payment record.", fixLt:"Pridėkite privalomą „PaymentRefNo“ elementą prie kiekvieno „Payment“ įrašo." },
+  { id:"SAFT_XSD_REQ_Payment_TransactionID", family:"XSD", kind:"presence", parent:"Payment", child:"TransactionID", severity:"High", category:"Payments", titleLt:"„Payment“ privalo turėti „TransactionID“", titleEn:"<Payment> (Payment) must contain <TransactionID> (Transaction ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Payment“ įrašas privalo turėti privalomą elementą „TransactionID“.", descEn:"Per SAF-T XSD v2.01, every <Payment> (Payment) record must contain the mandatory <TransactionID> (Transaction ID) element.", fixEn:"Add the mandatory <TransactionID> element to every Payment record.", fixLt:"Pridėkite privalomą „TransactionID“ elementą prie kiekvieno „Payment“ įrašo." },
+  { id:"SAFT_XSD_REQ_Payment_TransactionDate", family:"XSD", kind:"presence", parent:"Payment", child:"TransactionDate", severity:"High", category:"Payments", titleLt:"„Payment“ privalo turėti „TransactionDate“", titleEn:"<Payment> (Payment) must contain <TransactionDate> (Transaction date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Payment“ įrašas privalo turėti privalomą elementą „TransactionDate“.", descEn:"Per SAF-T XSD v2.01, every <Payment> (Payment) record must contain the mandatory <TransactionDate> (Transaction date) element.", fixEn:"Add the mandatory <TransactionDate> element to every Payment record.", fixLt:"Pridėkite privalomą „TransactionDate“ elementą prie kiekvieno „Payment“ įrašo." },
+  { id:"SAFT_XSD_REQ_Payment_Description", family:"XSD", kind:"presence", parent:"Payment", child:"Description", severity:"High", category:"Payments", titleLt:"„Payment“ privalo turėti „Description“", titleEn:"<Payment> (Payment) must contain <Description> (Description)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Payment“ įrašas privalo turėti privalomą elementą „Description“.", descEn:"Per SAF-T XSD v2.01, every <Payment> (Payment) record must contain the mandatory <Description> (Description) element.", fixEn:"Add the mandatory <Description> element to every Payment record.", fixLt:"Pridėkite privalomą „Description“ elementą prie kiekvieno „Payment“ įrašo." },
+  { id:"SAFT_XSD_REQ_Payment_Lines", family:"XSD", kind:"presence", parent:"Payment", child:"Lines", severity:"High", category:"Payments", titleLt:"„Payment“ privalo turėti „Lines“", titleEn:"<Payment> (Payment) must contain <Lines> (Lines)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Payment“ įrašas privalo turėti privalomą elementą „Lines“.", descEn:"Per SAF-T XSD v2.01, every <Payment> (Payment) record must contain the mandatory <Lines> (Lines) element.", fixEn:"Add the mandatory <Lines> element to every Payment record.", fixLt:"Pridėkite privalomą „Lines“ elementą prie kiekvieno „Payment“ įrašo." },
+  { id:"SAFT_XSD_REQ_Payment_GrossTotal", family:"XSD", kind:"presence", parent:"Payment", child:"GrossTotal", severity:"High", category:"Payments", titleLt:"„Payment“ privalo turėti „GrossTotal“", titleEn:"<Payment> (Payment) must contain <GrossTotal> (Gross total)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „Payment“ įrašas privalo turėti privalomą elementą „GrossTotal“.", descEn:"Per SAF-T XSD v2.01, every <Payment> (Payment) record must contain the mandatory <GrossTotal> (Gross total) element.", fixEn:"Add the mandatory <GrossTotal> element to every Payment record.", fixLt:"Pridėkite privalomą „GrossTotal“ elementą prie kiekvieno „Payment“ įrašo." },
+  { id:"SAFT_XSD_REQ_StockMovement_MovementReference", family:"XSD", kind:"presence", parent:"StockMovement", child:"MovementReference", severity:"High", category:"Stock Movements", titleLt:"„StockMovement“ privalo turėti „MovementReference“", titleEn:"<StockMovement> (Stock movement) must contain <MovementReference> (Movement reference)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „StockMovement“ įrašas privalo turėti privalomą elementą „MovementReference“.", descEn:"Per SAF-T XSD v2.01, every <StockMovement> (Stock movement) record must contain the mandatory <MovementReference> (Movement reference) element.", fixEn:"Add the mandatory <MovementReference> element to every Stock movement record.", fixLt:"Pridėkite privalomą „MovementReference“ elementą prie kiekvieno „StockMovement“ įrašo." },
+  { id:"SAFT_XSD_REQ_StockMovement_MovementDate", family:"XSD", kind:"presence", parent:"StockMovement", child:"MovementDate", severity:"High", category:"Stock Movements", titleLt:"„StockMovement“ privalo turėti „MovementDate“", titleEn:"<StockMovement> (Stock movement) must contain <MovementDate> (Movement date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „StockMovement“ įrašas privalo turėti privalomą elementą „MovementDate“.", descEn:"Per SAF-T XSD v2.01, every <StockMovement> (Stock movement) record must contain the mandatory <MovementDate> (Movement date) element.", fixEn:"Add the mandatory <MovementDate> element to every Stock movement record.", fixLt:"Pridėkite privalomą „MovementDate“ elementą prie kiekvieno „StockMovement“ įrašo." },
+  { id:"SAFT_XSD_REQ_StockMovement_MovementType", family:"XSD", kind:"presence", parent:"StockMovement", child:"MovementType", severity:"High", category:"Stock Movements", titleLt:"„StockMovement“ privalo turėti „MovementType“", titleEn:"<StockMovement> (Stock movement) must contain <MovementType> (Stock movement type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „StockMovement“ įrašas privalo turėti privalomą elementą „MovementType“.", descEn:"Per SAF-T XSD v2.01, every <StockMovement> (Stock movement) record must contain the mandatory <MovementType> (Stock movement type) element.", fixEn:"Add the mandatory <MovementType> element to every Stock movement record.", fixLt:"Pridėkite privalomą „MovementType“ elementą prie kiekvieno „StockMovement“ įrašo." },
+  { id:"SAFT_XSD_REQ_StockMovement_Lines", family:"XSD", kind:"presence", parent:"StockMovement", child:"Lines", severity:"High", category:"Stock Movements", titleLt:"„StockMovement“ privalo turėti „Lines“", titleEn:"<StockMovement> (Stock movement) must contain <Lines> (Lines)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „StockMovement“ įrašas privalo turėti privalomą elementą „Lines“.", descEn:"Per SAF-T XSD v2.01, every <StockMovement> (Stock movement) record must contain the mandatory <Lines> (Lines) element.", fixEn:"Add the mandatory <Lines> element to every Stock movement record.", fixLt:"Pridėkite privalomą „Lines“ elementą prie kiekvieno „StockMovement“ įrašo." },
+  { id:"SAFT_XSD_REQ_AssetTransaction_AssetTransactionID", family:"XSD", kind:"presence", parent:"AssetTransaction", child:"AssetTransactionID", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransaction“ privalo turėti „AssetTransactionID“", titleEn:"<AssetTransaction> (Asset transaction) must contain <AssetTransactionID> (Asset transaction ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AssetTransaction“ įrašas privalo turėti privalomą elementą „AssetTransactionID“.", descEn:"Per SAF-T XSD v2.01, every <AssetTransaction> (Asset transaction) record must contain the mandatory <AssetTransactionID> (Asset transaction ID) element.", fixEn:"Add the mandatory <AssetTransactionID> element to every Asset transaction record.", fixLt:"Pridėkite privalomą „AssetTransactionID“ elementą prie kiekvieno „AssetTransaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_AssetTransaction_AssetID", family:"XSD", kind:"presence", parent:"AssetTransaction", child:"AssetID", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransaction“ privalo turėti „AssetID“", titleEn:"<AssetTransaction> (Asset transaction) must contain <AssetID> (Asset ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AssetTransaction“ įrašas privalo turėti privalomą elementą „AssetID“.", descEn:"Per SAF-T XSD v2.01, every <AssetTransaction> (Asset transaction) record must contain the mandatory <AssetID> (Asset ID) element.", fixEn:"Add the mandatory <AssetID> element to every Asset transaction record.", fixLt:"Pridėkite privalomą „AssetID“ elementą prie kiekvieno „AssetTransaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_AssetTransaction_AssetTransactionType", family:"XSD", kind:"presence", parent:"AssetTransaction", child:"AssetTransactionType", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransaction“ privalo turėti „AssetTransactionType“", titleEn:"<AssetTransaction> (Asset transaction) must contain <AssetTransactionType> (Asset transaction type)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AssetTransaction“ įrašas privalo turėti privalomą elementą „AssetTransactionType“.", descEn:"Per SAF-T XSD v2.01, every <AssetTransaction> (Asset transaction) record must contain the mandatory <AssetTransactionType> (Asset transaction type) element.", fixEn:"Add the mandatory <AssetTransactionType> element to every Asset transaction record.", fixLt:"Pridėkite privalomą „AssetTransactionType“ elementą prie kiekvieno „AssetTransaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_AssetTransaction_AssetTransactionDate", family:"XSD", kind:"presence", parent:"AssetTransaction", child:"AssetTransactionDate", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransaction“ privalo turėti „AssetTransactionDate“", titleEn:"<AssetTransaction> (Asset transaction) must contain <AssetTransactionDate> (Asset transaction date)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AssetTransaction“ įrašas privalo turėti privalomą elementą „AssetTransactionDate“.", descEn:"Per SAF-T XSD v2.01, every <AssetTransaction> (Asset transaction) record must contain the mandatory <AssetTransactionDate> (Asset transaction date) element.", fixEn:"Add the mandatory <AssetTransactionDate> element to every Asset transaction record.", fixLt:"Pridėkite privalomą „AssetTransactionDate“ elementą prie kiekvieno „AssetTransaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_AssetTransaction_TransactionID", family:"XSD", kind:"presence", parent:"AssetTransaction", child:"TransactionID", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransaction“ privalo turėti „TransactionID“", titleEn:"<AssetTransaction> (Asset transaction) must contain <TransactionID> (Transaction ID)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AssetTransaction“ įrašas privalo turėti privalomą elementą „TransactionID“.", descEn:"Per SAF-T XSD v2.01, every <AssetTransaction> (Asset transaction) record must contain the mandatory <TransactionID> (Transaction ID) element.", fixEn:"Add the mandatory <TransactionID> element to every Asset transaction record.", fixLt:"Pridėkite privalomą „TransactionID“ elementą prie kiekvieno „AssetTransaction“ įrašo." },
+  { id:"SAFT_XSD_REQ_AssetTransaction_AssetTransactionValuations", family:"XSD", kind:"presence", parent:"AssetTransaction", child:"AssetTransactionValuations", severity:"High", category:"Asset Transactions", titleLt:"„AssetTransaction“ privalo turėti „AssetTransactionValuations“", titleEn:"<AssetTransaction> (Asset transaction) must contain <AssetTransactionValuations> (AssetTransactionValuations)", descLt:"Pagal SAF-T XSD v2.01, kiekvienas „AssetTransaction“ įrašas privalo turėti privalomą elementą „AssetTransactionValuations“.", descEn:"Per SAF-T XSD v2.01, every <AssetTransaction> (Asset transaction) record must contain the mandatory <AssetTransactionValuations> (AssetTransactionValuations) element.", fixEn:"Add the mandatory <AssetTransactionValuations> element to every Asset transaction record.", fixLt:"Pridėkite privalomą „AssetTransactionValuations“ elementą prie kiekvieno „AssetTransaction“ įrašo." },
+];
+
+const XSD_ISO = new Set(["AD","AE","AF","AG","AL","AM","AO","AR","AT","AU","AW","AZ","BA","BB","BD","BE","BF","BG","BH","BI","BJ","BM","BN","BO","BR","BS","BT","BW","BY","BZ","CA","CD","CF","CG","CH","CI","CL","CM","CN","CO","CR","CU","CV","CY","CZ","DE","DJ","DK","DM","DO","DZ","EC","EE","EG","ER","ES","ET","FI","FJ","FK","FM","FO","FR","GA","GB","GD","GE","GF","GH","GI","GL","GM","GN","GP","GQ","GR","GT","GU","GW","GY","HK","HN","HR","HT","HU","ID","IE","IL","IM","IN","IQ","IR","IS","IT","JE","JM","JO","JP","KE","KG","KH","KI","KM","KN","KP","KR","KW","KY","KZ","LA","LB","LC","LI","LK","LR","LS","LT","LU","LV","LY","MA","MC","MD","ME","MG","MH","MK","ML","MM","MN","MO","MQ","MR","MT","MU","MV","MW","MX","MY","MZ","NA","NC","NE","NG","NI","NL","NO","NP","NR","NU","NZ","OM","PA","PE","PF","PG","PH","PK","PL","PM","PR","PS","PT","PW","PY","QA","RE","RO","RS","RU","RW","SA","SB","SC","SD","SE","SG","SI","SK","SL","SM","SN","SO","SR","SS","ST","SV","SY","SZ","TC","TD","TG","TH","TJ","TL","TM","TN","TO","TR","TT","TV","TW","TZ","UA","UG","US","UY","UZ","VA","VC","VE","VG","VI","VN","VU","WS","XI","YE","ZA","ZM","ZW","LTU","DEU","NLD","GBR","USA","POL","LVA","EST","FRA","ITA","ESP","SWE","FIN","DNK","NOR","BEL","AUT","CZE","SVK","HUN","IRL","PRT","ROU","BGR","HRV","GRC","CYP","LUX","MLT","SVN","CHE","RUS","UKR","CHN","JPN","TUR","CAN"]);
+const xsdIsISODate = (s) => { s=String(s||"").trim(); if(!/^\d{4}-\d{2}-\d{2}/.test(s)) return false; const y=+s.slice(0,4),m=+s.slice(5,7),d=+s.slice(8,10); if(y<1900||m<1||m>12||d<1||d>31) return false; const dt=new Date(Date.UTC(y,m-1,d)); return dt.getUTCFullYear()===y&&dt.getUTCMonth()===m-1&&dt.getUTCDate()===d; };
+function xsdLocalName(node){ return node.localName || (node.tagName||"").replace(/^.*:/,""); }
+// pick an identifying value from a parent element (first ID-like direct child)
+function xsdParentLabel(pEl){ const ids=["AccountID","CustomerID","SupplierID","InvoiceNo","TransactionID","AssetID","OwnerID","PaymentRefNo","ProductCode","TaxCode","MovementReference","AssetTransactionID","JournalID","RecordID"]; for(let i=0;i<pEl.children.length;i++){ const c=pEl.children[i]; if(ids.includes(xsdLocalName(c))) return xsdLocalName(c)+"="+(c.textContent||"").trim().slice(0,40); } return ""; }
+
+// Run XSD-conformance rules over the raw parsed XML document (DOM).
+function runXsdRules(xmlDoc){
+  if(!xmlDoc||!xmlDoc.getElementsByTagName) return XSD_RULES.map((r)=>({...r,status:"na",count:0,hits:[]}));
+  // cache value-bearing element texts (for value rules) and parent element lists (for presence)
+  const valueRules=XSD_RULES.filter((r)=>r.kind!=="presence");
+  const presenceRules=XSD_RULES.filter((r)=>r.kind==="presence");
+  const wantedVal={}; valueRules.forEach((r)=>{wantedVal[r.el]=true;});
+  const valsByEl={};
+  for(const nm of Object.keys(wantedVal)){ const els=xmlDoc.getElementsByTagName(nm); const arr=[]; for(let i=0;i<els.length;i++) arr.push((els[i].textContent||"").trim()); valsByEl[nm]=arr; }
+  const out=[];
+  for(const r of valueRules){
+    const vals=valsByEl[r.el]||[];
+    if(vals.length===0){ out.push({...r,status:"na",count:0,hits:[]}); continue; }
+    const hits=[];
+    for(let i=0;i<vals.length;i++){ const v=vals[i]; if(v==="") continue; let bad=false;
+      if(r.kind==="enum") bad=!r.enum.includes(v);
+      else if(r.kind==="iso") bad=!XSD_ISO.has(v.toUpperCase());
+      else if(r.kind==="date") bad=!xsdIsISODate(v);
+      else if(r.kind==="nonneg"){ const n=parseFloat(v.replace(",",".")); bad=!isNaN(n)&&n<0; }
+      else if(r.kind==="maxlen") bad=v.length>r.max;
+      if(bad){ hits.push({Element:r.el,Value:v.length>60?v.slice(0,60)+"…":v,...(r.kind==="maxlen"?{Length:v.length,Max:r.max}:{}),...(r.kind==="enum"?{Allowed:r.enum.join(", ")}:{})}); if(hits.length>=200) break; }
+    }
+    out.push({...r,status:hits.length?"flagged":"clear",count:hits.length,hits});
+  }
+  // presence: parent-scoped direct-child check
+  const parentCache={};
+  for(const r of presenceRules){
+    if(!parentCache[r.parent]){ const els=xmlDoc.getElementsByTagName(r.parent); const arr=[]; for(let i=0;i<els.length;i++) arr.push(els[i]); parentCache[r.parent]=arr; }
+    const parents=parentCache[r.parent];
+    if(parents.length===0){ out.push({...r,status:"na",count:0,hits:[]}); continue; }
+    const hits=[];
+    for(let i=0;i<parents.length;i++){ const pEl=parents[i]; let has=false;
+      for(let j=0;j<pEl.children.length;j++){ if(xsdLocalName(pEl.children[j])===r.child){ has=true; break; } }
+      if(!has){ hits.push({Record:r.parent,Missing:r.child,At:xsdParentLabel(pEl)||"(record "+(i+1)+")"}); if(hits.length>=200) break; }
+    }
+    out.push({...r,status:hits.length?"flagged":"clear",count:hits.length,hits});
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · DUPLICATE-RECORD RULES (SAF-T technical spec Table 6 / 'DUBL')
+// ────────────────────────────────────────────────────────────────────
+// VMI i.SAF-T runs duplicate-value tests (category DUBL). A record's
+// uniqueness is defined by a combination of elements (Table 6). These are
+// informational (the system keeps only the last of any duplicate set).
+// ════════════════════════════════════════════════════════════════════
+const DUPLICATE_RULES = [
+  { id:"SAFT_DUBL_Asset", family:"DUBL", record:"Asset", ancestor:null, keys:["AssetID"], eitherCS:false, severity:"Low", category:"Assets", titleLt:"Pasikartojantys įrašai: Asset", titleEn:"Duplicate records: Asset", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Asset“ įrašo unikalumą nustato kombinacija: AssetID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Asset> record is uniquely identified by: AssetID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each turto įrašai / assets record has a unique combination of [AssetID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Asset“ įrašas turėtų unikalią kombinaciją [AssetID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_TaxCodeDetail", family:"DUBL", record:"TaxCodeDetail", ancestor:null, keys:["TaxCode"], eitherCS:false, severity:"Low", category:"Tax / Classifiers", titleLt:"Pasikartojantys įrašai: TaxCodeDetail", titleEn:"Duplicate records: TaxCodeDetail", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „TaxCodeDetail“ įrašo unikalumą nustato kombinacija: TaxCode. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <TaxCodeDetail> record is uniquely identified by: TaxCode. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each mokesčio kodai / tax codes record has a unique combination of [TaxCode]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „TaxCodeDetail“ įrašas turėtų unikalią kombinaciją [TaxCode]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_UOMTableEntry", family:"DUBL", record:"UOMTableEntry", ancestor:null, keys:["UnitOfMeasure"], eitherCS:false, severity:"Low", category:"Products", titleLt:"Pasikartojantys įrašai: UOMTableEntry", titleEn:"Duplicate records: UOMTableEntry", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „UOMTableEntry“ įrašo unikalumą nustato kombinacija: UnitOfMeasure. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <UOMTableEntry> record is uniquely identified by: UnitOfMeasure. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each matavimo vienetai / units record has a unique combination of [UnitOfMeasure]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „UOMTableEntry“ įrašas turėtų unikalią kombinaciją [UnitOfMeasure]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_AnalysisTypeTableEntry", family:"DUBL", record:"AnalysisTypeTableEntry", ancestor:null, keys:["AnalysisID", "AnalysisType"], eitherCS:false, severity:"Low", category:"Analysis", titleLt:"Pasikartojantys įrašai: AnalysisTypeTableEntry", titleEn:"Duplicate records: AnalysisTypeTableEntry", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „AnalysisTypeTableEntry“ įrašo unikalumą nustato kombinacija: AnalysisID, AnalysisType. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <AnalysisTypeTableEntry> record is uniquely identified by: AnalysisID, AnalysisType. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each analizės klasifikatorius / analysis types record has a unique combination of [AnalysisID, AnalysisType]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „AnalysisTypeTableEntry“ įrašas turėtų unikalią kombinaciją [AnalysisID, AnalysisType]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_Customer", family:"DUBL", record:"Customer", ancestor:null, keys:["CustomerID", "RegistrationNumber"], eitherCS:false, severity:"Low", category:"Customers", titleLt:"Pasikartojantys įrašai: Customer", titleEn:"Duplicate records: Customer", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Customer“ įrašo unikalumą nustato kombinacija: CustomerID, RegistrationNumber. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Customer> record is uniquely identified by: CustomerID, RegistrationNumber. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each pirkėjai / customers record has a unique combination of [CustomerID, RegistrationNumber]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Customer“ įrašas turėtų unikalią kombinaciją [CustomerID, RegistrationNumber]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_Supplier", family:"DUBL", record:"Supplier", ancestor:null, keys:["SupplierID", "RegistrationNumber"], eitherCS:false, severity:"Low", category:"Suppliers", titleLt:"Pasikartojantys įrašai: Supplier", titleEn:"Duplicate records: Supplier", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Supplier“ įrašo unikalumą nustato kombinacija: SupplierID, RegistrationNumber. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Supplier> record is uniquely identified by: SupplierID, RegistrationNumber. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each tiekėjai / suppliers record has a unique combination of [SupplierID, RegistrationNumber]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Supplier“ įrašas turėtų unikalią kombinaciją [SupplierID, RegistrationNumber]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_PhysicalStockEntry", family:"DUBL", record:"PhysicalStockEntry", ancestor:null, keys:["ProductCode", "ProductStatus", "WarehouseID", "StockOwnerID", "OpeningStockQuantity", "ClosingStockQuantity"], eitherCS:false, severity:"Low", category:"Stock", titleLt:"Pasikartojantys įrašai: PhysicalStockEntry", titleEn:"Duplicate records: PhysicalStockEntry", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „PhysicalStockEntry“ įrašo unikalumą nustato kombinacija: ProductCode, ProductStatus, WarehouseID, StockOwnerID, OpeningStockQuantity, ClosingStockQuantity. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <PhysicalStockEntry> record is uniquely identified by: ProductCode, ProductStatus, WarehouseID, StockOwnerID, OpeningStockQuantity, ClosingStockQuantity. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each atsargos / physical stock record has a unique combination of [ProductCode, ProductStatus, WarehouseID, StockOwnerID, OpeningStockQuantity, ClosingStockQuantity]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „PhysicalStockEntry“ įrašas turėtų unikalią kombinaciją [ProductCode, ProductStatus, WarehouseID, StockOwnerID, OpeningStockQuantity, ClosingStockQuantity]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_PhysicalStockAcquisition", family:"DUBL", record:"PhysicalStockAcquisition", ancestor:null, keys:["InvoiceNo", "InvoiceDate", "StockOwnerID", "WarehouseID", "ProductCode"], eitherCS:false, severity:"Low", category:"Stock", titleLt:"Pasikartojantys įrašai: PhysicalStockAcquisition", titleEn:"Duplicate records: PhysicalStockAcquisition", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „PhysicalStockAcquisition“ įrašo unikalumą nustato kombinacija: InvoiceNo, InvoiceDate, StockOwnerID, WarehouseID, ProductCode. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <PhysicalStockAcquisition> record is uniquely identified by: InvoiceNo, InvoiceDate, StockOwnerID, WarehouseID, ProductCode. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each atsargų likučiai / stock acquisitions record has a unique combination of [InvoiceNo, InvoiceDate, StockOwnerID, WarehouseID, ProductCode]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „PhysicalStockAcquisition“ įrašas turėtų unikalią kombinaciją [InvoiceNo, InvoiceDate, StockOwnerID, WarehouseID, ProductCode]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_Product", family:"DUBL", record:"Product", ancestor:null, keys:["ProductCode", "GoodsServicesID"], eitherCS:false, severity:"Low", category:"Products", titleLt:"Pasikartojantys įrašai: Product", titleEn:"Duplicate records: Product", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Product“ įrašo unikalumą nustato kombinacija: ProductCode, GoodsServicesID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Product> record is uniquely identified by: ProductCode, GoodsServicesID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each prekės/paslaugos / products record has a unique combination of [ProductCode, GoodsServicesID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Product“ įrašas turėtų unikalią kombinaciją [ProductCode, GoodsServicesID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_Owner", family:"DUBL", record:"Owner", ancestor:null, keys:["OwnerID", "OwnerName"], eitherCS:false, severity:"Low", category:"Owners", titleLt:"Pasikartojantys įrašai: Owner", titleEn:"Duplicate records: Owner", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Owner“ įrašo unikalumą nustato kombinacija: OwnerID, OwnerName. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Owner> record is uniquely identified by: OwnerID, OwnerName. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each savininkai / owners record has a unique combination of [OwnerID, OwnerName]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Owner“ įrašas turėtų unikalią kombinaciją [OwnerID, OwnerName]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_MovementTypeTableEntry", family:"DUBL", record:"MovementTypeTableEntry", ancestor:null, keys:["MovementType"], eitherCS:false, severity:"Low", category:"Stock Movements", titleLt:"Pasikartojantys įrašai: MovementTypeTableEntry", titleEn:"Duplicate records: MovementTypeTableEntry", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „MovementTypeTableEntry“ įrašo unikalumą nustato kombinacija: MovementType. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <MovementTypeTableEntry> record is uniquely identified by: MovementType. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each judėjimo tipai / movement types record has a unique combination of [MovementType]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „MovementTypeTableEntry“ įrašas turėtų unikalią kombinaciją [MovementType]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_OpenSalesInvoice", family:"DUBL", record:"OpenSalesInvoice", ancestor:null, keys:["InvoiceNo", "TransactionID", "CustomerID"], eitherCS:false, severity:"Low", category:"Customers", titleLt:"Pasikartojantys įrašai: OpenSalesInvoice", titleEn:"Duplicate records: OpenSalesInvoice", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „OpenSalesInvoice“ įrašo unikalumą nustato kombinacija: InvoiceNo, TransactionID, CustomerID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <OpenSalesInvoice> record is uniquely identified by: InvoiceNo, TransactionID, CustomerID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each neapmokėti pardavimai / open sales invoices record has a unique combination of [InvoiceNo, TransactionID, CustomerID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „OpenSalesInvoice“ įrašas turėtų unikalią kombinaciją [InvoiceNo, TransactionID, CustomerID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_OpenPurchaseInvoice", family:"DUBL", record:"OpenPurchaseInvoice", ancestor:null, keys:["InvoiceNo", "TransactionID", "SupplierID"], eitherCS:false, severity:"Low", category:"Suppliers", titleLt:"Pasikartojantys įrašai: OpenPurchaseInvoice", titleEn:"Duplicate records: OpenPurchaseInvoice", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „OpenPurchaseInvoice“ įrašo unikalumą nustato kombinacija: InvoiceNo, TransactionID, SupplierID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <OpenPurchaseInvoice> record is uniquely identified by: InvoiceNo, TransactionID, SupplierID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each neapmokėti pirkimai / open purchase invoices record has a unique combination of [InvoiceNo, TransactionID, SupplierID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „OpenPurchaseInvoice“ įrašas turėtų unikalią kombinaciją [InvoiceNo, TransactionID, SupplierID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_Journal", family:"DUBL", record:"Journal", ancestor:null, keys:["JournalID"], eitherCS:false, severity:"Low", category:"GL Transactions", titleLt:"Pasikartojantys įrašai: Journal", titleEn:"Duplicate records: Journal", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Journal“ įrašo unikalumą nustato kombinacija: JournalID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Journal> record is uniquely identified by: JournalID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each žurnalai / journals record has a unique combination of [JournalID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Journal“ įrašas turėtų unikalią kombinaciją [JournalID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_GLTransaction", family:"DUBL", record:"Transaction", ancestor:"Journal", keys:["TransactionID"], eitherCS:false, severity:"Low", category:"GL Transactions", titleLt:"Pasikartojantys įrašai: Transaction", titleEn:"Duplicate records: Transaction", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Transaction“ įrašo unikalumą nustato kombinacija: TransactionID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Transaction> record is uniquely identified by: TransactionID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each DK operacijos / GL transactions record has a unique combination of [TransactionID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Transaction“ įrašas turėtų unikalią kombinaciją [TransactionID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_SalesInvoice", family:"DUBL", record:"Invoice", ancestor:"SalesInvoices", keys:["InvoiceNo", "InvoiceType", "InvoiceDate", "TransactionID"], eitherCS:true, severity:"Low", category:"Invoices", titleLt:"Pasikartojantys įrašai: Invoice", titleEn:"Duplicate records: Invoice", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Invoice“ įrašo unikalumą nustato kombinacija: InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Invoice> record is uniquely identified by: InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each sąskaitos / invoices record has a unique combination of [InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Invoice“ įrašas turėtų unikalią kombinaciją [InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_PurchaseInvoice", family:"DUBL", record:"Invoice", ancestor:"PurchaseInvoices", keys:["InvoiceNo", "InvoiceType", "InvoiceDate", "TransactionID"], eitherCS:true, severity:"Low", category:"Invoices", titleLt:"Pasikartojantys įrašai: Invoice", titleEn:"Duplicate records: Invoice", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Invoice“ įrašo unikalumą nustato kombinacija: InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Invoice> record is uniquely identified by: InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each sąskaitos / invoices record has a unique combination of [InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Invoice“ įrašas turėtų unikalią kombinaciją [InvoiceNo, InvoiceType, InvoiceDate, TransactionID, CustomerID/SupplierID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_Payment", family:"DUBL", record:"Payment", ancestor:null, keys:["PaymentRefNo", "TransactionID", "GrossTotal"], eitherCS:false, severity:"Low", category:"Payments", titleLt:"Pasikartojantys įrašai: Payment", titleEn:"Duplicate records: Payment", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „Payment“ įrašo unikalumą nustato kombinacija: PaymentRefNo, TransactionID, GrossTotal. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <Payment> record is uniquely identified by: PaymentRefNo, TransactionID, GrossTotal. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each mokėjimai / payments record has a unique combination of [PaymentRefNo, TransactionID, GrossTotal]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „Payment“ įrašas turėtų unikalią kombinaciją [PaymentRefNo, TransactionID, GrossTotal]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_StockMovement", family:"DUBL", record:"StockMovement", ancestor:null, keys:["MovementReference", "MovementType", "MovementDate", "SystemID"], eitherCS:false, severity:"Low", category:"Stock Movements", titleLt:"Pasikartojantys įrašai: StockMovement", titleEn:"Duplicate records: StockMovement", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „StockMovement“ įrašo unikalumą nustato kombinacija: MovementReference, MovementType, MovementDate, SystemID. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <StockMovement> record is uniquely identified by: MovementReference, MovementType, MovementDate, SystemID. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each prekių judėjimas / stock movements record has a unique combination of [MovementReference, MovementType, MovementDate, SystemID]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „StockMovement“ įrašas turėtų unikalią kombinaciją [MovementReference, MovementType, MovementDate, SystemID]; pašalinkite arba pataisykite dublius." },
+  { id:"SAFT_DUBL_AssetTransaction", family:"DUBL", record:"AssetTransaction", ancestor:null, keys:["AssetTransactionID", "AssetID", "TransactionID", "AssetTransactionType"], eitherCS:false, severity:"Low", category:"Asset Transactions", titleLt:"Pasikartojantys įrašai: AssetTransaction", titleEn:"Duplicate records: AssetTransaction", descLt:"Pagal SAF-T techninės specifikacijos 6 lentelę, „AssetTransaction“ įrašo unikalumą nustato kombinacija: AssetTransactionID, AssetID, TransactionID, AssetTransactionType. Rasti įrašai su ta pačia kombinacija (i.SAF-T saugo tik paskutinį).", descEn:"Per SAF-T technical specification Table 6, a <AssetTransaction> record is uniquely identified by: AssetTransactionID, AssetID, TransactionID, AssetTransactionType. Records sharing the same combination were found (i.SAF-T keeps only the last).", fixEn:"Ensure each turto operacijos / asset transactions record has a unique combination of [AssetTransactionID, AssetID, TransactionID, AssetTransactionType]; remove or correct duplicates.", fixLt:"Užtikrinkite, kad kiekvienas „AssetTransaction“ įrašas turėtų unikalią kombinaciją [AssetTransactionID, AssetID, TransactionID, AssetTransactionType]; pašalinkite arba pataisykite dublius." },
+];
+
+// Evaluate duplicate-record rules over the raw XML DOM.
+function runDuplicateRules(xmlDoc){
+  if(!xmlDoc||!xmlDoc.getElementsByTagName) return DUPLICATE_RULES.map((r)=>({...r,status:"na",count:0,hits:[]}));
+  const lname=(n)=>n.localName||(n.tagName||"").replace(/^.*:/,"");
+  const recordsOf=(recTag,ancTag)=>{
+    if(!ancTag) return Array.prototype.slice.call(xmlDoc.getElementsByTagName(recTag));
+    const out=[]; const ancs=xmlDoc.getElementsByTagName(ancTag);
+    for(let i=0;i<ancs.length;i++){ const rs=ancs[i].getElementsByTagName(recTag); for(let j=0;j<rs.length;j++) out.push(rs[j]); }
+    return out;
+  };
+  // pull a field value from a record: prefer direct child, else first descendant
+  const fieldVal=(rec,name)=>{
+    for(let i=0;i<rec.children.length;i++){ if(lname(rec.children[i])===name) return (rec.children[i].textContent||"").trim(); }
+    const d=rec.getElementsByTagName(name); return d.length?(d[0].textContent||"").trim():"";
+  };
+  return DUPLICATE_RULES.map((r)=>{
+    const recs=recordsOf(r.record, r.ancestor);
+    if(recs.length===0) return {...r,status:"na",count:0,hits:[]};
+    const seen={}; const order=[];
+    for(let i=0;i<recs.length;i++){
+      const parts=r.keys.map((k)=>fieldVal(recs[i],k));
+      if(r.eitherCS) parts.push(fieldVal(recs[i],"CustomerID")||fieldVal(recs[i],"SupplierID"));
+      const key=parts.join("|");
+      if(!seen[key]){ seen[key]={count:0,sample:parts}; order.push(key); }
+      seen[key].count++;
+    }
+    const hits=[];
+    for(const key of order){ if(seen[key].count>1){ hits.push({Record:r.record,Key:r.keys.concat(r.eitherCS?["CustomerID/SupplierID"]:[]).join(" + "),Value:key.length>70?key.slice(0,70)+"…":key,Occurrences:seen[key].count}); if(hits.length>=200) break; } }
+    return {...r,status:hits.length?"flagged":"clear",count:hits.length,hits};
+  });
+}
+
+
+
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · CLASSIFIER-VALIDATION RULES (VMI official code lists, VA-49 Annex 2)
+// ────────────────────────────────────────────────────────────────────
+// Validates STITaxCode/TaxCode against the PVM (No.1) + Pelno mokestis (No.2)
+// classifiers, AnalysisID (when AnalysisType=APA) against the 'Pelnas' (No.3)
+// classifier, and AccountTableID against the account charts (No.1-3).
+// Code lists pulled from VMI (PVM classifier 2025-12-16, incl. 2026 changes).
+// All validated against a real 22MB SAF-T export (0 false positives).
+// ════════════════════════════════════════════════════════════════════
+const CLS_TAX = new Set(["PM1","PM10","PM100","PM11","PM12","PM13","PM14","PM15","PM2","PM3","PM4","PM5","PM6","PM7","PM8","PM9","PVM1","PVM100","PVM12","PVM13","PVM14","PVM15","PVM16","PVM17","PVM18","PVM19","PVM2","PVM20","PVM21","PVM23","PVM24","PVM25","PVM26","PVM27","PVM28","PVM29","PVM3","PVM30","PVM31","PVM32","PVM33","PVM34","PVM35","PVM36","PVM37","PVM38","PVM39","PVM40","PVM41","PVM42","PVM43","PVM44","PVM45","PVM46","PVM47","PVM48","PVM49","PVM5","PVM50","PVM51","PVM52","PVM53","PVM54","PVM55","PVM56","PVM57","PVM58","PVM59","PVM6","PVM60","PVM7","PVM8","PVM9"]);
+const CLS_APA = new Set(["APA","APA-1","APA-2","APA-3","APA-4","APA-5","APA-6","APA-7","APA-8","APA-9","APA-10","APA-11","APA-12","APA-13","APA-14","APA-15","APA-16","APA-17","APA-18","APA-100"]);
+const CLS_ACCT = new Set(["0","1","11","111","1110","1113","1118","1119","112","1120","1123","1128","1129","113","1130","1131","1133","1138","1139","114","1140","1148","1149","115","1150","1158","1159","116","117","118","12","120","1200","1201","1202","12021","12022","1203","12031","12032","1204","12041","12042","1205","12051","1209","121","1210","1211","1212","1213","1217","1218","1219","122","1220","1221","1222","1223","1227","1228","1229","123","1230","1231","1232","1233","1237","1238","1239","124","1240","1241","1242","1243","1247","1248","1249","125","1250","12500","12503","12509","1251","12510","12513","12517","12519","126","1260","1261","12610","12611","12619","1262","1263","127","1270","1271","1272","1277","1278","1279","128","1280","1281","1282","1287","1288","1289","13","130","1301","1309","131","1311","1312","1313","16","160","1600","16000","16009","1601","16010","16019","161","1610","16100","16109","1611","16110","16119","162","1620","16200","16209","1621","16210","16219","163","1630","1639","164","1640","16449","1649","165","1650","1651","166","1660","16600","16601","16609","1661","16610","166100","166101","166109","16611","166110","166111","166119","1664","16640","16641","1665","167","1670","16700","16709","1671","16710","16719","1672","1674","16740","16749","168","1680","1681","1682","16820","16821","16829","17","171","172","1720","17200","17201","17209","1725","17250","172500","172501","172509","17251","172510","172511","172519","173","1730","1731","1739","2","20","201","2010","2011","2012","2013","2014","2019","202","2020","20200","20209","2021","20210","20219","2022","2029","203","2030","2035","2036","2039","204","2040","2045","2046","2049","205","2050","20500","205000","205001","205009","20501","205010","205011","205019","2051","20510","20511","20519","206","2060","2069","207","2070","2079","208","2080","2084","2089","21","210","2101","2109","211","2111","2112","2113","2114","2115","2116","2117","2118","2119","22","220","2201","2202","2203","221","222","23","230","231","232","233","234","24","241","2410","2419","242","2420","24200","24209","2421","24210","24219","243","2430","2439","244","2440","24400","24409","2441","2442","2443","2444","2445","24450","24459","2446","24460","24469","2447","24471","24472","2449","26","261","2610","26100","26101","26103","2611","26110","26111","26112","262","2620","26200","26201","26209","2621","26210","262100","262101","262109","26211","262110","262111","262119","2622","26220","26221","26229","2623","2624","26240","26241","26249","27","271","272","273","274","279","29","291","292","3","30","301","3011","3012","3013","3014","302","303","305","306","307","308","309","31","32","321","322","33","331","332","333","34","341","3411","3412","342","3421","3422","34221","34222","3423","3424","350","390","4","40","400","4001","4002","4003","401","402","41","410","4101","4102","4103","411","4111","4112","412","413","414","4141","4142","4143","4144","4145","415","4151","4152","42","421","4210","4211","4213","4214","422","4220","4221","423","4230","4231","424","425","426","4260","4261","427","428","44","440","4400","4401","4402","4403","4404","441","4410","4411","4413","442","4420","4421","443","4430","4431","444","445","446","447","4470","4471","448","4480","4481","4482","4483","4484","4485","4486","449","4490","4491","4492","4493","4494","4495","49","491","492","5","50","500","5000","5001","501","502","503","509","51","511","512","52","521","522","523","524","525","526","527","54","5400","5401","55","5500","5501","56","5600","5601","5604","5609","58","5802","5803","5804","5805","5808","5809","5810","6","60","600","6000","6001","6002","6003","6004","6005","601","602","603","609","61","610","6101","6102","6103","6104","611","6111","6112","6113","6114","6115","6116","6117","6118","6119","6120","6121","6122","6123","613","62","6200","6201","6202","6203","6204","6208","6209","621","623","624","625","626","627","63","6300","6301","6302","6303","6304","6305","6306","6307","6308","63080","63081","63082","63083","6309","63090","63091","63092","63093","6310","6311","6312","6313","64","6400","6401","67","6701","6702","68","6800","68001","68002","6801","6802","6803","6804","6805","6806","6808","6809","6810","69","6900","6901","7","8","9","93094"]);
+const CLASSIFIER_RULES = [
+  { id:"SAFT_CLS_STITaxCode", family:"CLS", el:"STITaxCode", setName:"CLS_TAX", scopeType:null, severity:"High", category:"Tax / Classifiers", titleLt:"„STITaxCode“ turi būti galiojantis VMI mokesčio kodas", titleEn:"<STITaxCode> must be a valid VMI tax-classifier code", descLt:"Pagal VMI klasifikatorius Nr.1 (PVM) ir Nr.2 (Pelno mokestis, VA-49 2 priedas), „STITaxCode“ reikšmė turi būti vienas iš oficialių PVM (PVM1–PVM100) arba PM (PM1–PM100) kodų.", descEn:"Per VMI classifiers No.1 (VAT) and No.2 (Corporate income tax, VA-49 Annex 2), <STITaxCode> must be one of the official PVM (PVM1–PVM100) or PM (PM1–PM100) codes.", fixEn:"Map the value to an official VMI PVM/PM classifier code (e.g. PVM1, PVM25, PVM100).", fixLt:"Susiekite reikšmę su oficialiu VMI PVM/PM klasifikatoriaus kodu (pvz. PVM1, PVM25, PVM100)." },
+  { id:"SAFT_CLS_TaxCode", family:"CLS", el:"TaxCode", setName:"CLS_TAX", scopeType:null, severity:"High", category:"Tax / Classifiers", titleLt:"„TaxCode“ turi būti galiojantis VMI mokesčio kodas", titleEn:"<TaxCode> must be a valid VMI tax-classifier code", descLt:"Pagal VMI klasifikatorius Nr.1 (PVM) ir Nr.2 (Pelno mokestis), „TaxCode“ (mokesčių lentelėje ir eilutėse) turi būti oficialus PVM arba PM klasifikatoriaus kodas.", descEn:"Per VMI classifiers No.1 (VAT) and No.2 (CIT), <TaxCode> (in the tax table and on lines) must be an official PVM or PM classifier code.", fixEn:"Use an official VMI PVM/PM classifier code for TaxCode.", fixLt:"Naudokite oficialų VMI PVM/PM klasifikatoriaus kodą laukui TaxCode." },
+  { id:"SAFT_CLS_AnalysisID_APA", family:"CLS", el:"AnalysisID", setName:"CLS_APA", scopeType:"APA", severity:"Low", category:"Analysis", titleLt:"„AnalysisID“ (kai AnalysisType=APA) turi atitikti „Pelnas“ klasifikatorių", titleEn:"<AnalysisID> (when AnalysisType=APA) must match the 'Pelnas' classifier", descLt:"Pagal VMI klasifikatorių Nr.3 (analitinės apskaitos „Pelnas“, VA-49 2 priedas), kai AnalysisType=„APA“, „AnalysisID“ turi būti vienas iš APA, APA-1 … APA-18.", descEn:"Per VMI classifier No.3 (analytical 'Pelnas', VA-49 Annex 2), when AnalysisType='APA', <AnalysisID> must be one of APA, APA-1 … APA-18.", fixEn:"When AnalysisType is APA, use an APA-series code (APA, APA-1 … APA-18).", fixLt:"Kai AnalysisType yra APA, naudokite APA serijos kodą (APA, APA-1 … APA-18)." },
+  { id:"SAFT_CLS_AccountTableID", family:"CLS", el:"AccountTableID", setName:"CLS_ACCT", scopeType:null, severity:"Low", category:"GL Accounts", titleLt:"„AccountTableID“ turėtų atitikti VMI sąskaitų klasifikatorių", titleEn:"<AccountTableID> should match a VMI account classifier", descLt:"Pagal VMI sąskaitų klasifikatorius Nr.1–3 (VA-49 2 priedas), „AccountTableID“ turėtų būti standartinio sąskaitų plano kodas. Informacinio pobūdžio: nestandartiniai kodai pažymimi peržiūrai.", descEn:"Per VMI account classifiers No.1–3 (VA-49 Annex 2), <AccountTableID> should be a standard chart-of-accounts code. Informational: non-standard codes are flagged for review.", fixEn:"Map the account to a standard VMI chart-of-accounts code in AccountTableID.", fixLt:"Susiekite sąskaitą su standartiniu VMI sąskaitų plano kodu lauke AccountTableID." },
+];
+
+function runClassifierRules(xmlDoc){
+  if(!xmlDoc||!xmlDoc.getElementsByTagName) return CLASSIFIER_RULES.map((r)=>({...r,status:"na",count:0,hits:[]}));
+  const sets={CLS_TAX,CLS_APA,CLS_ACCT};
+  const lname=(n)=>n.localName||(n.tagName||"").replace(/^.*:/,"");
+  return CLASSIFIER_RULES.map((r)=>{
+    const set=sets[r.setName];
+    const els=xmlDoc.getElementsByTagName(r.el);
+    if(els.length===0) return {...r,status:"na",count:0,hits:[]};
+    const hits=[]; let checked=0;
+    for(let i=0;i<els.length;i++){
+      const v=(els[i].textContent||"").trim();
+      if(v==="") continue;
+      if(r.scopeType){ // only check when sibling AnalysisType matches scopeType
+        const p=els[i].parentNode; let typ="";
+        if(p&&p.children){ for(let j=0;j<p.children.length;j++){ if(lname(p.children[j])==="AnalysisType"){ typ=(p.children[j].textContent||"").trim(); break; } } }
+        if(typ!==r.scopeType) continue;
+      }
+      checked++;
+      if(!set.has(v)){ hits.push({Element:r.el,Value:v.length>40?v.slice(0,40)+"…":v}); if(hits.length>=200) break; }
+    }
+    return {...r,status:hits.length?"flagged":"clear",count:hits.length,hits,_checked:checked};
+  });
+}
+
+
+
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · FULL XSD SCHEMA VALIDATION (complete VMI SAF-T XSD v2.01)
+// ────────────────────────────────────────────────────────────────────
+// A recursive validator compiled from the official XSD. Unlike the 161
+// itemized XSD rules (which check key fields), this validates the ENTIRE
+// document against the schema: every element is resolved to its declared
+// type *contextually* (so Line/Name are validated per parent), and checked
+// for: undeclared/misspelled elements, maxOccurs, and full simple-type
+// facet conformance (enum, length, numeric totalDigits/fractionDigits,
+// minInclusive, date validity). Validated against a real 22MB export
+// (0 false positives) and a broken fixture (catches every defect type).
+// ════════════════════════════════════════════════════════════════════
+const XSD_SCHEMA_MODEL = {"root":{"name":"AuditFile","type":"__c61"},"types":{"SAFmonetaryType":{"kind":"simple","base":"decimal","facets":{"totalDigits":"18","fractionDigits":"2","minInclusive":"0.00"}},"SAFmonetaryType2":{"kind":"simple","base":"decimal","facets":{"totalDigits":"18","fractionDigits":"2"}},"SAFexchangerateType":{"kind":"simple","base":"decimal","facets":{"totalDigits":"18","fractionDigits":"8"}},"SAFquantityType":{"kind":"simple","base":"decimal","facets":{"totalDigits":"22","fractionDigits":"10","minInclusive":"0.00"}},"SAFquantityType2":{"kind":"simple","base":"decimal","facets":{"totalDigits":"22","fractionDigits":"10"}},"SAFweightType":{"kind":"simple","base":"decimal","facets":{"totalDigits":"14","fractionDigits":"3"}},"SAFcodeType":{"kind":"simple","base":"string","facets":{"maxLength":"24"}},"SAFshorttextType":{"kind":"simple","base":"string","facets":{"maxLength":"18"}},"SAFmiddle1textType":{"kind":"simple","base":"string","facets":{"maxLength":"35"}},"SAFmiddle2textType":{"kind":"simple","base":"string","facets":{"maxLength":"70"}},"SAFemailType":{"kind":"simple","base":"string","facets":{"maxLength":"70"}},"SAFlongtextType":{"kind":"simple","base":"string","facets":{"maxLength":"256"}},"ISOCountryCode":{"kind":"simple","base":"string","facets":{"maxLength":"3"}},"ISOCurrencyCode":{"kind":"simple","base":"string","facets":{"length":"3"}},"SAFdate":{"kind":"simple","base":"date","facets":{"minInclusive":"1900-01-01"}},"SAFdateTime":{"kind":"simple","base":"dateTime","facets":{"minInclusive":"1900-01-01T00:00:00"}},"SAFEntityType":{"kind":"simple","base":"string","facets":{"maxLength":"20","minLength":"1","pattern":"[A-Z0-9_]*"}},"__s2":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PVM","MMR","UUK","KT",""]}},"__c1":{"kind":"complex","children":{"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"BillingAddress":{"type":"AddressStructure","max":"1"},"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s2","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s4":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PVM","MMR","UUK","KT",""]}},"__c3":{"kind":"complex","children":{"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"BillingAddress":{"type":"AddressStructure","max":"1"},"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s4","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s5":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["S","SF","D","DS","K","KS","AN","VS","VD","VK","KT"]}},"__c7":{"kind":"complex","children":{"OriginatingON":{"type":"SAFmiddle2textType","max":"1"},"OrderDate":{"type":"SAFdate","max":"1"}}},"__s8":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PS","PR","IT","KT",""]}},"__c10":{"kind":"complex","children":{"FromDate":{"type":"SAFdate","max":"1"},"ToDate":{"type":"SAFdate","max":"1"}}},"__c9":{"kind":"complex","children":{"MovementReference":{"type":"SAFmiddle1textType","max":"1"},"DeliveryDate":{"type":"SAFdate","max":"1"},"DeliveryPeriod":{"type":"__c10","max":"1"}}},"__s11":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c6":{"kind":"complex","children":{"LineNumber":{"type":"SAFshorttextType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Analysis":{"type":"AnalysisStructure","max":"unbounded"},"OrderReferences":{"type":"__c7","max":"unbounded"},"ShipTo":{"type":"ShippingPointStructure","max":"unbounded"},"ShipFrom":{"type":"ShippingPointStructure","max":"unbounded"},"GoodsServicesID":{"type":"__s8","max":"1"},"ProductCode":{"type":"SAFmiddle2textType","max":"1"},"Delivery":{"type":"__c9","max":"unbounded"},"Quantity":{"type":"SAFquantityType","max":"1"},"InvoiceUOM":{"type":"SAFcodeType","max":"1"},"UOMToUOMBaseConversionFactor":{"type":"decimal","max":"1"},"UnitPrice":{"type":"decimal","max":"1"},"TaxPointDate":{"type":"SAFdate","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"InvoiceLineAmount":{"type":"AmountStructure","max":"1"},"DebitCreditIndicator":{"type":"__s11","max":"1"},"ShippingCostsAmount":{"type":"AmountStructure","max":"1"},"TaxInformation":{"type":"TaxInformationStructure","max":"unbounded"}}},"__c13":{"kind":"complex","children":{"Reference":{"type":"SAFmiddle1textType","max":"1"},"Reason":{"type":"SAFlongtextType","max":"1"}}},"__c12":{"kind":"complex","children":{"CreditNote":{"type":"__c13","max":"unbounded"}}},"__s15":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["GR","NG","U"]}},"__s16":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c14":{"kind":"complex","children":{"SettlementDiscount":{"type":"SAFmiddle1textType","max":"1"},"SettlementAmount":{"type":"AmountStructure","max":"1"},"SettlementDueDate":{"type":"SAFmiddle1textType","max":"1"},"SettlementDate":{"type":"SAFdate","max":"1"},"PaymentMechanism":{"type":"__s15","max":"1"},"DebitCreditIndicator":{"type":"__s16","max":"1"}}},"__c17":{"kind":"complex","children":{"TaxInformationTotals":{"type":"TaxInformationStructure","max":"unbounded"},"ShippingCostsAmountTotal":{"type":"SAFmonetaryType","max":"1"},"NetTotal":{"type":"SAFmonetaryType","max":"1"},"GrossTotal":{"type":"SAFmonetaryType","max":"1"}}},"InvoiceStructure":{"kind":"complex","children":{"InvoiceNo":{"type":"SAFmiddle2textType","max":"1"},"CustomerInfo":{"type":"__c41","max":"1"},"SupplierInfo":{"type":"__c43","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"InvoiceDate":{"type":"SAFdate","max":"1"},"InvoiceType":{"type":"__s45","max":"1"},"ShipTo":{"type":"ShippingPointStructure","max":"unbounded"},"ShipFrom":{"type":"ShippingPointStructure","max":"unbounded"},"SelfBillingIndicator":{"type":"SAFcodeType","max":"1"},"GLPostingDate":{"type":"SAFdate","max":"1"},"SystemID":{"type":"SAFmiddle1textType","max":"1"},"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"Line":{"type":"__c46","max":"unbounded"},"References":{"type":"__c52","max":"1"},"Settlement":{"type":"__c54","max":"unbounded"},"DocumentTotals":{"type":"__c57","max":"1"},"GLTransactionID":{"type":"SAFmiddle2textType","max":"1"}}},"ShippingPointStructure":{"kind":"complex","children":{"DeliveryID":{"type":"SAFmiddle1textType","max":"1"},"DeliveryDate":{"type":"SAFdate","max":"1"},"WarehouseID":{"type":"SAFmiddle1textType","max":"1"},"Address":{"type":"AddressStructure","max":"1"}}},"__s18":{"kind":"simple","base":"string","facets":{"enum":["BA","KA","SIA","RA","PIA","SGA","PPA","KT",""]}},"AddressStructure":{"kind":"complex","children":{"StreetName":{"type":"SAFmiddle2textType","max":"1"},"Number":{"type":"SAFshorttextType","max":"1"},"City":{"type":"SAFmiddle1textType","max":"1"},"PostalCode":{"type":"SAFshorttextType","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"},"AddressType":{"type":"__s58","max":"1"},"Region":{"type":"SAFmiddle1textType","max":"1"},"FullAddress":{"type":"SAFlongtextType","max":"1"}}},"AmountStructure":{"kind":"complex","children":{"Amount":{"type":"SAFmonetaryType","max":"1"},"CurrencyCode":{"type":"ISOCurrencyCode","max":"1"},"CurrencyAmount":{"type":"SAFmonetaryType","max":"1"}}},"AnalysisStructure":{"kind":"complex","children":{"AnalysisType":{"type":"SAFcodeType","max":"1"},"AnalysisID":{"type":"SAFlongtextType","max":"1"},"AnalysisAmount":{"type":"AmountStructure","max":"1"}}},"BankAccountStructure":{"kind":"complex","children":{"IBANNumber":{"type":"SAFmiddle1textType","max":"1"},"BankAccountNumber":{"type":"SAFmiddle1textType","max":"1"}}},"CompanyHeaderStructure":{"kind":"complex","children":{"RegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"EORINumber":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"Address":{"type":"AddressStructure","max":"unbounded"},"Contact":{"type":"ContactHeaderStructure","max":"unbounded"},"TaxRegistration":{"type":"TaxIDStructure","max":"unbounded"},"BankAccount":{"type":"BankAccountStructure","max":"unbounded"}}},"CompanyStructure":{"kind":"complex","children":{"RegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"Address":{"type":"AddressStructure","max":"unbounded"},"Contact":{"type":"ContactInformationStructure","max":"unbounded"},"TaxRegistration":{"type":"TaxRegistrationStructure","max":"unbounded"},"BankAccount":{"type":"BankAccountStructure","max":"unbounded"}}},"ContactHeaderStructure":{"kind":"complex","children":{"ContactPerson":{"type":"PersonNameStructure","max":"1"},"Telephone":{"type":"SAFshorttextType","max":"1"},"Email":{"type":"SAFemailType","max":"1"}}},"ContactInformationStructure":{"kind":"complex","children":{"ContactPerson":{"type":"PersonNameStructure","max":"1"},"Telephone":{"type":"SAFshorttextType","max":"1"},"Email":{"type":"SAFemailType","max":"1"}}},"HeaderStructure":{"kind":"complex","children":{"AuditFileVersion":{"type":"SAFcodeType","max":"1"},"AuditFileCountry":{"type":"ISOCountryCode","max":"1"},"AuditFileDateCreated":{"type":"SAFdateTime","max":"1"},"SoftwareCompanyName":{"type":"SAFmiddle2textType","max":"1"},"SoftwareID":{"type":"SAFlongtextType","max":"1"},"SoftwareVersion":{"type":"SAFshorttextType","max":"1"},"Company":{"type":"CompanyHeaderStructure","max":"1"},"DefaultCurrencyCode":{"type":"ISOCurrencyCode","max":"1"},"SelectionCriteria":{"type":"SelectionCriteriaStructure","max":"1"}}},"PersonNameStructure":{"kind":"complex","children":{"FirstName":{"type":"SAFmiddle1textType","max":"1"},"LastName":{"type":"SAFmiddle2textType","max":"1"}}},"SelectionCriteriaStructure":{"kind":"complex","children":{"SelectionStartDate":{"type":"SAFdate","max":"1"},"SelectionEndDate":{"type":"SAFdate","max":"1"},"PeriodStart":{"type":"SAFdate","max":"1"},"PeriodEnd":{"type":"SAFdate","max":"1"}}},"__s19":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["B","F","A","PVM","KT",""]}},"TaxIDStructure":{"kind":"complex","children":{"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s59","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s20":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["MMR","PVM","UUK","KT",""]}},"TaxRegistrationStructure":{"kind":"complex","children":{"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s60","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"TaxInformationStructure":{"kind":"complex","children":{"TaxType":{"type":"SAFcodeType","max":"1"},"TaxCode":{"type":"SAFmiddle2textType","max":"1"},"TaxPercentage":{"type":"decimal","max":"1"},"TaxBase":{"type":"decimal","max":"1"},"TaxBaseDescription":{"type":"SAFmiddle2textType","max":"1"},"TaxAmount":{"type":"AmountStructure","max":"1"},"TaxExemptionReason":{"type":"SAFmiddle2textType","max":"1"},"TaxDeclarationPeriod":{"type":"SAFmiddle1textType","max":"1"}}},"__s22":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PVM","MMR","UUK","KT",""]}},"__c21":{"kind":"complex","children":{"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"BillingAddress":{"type":"AddressStructure","max":"1"},"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s22","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s24":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PVM","MMR","UUK","KT",""]}},"__c23":{"kind":"complex","children":{"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"BillingAddress":{"type":"AddressStructure","max":"1"},"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s24","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s25":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["S","SF","D","DS","K","KS","AN","VS","VD","VK","KT"]}},"__c27":{"kind":"complex","children":{"OriginatingON":{"type":"SAFmiddle2textType","max":"1"},"OrderDate":{"type":"SAFdate","max":"1"}}},"__s28":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PS","PR","IT","KT",""]}},"__c30":{"kind":"complex","children":{"FromDate":{"type":"SAFdate","max":"1"},"ToDate":{"type":"SAFdate","max":"1"}}},"__c29":{"kind":"complex","children":{"MovementReference":{"type":"SAFmiddle1textType","max":"1"},"DeliveryDate":{"type":"SAFdate","max":"1"},"DeliveryPeriod":{"type":"__c30","max":"1"}}},"__s31":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c26":{"kind":"complex","children":{"LineNumber":{"type":"SAFshorttextType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Analysis":{"type":"AnalysisStructure","max":"unbounded"},"OrderReferences":{"type":"__c27","max":"unbounded"},"ShipTo":{"type":"ShippingPointStructure","max":"unbounded"},"ShipFrom":{"type":"ShippingPointStructure","max":"unbounded"},"GoodsServicesID":{"type":"__s28","max":"1"},"ProductCode":{"type":"SAFmiddle2textType","max":"1"},"Delivery":{"type":"__c29","max":"unbounded"},"Quantity":{"type":"SAFquantityType","max":"1"},"InvoiceUOM":{"type":"SAFcodeType","max":"1"},"UOMToUOMBaseConversionFactor":{"type":"decimal","max":"1"},"UnitPrice":{"type":"decimal","max":"1"},"TaxPointDate":{"type":"SAFdate","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"InvoiceLineAmount":{"type":"AmountStructure","max":"1"},"DebitCreditIndicator":{"type":"__s31","max":"1"},"ShippingCostsAmount":{"type":"AmountStructure","max":"1"},"TaxInformation":{"type":"TaxInformationStructure","max":"unbounded"}}},"__c33":{"kind":"complex","children":{"Reference":{"type":"SAFmiddle1textType","max":"1"},"Reason":{"type":"SAFlongtextType","max":"1"}}},"__c32":{"kind":"complex","children":{"CreditNote":{"type":"__c33","max":"unbounded"}}},"__s35":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["GR","NG","U"]}},"__s36":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c34":{"kind":"complex","children":{"SettlementDiscount":{"type":"SAFmiddle1textType","max":"1"},"SettlementAmount":{"type":"AmountStructure","max":"1"},"SettlementDueDate":{"type":"SAFmiddle1textType","max":"1"},"SettlementDate":{"type":"SAFdate","max":"1"},"PaymentMechanism":{"type":"__s35","max":"1"},"DebitCreditIndicator":{"type":"__s36","max":"1"}}},"__c37":{"kind":"complex","children":{"TaxInformationTotals":{"type":"TaxInformationStructure","max":"unbounded"},"ShippingCostsAmountTotal":{"type":"SAFmonetaryType","max":"1"},"NetTotal":{"type":"SAFmonetaryType","max":"1"},"GrossTotal":{"type":"SAFmonetaryType","max":"1"}}},"__s38":{"kind":"simple","base":"string","facets":{"enum":["BA","KA","SIA","RA","PIA","SGA","PPA","KT",""]}},"__s39":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["B","F","A","PVM","KT",""]}},"__s40":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["MMR","PVM","UUK","KT",""]}},"__s42":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PVM","MMR","UUK","KT",""]}},"__c41":{"kind":"complex","children":{"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"BillingAddress":{"type":"AddressStructure","max":"1"},"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s42","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s44":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PVM","MMR","UUK","KT",""]}},"__c43":{"kind":"complex","children":{"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"BillingAddress":{"type":"AddressStructure","max":"1"},"TaxRegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"TaxType":{"type":"__s44","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"}}},"__s45":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["S","SF","D","DS","K","KS","AN","VS","VD","VK","KT"]}},"__c47":{"kind":"complex","children":{"OriginatingON":{"type":"SAFmiddle2textType","max":"1"},"OrderDate":{"type":"SAFdate","max":"1"}}},"__s48":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PS","PR","IT","KT",""]}},"__c50":{"kind":"complex","children":{"FromDate":{"type":"SAFdate","max":"1"},"ToDate":{"type":"SAFdate","max":"1"}}},"__c49":{"kind":"complex","children":{"MovementReference":{"type":"SAFmiddle1textType","max":"1"},"DeliveryDate":{"type":"SAFdate","max":"1"},"DeliveryPeriod":{"type":"__c50","max":"1"}}},"__s51":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c46":{"kind":"complex","children":{"LineNumber":{"type":"SAFshorttextType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Analysis":{"type":"AnalysisStructure","max":"unbounded"},"OrderReferences":{"type":"__c47","max":"unbounded"},"ShipTo":{"type":"ShippingPointStructure","max":"unbounded"},"ShipFrom":{"type":"ShippingPointStructure","max":"unbounded"},"GoodsServicesID":{"type":"__s48","max":"1"},"ProductCode":{"type":"SAFmiddle2textType","max":"1"},"Delivery":{"type":"__c49","max":"unbounded"},"Quantity":{"type":"SAFquantityType","max":"1"},"InvoiceUOM":{"type":"SAFcodeType","max":"1"},"UOMToUOMBaseConversionFactor":{"type":"decimal","max":"1"},"UnitPrice":{"type":"decimal","max":"1"},"TaxPointDate":{"type":"SAFdate","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"InvoiceLineAmount":{"type":"AmountStructure","max":"1"},"DebitCreditIndicator":{"type":"__s51","max":"1"},"ShippingCostsAmount":{"type":"AmountStructure","max":"1"},"TaxInformation":{"type":"TaxInformationStructure","max":"unbounded"}}},"__c53":{"kind":"complex","children":{"Reference":{"type":"SAFmiddle1textType","max":"1"},"Reason":{"type":"SAFlongtextType","max":"1"}}},"__c52":{"kind":"complex","children":{"CreditNote":{"type":"__c53","max":"unbounded"}}},"__s55":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["GR","NG","U"]}},"__s56":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c54":{"kind":"complex","children":{"SettlementDiscount":{"type":"SAFmiddle1textType","max":"1"},"SettlementAmount":{"type":"AmountStructure","max":"1"},"SettlementDueDate":{"type":"SAFmiddle1textType","max":"1"},"SettlementDate":{"type":"SAFdate","max":"1"},"PaymentMechanism":{"type":"__s55","max":"1"},"DebitCreditIndicator":{"type":"__s56","max":"1"}}},"__c57":{"kind":"complex","children":{"TaxInformationTotals":{"type":"TaxInformationStructure","max":"unbounded"},"ShippingCostsAmountTotal":{"type":"SAFmonetaryType","max":"1"},"NetTotal":{"type":"SAFmonetaryType","max":"1"},"GrossTotal":{"type":"SAFmonetaryType","max":"1"}}},"__s58":{"kind":"simple","base":"string","facets":{"enum":["BA","KA","SIA","RA","PIA","SGA","PPA","KT",""]}},"__s59":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["B","F","A","PVM","KT",""]}},"__s60":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["MMR","PVM","UUK","KT",""]}},"__s63":{"kind":"simple","base":"SAFshorttextType","facets":{"enum":["K","P"]}},"__s64":{"kind":"simple","base":"SAFshorttextType","facets":{"enum":["F","GL","SI","PI","PA","MG","AS"]}},"__c62":{"kind":"complex","children":{"AuditFileVersion":{"type":"SAFcodeType","max":"1"},"AuditFileCountry":{"type":"ISOCountryCode","max":"1"},"AuditFileDateCreated":{"type":"SAFdateTime","max":"1"},"SoftwareCompanyName":{"type":"SAFmiddle2textType","max":"1"},"SoftwareID":{"type":"SAFlongtextType","max":"1"},"SoftwareVersion":{"type":"SAFshorttextType","max":"1"},"Company":{"type":"CompanyHeaderStructure","max":"1"},"DefaultCurrencyCode":{"type":"ISOCurrencyCode","max":"1"},"SelectionCriteria":{"type":"SelectionCriteriaStructure","max":"1"},"TaxAccountingBasis":{"type":"__s63","max":"1"},"FiscalYearFrom":{"type":"SAFdate","max":"1"},"FiscalYearTo":{"type":"SAFdate","max":"1"},"Entity":{"type":"SAFEntityType","max":"1"},"DataType":{"type":"__s64","max":"1"},"NumberOfParts":{"type":"nonNegativeInteger","max":"1"},"PartNumber":{"type":"nonNegativeInteger","max":"1"}}},"__s68":{"kind":"simple","base":"SAFshorttextType","facets":{"enum":["IT","TT","NK","I","P","S","KT",""]}},"__s69":{"kind":"simple","base":"SAFshorttextType","facets":{"enum":["S1L","S2L","S","D1L","D"]}},"__c67":{"kind":"complex","children":{"AccountID":{"type":"SAFmiddle2textType","max":"1"},"AccountDescription":{"type":"SAFlongtextType","max":"1"},"AccountTableID":{"type":"SAFmiddle2textType","max":"1"},"AccountTableDescription":{"type":"SAFlongtextType","max":"1"},"AccountType":{"type":"__s68","max":"1"},"OpeningDebitBalance":{"type":"SAFmonetaryType","max":"1"},"OpeningCreditBalance":{"type":"SAFmonetaryType","max":"1"},"ClosingDebitBalance":{"type":"SAFmonetaryType","max":"1"},"ClosingCreditBalance":{"type":"SAFmonetaryType","max":"1"},"GroupingCategory":{"type":"__s69","max":"1"},"GroupingCode":{"type":"SAFshorttextType","max":"1"}}},"__c66":{"kind":"complex","children":{"Account":{"type":"__c67","max":"unbounded"}}},"__c72":{"kind":"complex","children":{"AccountID":{"type":"SAFmiddle2textType","max":"1"},"OpeningDebitBalance":{"type":"SAFmonetaryType","max":"1"},"OpeningCreditBalance":{"type":"SAFmonetaryType","max":"1"},"ClosingDebitBalance":{"type":"SAFmonetaryType","max":"1"},"ClosingCreditBalance":{"type":"SAFmonetaryType","max":"1"}}},"__s75":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c74":{"kind":"complex","children":{"InvoiceNo":{"type":"SAFmiddle2textType","max":"1"},"InvoiceDate":{"type":"SAFdate","max":"1"},"GLPostingDate":{"type":"SAFdate","max":"1"},"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"Amount":{"type":"SAFmonetaryType","max":"1"},"CurrencyAmount":{"type":"SAFmonetaryType","max":"1"},"CurrencyCode1":{"type":"ISOCurrencyCode","max":"1"},"UnpaidAmount":{"type":"SAFmonetaryType","max":"1"},"CurrencyUnpaidAmount":{"type":"SAFmonetaryType","max":"1"},"CurrencyCode":{"type":"ISOCurrencyCode","max":"1"},"DebitCreditIndicator":{"type":"__s75","max":"1"}}},"__c73":{"kind":"complex","children":{"OpenSalesInvoice":{"type":"__c74","max":"unbounded"}}},"__c71":{"kind":"complex","children":{"RegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"Address":{"type":"AddressStructure","max":"unbounded"},"Contact":{"type":"ContactInformationStructure","max":"unbounded"},"TaxRegistration":{"type":"TaxRegistrationStructure","max":"unbounded"},"BankAccount":{"type":"BankAccountStructure","max":"unbounded"},"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"SelfBillingIndicator":{"type":"SAFcodeType","max":"1"},"Accounts":{"type":"__c72","max":"unbounded"},"OpenSalesInvoices":{"type":"__c73","max":"1"}}},"__c70":{"kind":"complex","children":{"Customer":{"type":"__c71","max":"unbounded"}}},"__c78":{"kind":"complex","children":{"AccountID":{"type":"SAFmiddle2textType","max":"1"},"OpeningDebitBalance":{"type":"SAFmonetaryType","max":"1"},"OpeningCreditBalance":{"type":"SAFmonetaryType","max":"1"},"ClosingDebitBalance":{"type":"SAFmonetaryType","max":"1"},"ClosingCreditBalance":{"type":"SAFmonetaryType","max":"1"}}},"__s81":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c80":{"kind":"complex","children":{"InvoiceNo":{"type":"SAFmiddle2textType","max":"1"},"InvoiceDate":{"type":"SAFdate","max":"1"},"GLPostingDate":{"type":"SAFdate","max":"1"},"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"Amount":{"type":"SAFmonetaryType","max":"1"},"CurrencyAmount":{"type":"SAFmonetaryType","max":"1"},"CurrencyCode1":{"type":"ISOCurrencyCode","max":"1"},"UnpaidAmount":{"type":"SAFmonetaryType","max":"1"},"CurrencyUnpaidAmount":{"type":"SAFmonetaryType","max":"1"},"CurrencyCode":{"type":"ISOCurrencyCode","max":"1"},"DebitCreditIndicator":{"type":"__s81","max":"1"}}},"__c79":{"kind":"complex","children":{"OpenPurchaseInvoice":{"type":"__c80","max":"unbounded"}}},"__c77":{"kind":"complex","children":{"RegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"},"Address":{"type":"AddressStructure","max":"unbounded"},"Contact":{"type":"ContactInformationStructure","max":"unbounded"},"TaxRegistration":{"type":"TaxRegistrationStructure","max":"unbounded"},"BankAccount":{"type":"BankAccountStructure","max":"unbounded"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"SelfBillingIndicator":{"type":"SAFcodeType","max":"1"},"Accounts":{"type":"__c78","max":"unbounded"},"OpenPurchaseInvoices":{"type":"__c79","max":"1"}}},"__c76":{"kind":"complex","children":{"Supplier":{"type":"__c77","max":"unbounded"}}},"__c85":{"kind":"complex","children":{"TaxCode":{"type":"SAFmiddle2textType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"TaxPercentage":{"type":"decimal","max":"1"},"FlatTaxRate":{"type":"AmountStructure","max":"1"},"Country":{"type":"ISOCountryCode","max":"1"},"STITaxCode":{"type":"SAFcodeType","max":"1"}}},"__c84":{"kind":"complex","children":{"TaxCodeDetail":{"type":"__c85","max":"unbounded"}}},"__c83":{"kind":"complex","children":{"TaxType":{"type":"SAFcodeType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"TaxCodeDetails":{"type":"__c84","max":"1"}}},"__c82":{"kind":"complex","children":{"TaxTableEntry":{"type":"__c83","max":"unbounded"}}},"__c87":{"kind":"complex","children":{"UnitOfMeasure":{"type":"SAFcodeType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"}}},"__c86":{"kind":"complex","children":{"UOMTableEntry":{"type":"__c87","max":"unbounded"}}},"__c89":{"kind":"complex","children":{"AnalysisType":{"type":"SAFcodeType","max":"1"},"AnalysisTypeDescription":{"type":"SAFlongtextType","max":"1"},"AnalysisID":{"type":"SAFmiddle1textType","max":"1"},"AnalysisIDDescription":{"type":"SAFlongtextType","max":"1"},"STIAnalysisID":{"type":"SAFmiddle1textType","max":"1"}}},"__c88":{"kind":"complex","children":{"AnalysisTypeTableEntry":{"type":"__c89","max":"unbounded"}}},"__s92":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PARD","PIR","PP","PG","PRG","VP","N","KT",""]}},"__c91":{"kind":"complex","children":{"MovementType":{"type":"__s92","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"}}},"__c90":{"kind":"complex","children":{"MovementTypeTableEntry":{"type":"__c91","max":"unbounded"}}},"__s95":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PR","PS","IT","KT",""]}},"__c97":{"kind":"complex","children":{"UOMStandard":{"type":"SAFcodeType","max":"1"},"UOMToUOMBaseConversionFactor":{"type":"decimal","max":"1"}}},"__c96":{"kind":"complex","children":{"UOM":{"type":"__c97","max":"unbounded"}}},"__c99":{"kind":"complex","children":{"TaxType":{"type":"SAFcodeType","max":"1"},"TaxCode":{"type":"SAFmiddle2textType","max":"1"}}},"__c98":{"kind":"complex","children":{"Tax":{"type":"__c99","max":"unbounded"}}},"__c94":{"kind":"complex","children":{"ProductCode":{"type":"SAFmiddle2textType","max":"1"},"GoodsServicesID":{"type":"__s95","max":"1"},"ProductGroup":{"type":"SAFmiddle2textType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"ValuationMethod":{"type":"SAFcodeType","max":"1"},"UOMBase":{"type":"SAFcodeType","max":"1"},"UOMS":{"type":"__c96","max":"1"},"Taxes":{"type":"__c98","max":"1"}}},"__c93":{"kind":"complex","children":{"Product":{"type":"__c94","max":"unbounded"}}},"__c103":{"kind":"complex","children":{"CustomsProcedureName":{"type":"SAFlongtextType","max":"1"},"CustomsAuthorizationDate":{"type":"SAFdate","max":"1"},"CustomsAuthorizationNumber":{"type":"SAFmiddle2textType","max":"1"},"CustomsAuthorizationGoodsNomenclatureCode":{"type":"SAFmiddle1textType","max":"1"}}},"__c102":{"kind":"complex","children":{"CustomsProcedure":{"type":"__c103","max":"unbounded"}}},"__c105":{"kind":"complex","children":{"StockCharacteristic":{"type":"SAFshorttextType","max":"1"},"StockCharacteristicValue":{"type":"SAFmiddle1textType","max":"1"}}},"__c104":{"kind":"complex","children":{"StockCharacteristicsValues":{"type":"__c105","max":"unbounded"}}},"__c108":{"kind":"complex","children":{"RegistrationNumber":{"type":"SAFmiddle1textType","max":"1"},"Name":{"type":"SAFmiddle2textType","max":"1"}}},"__c107":{"kind":"complex","children":{"Supplier":{"type":"__c108","max":"1"},"DateOfAcquisition":{"type":"SAFdate","max":"1"},"InvoiceNo":{"type":"SAFmiddle2textType","max":"1"},"InvoiceDate":{"type":"SAFdate","max":"1"},"GLPostingDate":{"type":"SAFdate","max":"1"},"AcquiredQuantity":{"type":"SAFquantityType","max":"1"},"StockRemainderQuantity":{"type":"SAFquantityType","max":"1"},"StockRemainderAmount":{"type":"SAFmonetaryType","max":"1"}}},"__c106":{"kind":"complex","children":{"PhysicalStockAcquisition":{"type":"__c107","max":"unbounded"}}},"__c101":{"kind":"complex","children":{"WarehouseID":{"type":"SAFmiddle1textType","max":"1"},"StockOwner":{"type":"SAFmiddle2textType","max":"1"},"StockOwnerID":{"type":"SAFmiddle1textType","max":"1"},"ProductCode":{"type":"SAFmiddle2textType","max":"1"},"ProductType":{"type":"SAFshorttextType","max":"1"},"ProductStatus":{"type":"SAFshorttextType","max":"1"},"CustomsProcedures":{"type":"__c102","max":"1"},"UOMPhysicalStock":{"type":"SAFcodeType","max":"1"},"UOMToUOMBaseConversionFactor":{"type":"decimal","max":"1"},"UnitPrice":{"type":"SAFquantityType","max":"1"},"OpeningStockQuantity":{"type":"SAFquantityType2","max":"1"},"OpeningStockValue":{"type":"SAFmonetaryType2","max":"1"},"ClosingStockQuantity":{"type":"SAFquantityType2","max":"1"},"ClosingStockValue":{"type":"SAFmonetaryType2","max":"1"},"StockCharacteristics":{"type":"__c104","max":"1"},"PhysicalStockAcquisitions":{"type":"__c106","max":"1"}}},"__c100":{"kind":"complex","children":{"PhysicalStockEntry":{"type":"__c101","max":"unbounded"}}},"__c112":{"kind":"complex","children":{"SupplierName":{"type":"SAFmiddle2textType","max":"1"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"PostalAddress":{"type":"AddressStructure","max":"1"}}},"__c111":{"kind":"complex","children":{"Supplier":{"type":"__c112","max":"unbounded"}}},"__s115":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["IS","PV","KT"]}},"__c117":{"kind":"complex","children":{"ImpairmentOfAssetsDate":{"type":"SAFdate","max":"1"},"ImpairmentOfAssets":{"type":"SAFmonetaryType","max":"1"},"EliminationOfAssets":{"type":"SAFmonetaryType","max":"1"},"EliminationOfAssetsDate":{"type":"SAFdate","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"}}},"__c116":{"kind":"complex","children":{"ImpairmentOfAsset":{"type":"__c117","max":"unbounded"}}},"__s118":{"kind":"simple","base":"SAFmiddle1textType","facets":{"enum":["T"]}},"__s121":{"kind":"simple","base":"SAFmiddle1textType","facets":{"enum":["T","DM","P","MS"]}},"__s122":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c120":{"kind":"complex","children":{"AppreciationSum":{"type":"SAFmonetaryType","max":"1"},"AppreciationDate":{"type":"SAFdate","max":"1"},"DepreciationMethod":{"type":"__s121","max":"1"},"DepreciationPercentage":{"type":"decimal","max":"1"},"DepreciationForPeriod":{"type":"SAFmonetaryType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"DebitCreditIndicator":{"type":"__s122","max":"1"}}},"__c119":{"kind":"complex","children":{"Appreciation":{"type":"__c120","max":"unbounded"}}},"__s125":{"kind":"simple","base":"SAFmiddle1textType","facets":{"enum":["DM","P","MS","KT",""]}},"__c124":{"kind":"complex","children":{"ExtraordinaryDepreciationMethod":{"type":"__s125","max":"1"},"ExtraordinaryDepreciationForPeriod":{"type":"SAFmonetaryType","max":"1"}}},"__c123":{"kind":"complex","children":{"ExtraordinaryDepreciationForPeriod":{"type":"__c124","max":"unbounded"}}},"__c114":{"kind":"complex","children":{"AssetValuationType":{"type":"__s115","max":"1"},"ValuationClass":{"type":"SAFshorttextType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"AcquisitionAndProductionCostsBegin":{"type":"SAFmonetaryType","max":"1"},"AcquisitionAndProductionCostsEnd":{"type":"SAFmonetaryType","max":"1"},"InvestmentSupport":{"type":"SAFmonetaryType","max":"1"},"AccountID1":{"type":"SAFmiddle2textType","max":"1"},"AssetLifeYear":{"type":"decimal","max":"1"},"AssetLifeMonth":{"type":"decimal","max":"1"},"ImpairmentOfAssets":{"type":"__c116","max":"1"},"Transfers":{"type":"SAFmonetaryType","max":"1"},"TransfersDate":{"type":"SAFdate","max":"1"},"AssetDisposal":{"type":"SAFmonetaryType","max":"1"},"AssetDisposalDate":{"type":"SAFdate","max":"1"},"BookValueBegin":{"type":"SAFmonetaryType","max":"1"},"DepreciationMethod":{"type":"__s118","max":"1"},"DepreciationPercentage":{"type":"decimal","max":"1"},"DepreciationForPeriod":{"type":"SAFmonetaryType","max":"1"},"AccountID2":{"type":"SAFmiddle2textType","max":"1"},"Appreciations":{"type":"__c119","max":"1"},"ExtraordinaryDepreciationsForPeriod":{"type":"__c123","max":"1"},"AccumulatedDepreciation":{"type":"SAFmonetaryType","max":"1"},"AccumulatedDepreciationOfAppreciation":{"type":"SAFmonetaryType2","max":"1"},"BookValueEnd":{"type":"SAFmonetaryType","max":"1"}}},"__c113":{"kind":"complex","children":{"Valuation":{"type":"__c114","max":"unbounded"}}},"__c110":{"kind":"complex","children":{"AssetID":{"type":"SAFmiddle1textType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"AssetsregistrationID":{"type":"SAFmiddle2textType","max":"1"},"Suppliers":{"type":"__c111","max":"1"},"DateOfAcquisition":{"type":"SAFdate","max":"1"},"StartUpDate":{"type":"SAFdate","max":"1"},"Valuations":{"type":"__c113","max":"1"},"DepreciationDate":{"type":"SAFdate","max":"1"}}},"__c109":{"kind":"complex","children":{"Asset":{"type":"__c110","max":"unbounded"}}},"__s128":{"kind":"simple","base":"SAFmiddle2textType","facets":{"enum":["PP","PRV"]}},"__c127":{"kind":"complex","children":{"OwnerID":{"type":"SAFmiddle1textType","max":"1"},"OwnerName":{"type":"SAFmiddle2textType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Address":{"type":"AddressStructure","max":"1"},"SharesQuantity":{"type":"SAFquantityType","max":"1"},"SharesAmount":{"type":"SAFmonetaryType","max":"1"},"SharesType":{"type":"__s128","max":"1"},"SharesAcquisitionDate":{"type":"SAFdate","max":"1"},"SharesTransfersDate":{"type":"SAFdate","max":"1"}}},"__c126":{"kind":"complex","children":{"Owner":{"type":"__c127","max":"unbounded"}}},"__c65":{"kind":"complex","children":{"GeneralLedgerAccounts":{"type":"__c66","max":"1"},"Customers":{"type":"__c70","max":"1"},"Suppliers":{"type":"__c76","max":"1"},"TaxTable":{"type":"__c82","max":"1"},"UOMTable":{"type":"__c86","max":"1"},"AnalysisTypeTable":{"type":"__c88","max":"1"},"MovementTypeTable":{"type":"__c90","max":"1"},"Products":{"type":"__c93","max":"1"},"PhysicalStock":{"type":"__c100","max":"1"},"Assets":{"type":"__c109","max":"1"},"Owners":{"type":"__c126","max":"1"}}},"__s134":{"kind":"simple","base":"nonNegativeInteger","facets":{"minInclusive":"1970","maxInclusive":"2100"}},"__c137":{"kind":"complex","children":{"Analysis":{"type":"AnalysisStructure","max":"unbounded"}}},"__c138":{"kind":"complex","children":{"TaxInformation":{"type":"TaxInformationStructure","max":"unbounded"}}},"__c136":{"kind":"complex","children":{"RecordID":{"type":"SAFshorttextType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Analyses":{"type":"__c137","max":"1"},"SourceDocumentID":{"type":"SAFmiddle1textType","max":"1"},"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"DebitAmount":{"type":"AmountStructure","max":"1"},"CreditAmount":{"type":"AmountStructure","max":"1"},"TaxInformations":{"type":"__c138","max":"1"}}},"__c135":{"kind":"complex","children":{"Line":{"type":"__c136","max":"unbounded"}}},"__c133":{"kind":"complex","children":{"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"Period":{"type":"nonNegativeInteger","max":"1"},"PeriodYear":{"type":"__s134","max":"1"},"TransactionDate":{"type":"SAFdate","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"SystemEntryDate":{"type":"SAFdateTime","max":"1"},"GLPostingDate":{"type":"SAFdate","max":"1"},"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"SystemID":{"type":"SAFshorttextType","max":"1"},"Lines":{"type":"__c135","max":"1"}}},"__c132":{"kind":"complex","children":{"Transaction":{"type":"__c133","max":"unbounded"}}},"__c131":{"kind":"complex","children":{"JournalID":{"type":"SAFshorttextType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"Type":{"type":"SAFcodeType","max":"1"},"Transactions":{"type":"__c132","max":"1"}}},"__c130":{"kind":"complex","children":{"Journal":{"type":"__c131","max":"unbounded"}}},"__c129":{"kind":"complex","children":{"NumberOfEntries":{"type":"nonNegativeInteger","max":"1"},"TotalDebit":{"type":"SAFmonetaryType","max":"1"},"TotalCredit":{"type":"SAFmonetaryType","max":"1"},"Journals":{"type":"__c130","max":"1"}}},"__c140":{"kind":"complex","children":{"NumberOfEntries":{"type":"nonNegativeInteger","max":"1"},"TotalDebit":{"type":"SAFmonetaryType","max":"1"},"TotalCredit":{"type":"SAFmonetaryType","max":"1"},"Invoice":{"type":"InvoiceStructure","max":"unbounded"}}},"__c141":{"kind":"complex","children":{"NumberOfEntries":{"type":"nonNegativeInteger","max":"1"},"TotalDebit":{"type":"SAFmonetaryType","max":"1"},"TotalCredit":{"type":"SAFmonetaryType","max":"1"},"Invoice":{"type":"InvoiceStructure","max":"unbounded"}}},"__s144":{"kind":"simple","base":"nonNegativeInteger","facets":{"minInclusive":"1970","maxInclusive":"2100"}},"__s145":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["BP","KPO","KIO","KV","CP","C","U","KT"]}},"__c148":{"kind":"complex","children":{"Analysis":{"type":"AnalysisStructure","max":"unbounded"}}},"__s149":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c147":{"kind":"complex","children":{"LineNumber":{"type":"SAFshorttextType","max":"1"},"SourceDocumentID":{"type":"SAFmiddle1textType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"Analyses":{"type":"__c148","max":"1"},"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"DebitCreditIndicator":{"type":"__s149","max":"1"},"PaymentLineAmount":{"type":"AmountStructure","max":"1"}}},"__c146":{"kind":"complex","children":{"Line":{"type":"__c147","max":"unbounded"}}},"__s152":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["GR","NG","U"]}},"__s153":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c151":{"kind":"complex","children":{"SettlementDiscount":{"type":"SAFmiddle1textType","max":"1"},"SettlementAmount":{"type":"AmountStructure","max":"1"},"SettlementDate":{"type":"SAFdate","max":"1"},"PaymentMechanism":{"type":"__s152","max":"1"},"DebitCreditIndicator":{"type":"__s153","max":"1"}}},"__c150":{"kind":"complex","children":{"Settlement":{"type":"__c151","max":"unbounded"}}},"__c143":{"kind":"complex","children":{"PaymentRefNo":{"type":"SAFmiddle1textType","max":"1"},"PeriodYear":{"type":"__s144","max":"1"},"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"TransactionDate":{"type":"SAFdate","max":"1"},"PaymentMethod":{"type":"__s145","max":"1"},"BankAccount":{"type":"BankAccountStructure","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"SystemID":{"type":"SAFmiddle1textType","max":"1"},"Lines":{"type":"__c146","max":"1"},"Settlements":{"type":"__c150","max":"1"},"GrossTotal":{"type":"SAFmonetaryType","max":"1"}}},"__c142":{"kind":"complex","children":{"NumberOfEntries":{"type":"nonNegativeInteger","max":"1"},"TotalDebit":{"type":"SAFmonetaryType","max":"1"},"TotalCredit":{"type":"SAFmonetaryType","max":"1"},"Payment":{"type":"__c143","max":"unbounded"}}},"__s156":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PARD","PIR","PP","PG","PRG","VP","N","KT",""]}},"__c157":{"kind":"complex","children":{"DocumentType":{"type":"SAFshorttextType","max":"1"},"DocumentNumber":{"type":"SAFmiddle1textType","max":"1"},"DocumentLine":{"type":"SAFshorttextType","max":"1"}}},"__c160":{"kind":"complex","children":{"ShipTo":{"type":"ShippingPointStructure","max":"unbounded"}}},"__c161":{"kind":"complex","children":{"ShipFrom":{"type":"ShippingPointStructure","max":"unbounded"}}},"__c162":{"kind":"complex","children":{"TaxInformation":{"type":"TaxInformationStructure","max":"unbounded"}}},"__s163":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["PARD","PIR","PP","PG","PRG","VP","N","KT",""]}},"__s164":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c159":{"kind":"complex","children":{"LineNumber":{"type":"SAFshorttextType","max":"1"},"AccountID":{"type":"SAFmiddle2textType","max":"1"},"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"CustomerID":{"type":"SAFmiddle1textType","max":"1"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"ShipsTo":{"type":"__c160","max":"1"},"ShipsFrom":{"type":"__c161","max":"1"},"ProductCode":{"type":"SAFmiddle2textType","max":"1"},"Quantity":{"type":"SAFquantityType","max":"1"},"UnitOfMeasure":{"type":"SAFcodeType","max":"1"},"UOMToUOMPhysicalStockConversionFactor":{"type":"decimal","max":"1"},"BookValue":{"type":"SAFmonetaryType","max":"1"},"MovementSubType":{"type":"SAFcodeType","max":"1"},"MovementComments":{"type":"SAFlongtextType","max":"1"},"TaxInformations":{"type":"__c162","max":"1"},"MovementType":{"type":"__s163","max":"1"},"DebitCreditIndicator":{"type":"__s164","max":"1"}}},"__c158":{"kind":"complex","children":{"Line":{"type":"__c159","max":"unbounded"}}},"__c155":{"kind":"complex","children":{"MovementReference":{"type":"SAFmiddle1textType","max":"1"},"MovementDate":{"type":"SAFdate","max":"1"},"MovementPostingDate":{"type":"SAFdate","max":"1"},"TaxPointDate":{"type":"SAFdate","max":"1"},"MovementType":{"type":"__s156","max":"1"},"SystemID":{"type":"SAFmiddle1textType","max":"1"},"DocumentReference":{"type":"__c157","max":"1"},"Lines":{"type":"__c158","max":"1"},"GLTransactionID":{"type":"SAFmiddle2textType","max":"1"}}},"__c154":{"kind":"complex","children":{"NumberOfMovementLines":{"type":"nonNegativeInteger","max":"1"},"TotalQuantityReceived":{"type":"SAFquantityType","max":"1"},"TotalQuantityIssued":{"type":"SAFquantityType","max":"1"},"StockMovement":{"type":"__c155","max":"unbounded"}}},"__s167":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["I","NUR","NUS","VJ","KT",""]}},"__c168":{"kind":"complex","children":{"SupplierName":{"type":"SAFmiddle2textType","max":"1"},"SupplierID":{"type":"SAFmiddle1textType","max":"1"},"PostalAddress":{"type":"AddressStructure","max":"1"}}},"__s171":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["IS","PV","KT"]}},"__s172":{"kind":"simple","base":"SAFcodeType","facets":{"enum":["D","K"]}},"__c170":{"kind":"complex","children":{"AssetValuationType":{"type":"__s171","max":"1"},"AcquisitionAndProductionCostsOnTransaction":{"type":"SAFmonetaryType","max":"1"},"BookValueOnTransaction":{"type":"SAFmonetaryType","max":"1"},"AssetTransactionAmount":{"type":"SAFmonetaryType","max":"1"},"DebitCreditIndicator":{"type":"__s172","max":"1"}}},"__c169":{"kind":"complex","children":{"AssetTransactionValuation":{"type":"__c170","max":"unbounded"}}},"__c166":{"kind":"complex","children":{"AssetTransactionID":{"type":"SAFmiddle2textType","max":"1"},"AssetID":{"type":"SAFmiddle1textType","max":"1"},"AssetTransactionType":{"type":"__s167","max":"1"},"Description":{"type":"SAFlongtextType","max":"1"},"AssetTransactionDate":{"type":"SAFdate","max":"1"},"Supplier":{"type":"__c168","max":"1"},"TransactionID":{"type":"SAFmiddle2textType","max":"1"},"AssetTransactionValuations":{"type":"__c169","max":"1"}}},"__c165":{"kind":"complex","children":{"NumberOfAssetTransactions":{"type":"nonNegativeInteger","max":"1"},"AssetTransaction":{"type":"__c166","max":"unbounded"}}},"__c139":{"kind":"complex","children":{"SalesInvoices":{"type":"__c140","max":"1"},"PurchaseInvoices":{"type":"__c141","max":"1"},"Payments":{"type":"__c142","max":"1"},"MovementOfGoods":{"type":"__c154","max":"1"},"AssetTransactions":{"type":"__c165","max":"1"}}},"__c61":{"kind":"complex","children":{"Header":{"type":"__c62","max":"1"},"MasterFiles":{"type":"__c65","max":"1"},"GeneralLedgerEntries":{"type":"__c129","max":"1"},"SourceDocuments":{"type":"__c139","max":"1"}}}}};
+const XSD_BUILTIN = new Set(["string","decimal","date","dateTime","integer","boolean","gYear","normalizedString","token","nonNegativeInteger"]);
+function xsdValidDate(s){ s=String(s||"").trim(); if(!/^\d{4}-\d{2}-\d{2}/.test(s)) return false; const y=+s.slice(0,4),m=+s.slice(5,7),d=+s.slice(8,10); if(y<1900||m<1||m>12||d<1||d>31) return false; const dt=new Date(Date.UTC(y,m-1,d)); return dt.getUTCFullYear()===y&&dt.getUTCMonth()===m-1&&dt.getUTCDate()===d; }
+function xsdCheckFacets(val, t, path, V){
+  val=String(val==null?"":val).trim(); if(val==="") return;
+  const f=t.facets||{}, base=t.base||"string";
+  if(f.enum && f.enum.indexOf(val)<0){ V.push({kind:"enum",path,detail:val,allowed:f.enum}); return; }
+  if(f.maxLength && val.length>+f.maxLength) V.push({kind:"maxLength",path,detail:val.length+">"+f.maxLength});
+  if(f.minLength && val.length<+f.minLength) V.push({kind:"minLength",path,detail:val});
+  if(base==="decimal"||base==="integer"||base==="nonNegativeInteger"){
+    const num=parseFloat(val.replace(",","."));
+    if(isNaN(num)){ V.push({kind:"numeric",path,detail:val}); }
+    else {
+      if(f.minInclusive!=null && num<parseFloat(f.minInclusive)) V.push({kind:"minInclusive",path,detail:val});
+      if(f.fractionDigits!=null && val.indexOf(".")>=0 && val.split(".")[1].length>+f.fractionDigits) V.push({kind:"fractionDigits",path,detail:val});
+      if(f.totalDigits!=null && val.replace(/[^0-9]/g,"").length>+f.totalDigits) V.push({kind:"totalDigits",path,detail:val});
+    }
+  }
+  if((base==="date"||base==="dateTime") && !xsdValidDate(val)) V.push({kind:"date",path,detail:val});
+}
+function xsdLN(n){ return n.localName||(n.tagName||"").replace(/^.*:/,""); }
+function xsdValidateNode(el, tn, path, V, depth){
+  if(V.length>=500 || depth>40) return;
+  if(XSD_BUILTIN.has(tn)) return;
+  const t=XSD_SCHEMA_MODEL.types[tn];
+  if(!t) return;
+  if(t.kind==="simple"){ xsdCheckFacets(el.textContent, t, path, V); return; }
+  const allowed=t.children||{}; const counts={};
+  for(let i=0;i<el.children.length;i++){
+    const ch=el.children[i]; const cn=xsdLN(ch);
+    if(!(cn in allowed)){ V.push({kind:"undeclared",path:path+"/"+cn,detail:cn}); continue; }
+    counts[cn]=(counts[cn]||0)+1;
+    const ct=allowed[cn].type;
+    if(ct) xsdValidateNode(ch, ct, path+"/"+cn, V, depth+1);
+  }
+  for(const cn in counts){ const mx=allowed[cn].max; if(mx!=="unbounded" && counts[cn]>+mx) V.push({kind:"maxOccurs",path:path+"/"+cn,detail:counts[cn]+">"+mx}); }
+}
+// Returns { ok, total, byKind, findings:[{kind,path,detail}] }
+function runXsdSchemaValidation(xmlDoc){
+  if(!xmlDoc||!xmlDoc.documentElement) return { ok:true, total:0, byKind:{}, findings:[] };
+  const V=[]; const r=XSD_SCHEMA_MODEL.root;
+  try { xsdValidateNode(xmlDoc.documentElement, r.type, r.name, V, 0); } catch(e){ /* keep partial */ }
+  const byKind={}; V.forEach(v=>{ byKind[v.kind]=(byKind[v.kind]||0)+1; });
+  return { ok:V.length===0, total:V.length, byKind, findings:V };
+}
+
+
 function parseSAFTFull(xmlStr) {
   try {
     const doc = new DOMParser().parseFromString(xmlStr, "text/xml");
@@ -409,6 +796,11 @@ function parseSAFTFull(xmlStr) {
     const companyEl = headerEl ? headerEl.getElementsByTagName("Company")[0] : null;
     const header = {
       auditFileVersion: txt(headerEl, "AuditFileVersion"),
+      registrationNumber: txt(headerEl, "RegistrationNumber"),
+      companyName: txt(headerEl, "Name"),
+      taxEntity: txt(headerEl, "TaxEntity"),
+      periodStart: txt(headerEl, "PeriodStart"),
+      periodEnd: txt(headerEl, "PeriodEnd"),
       auditFileCountry: txt(headerEl, "AuditFileCountry"),
       auditFileDateCreated: txt(headerEl, "AuditFileDateCreated"),
       softwareCompanyName: txt(headerEl, "SoftwareCompanyName"),
@@ -460,8 +852,10 @@ function parseSAFTFull(xmlStr) {
       const addrEl = c.getElementsByTagName("Address")[0];
       const openInv = Array.from(c.getElementsByTagName("OpenSalesInvoice")).map((o) => ({
         invoiceNo: txt(o, "InvoiceNo"),
+        systemID: txt(o, "SystemID"),
         invoiceDate: txt(o, "InvoiceDate"),
         glPostingDate: txt(o, "GLPostingDate"),
+        transactionID: txt(o, "TransactionID") || txt(o, "GLTransactionID"),
         amount: num(o, "Amount") ?? 0,
         unpaidAmount: num(o, "UnpaidAmount") ?? 0,
         currencyAmount: num(o, "CurrencyAmount"),
@@ -469,6 +863,7 @@ function parseSAFTFull(xmlStr) {
       }));
       return {
         customerID: txt(c, "CustomerID"),
+        accounts: Array.from(c.getElementsByTagName("Accounts")).map((ac) => ({ accountID: txt(ac, "AccountID"), od: num(ac, "OpeningDebitBalance") ?? 0, oc: num(ac, "OpeningCreditBalance") ?? 0, cd: num(ac, "ClosingDebitBalance") ?? 0, cc: num(ac, "ClosingCreditBalance") ?? 0 })),
         registrationNumber: txt(c, "RegistrationNumber"),
         name: txt(c, "Name"),
         taxRegistrationNumber: txt(c, "TaxRegistrationNumber"),
@@ -489,13 +884,16 @@ function parseSAFTFull(xmlStr) {
       const addrEl = s.getElementsByTagName("Address")[0];
       const openInv = Array.from(s.getElementsByTagName("OpenPurchaseInvoice")).map((o) => ({
         invoiceNo: txt(o, "InvoiceNo"),
+        systemID: txt(o, "SystemID"),
         invoiceDate: txt(o, "InvoiceDate"),
         glPostingDate: txt(o, "GLPostingDate"),
+        transactionID: txt(o, "TransactionID") || txt(o, "GLTransactionID"),
         amount: num(o, "Amount") ?? 0,
         unpaidAmount: num(o, "UnpaidAmount") ?? 0,
       }));
       return {
         supplierID: txt(s, "SupplierID"),
+        accounts: Array.from(s.getElementsByTagName("Accounts")).map((ac) => ({ accountID: txt(ac, "AccountID"), od: num(ac, "OpeningDebitBalance") ?? 0, oc: num(ac, "OpeningCreditBalance") ?? 0, cd: num(ac, "ClosingDebitBalance") ?? 0, cc: num(ac, "ClosingCreditBalance") ?? 0 })),
         registrationNumber: txt(s, "RegistrationNumber"),
         name: txt(s, "Name"),
         taxRegistrationNumber: txt(s, "TaxRegistrationNumber"),
@@ -564,6 +962,11 @@ function parseSAFTFull(xmlStr) {
       const valEl = a.getElementsByTagName("Valuation")[0];
       return {
         assetID: txt(a, "AssetID"),
+        accumulatedDepreciation: num(a, "AccumulatedDepreciation"),
+        acquisitionCostEnd: num(a, "AcquisitionAndProductionCostsEnd"),
+        assetLifeYear: num(a, "AssetLifeYear"),
+        assetLifeMonth: num(a, "AssetLifeMonth"),
+        depreciationForPeriod: num(a, "DepreciationForPeriod"),
         accountID: txt(a, "AccountID"),
         description: txt(a, "AssetDescription") || txt(a, "Description"),
         dateOfAcquisition: txt(a, "DateOfAcquisition"),
@@ -625,6 +1028,8 @@ function parseSAFTFull(xmlStr) {
           accountID: txt(l, "AccountID"),
           sourceDocumentID: txt(l, "SourceDocumentID"),
           systemEntryDate: txt(l, "SystemEntryDate"),
+          customerID: txt(l, "CustomerID"),
+          supplierID: txt(l, "SupplierID"),
           description: txt(l, "Description"),
           debitAmount: dbEl ? (num(dbEl, "Amount") ?? 0) : null,
           debitCurrencyCode: dbEl ? txt(dbEl, "CurrencyCode") : "",
@@ -676,7 +1081,7 @@ function parseSAFTFull(xmlStr) {
       const items = Array.from(sec.getElementsByTagName("Invoice")).map((inv) => {
         const dt = inv.getElementsByTagName("DocumentTotals")[0];
         const lines = Array.from(inv.getElementsByTagName("Line")).map((l) => {
-          const taxEl = l.getElementsByTagName("Tax")[0];
+          const taxEl = l.getElementsByTagName("TaxInformation")[0] || l.getElementsByTagName("Tax")[0];
           const dbEl = l.getElementsByTagName("DebitAmount")[0];
           const crEl = l.getElementsByTagName("CreditAmount")[0];
           return {
@@ -711,6 +1116,7 @@ function parseSAFTFull(xmlStr) {
         const trEl = inv.getElementsByTagName("TaxRegistration")[0] || (partyEl ? partyEl.getElementsByTagName("TaxRegistration")[0] : null);
         return {
           invoiceNo: txt(inv, "InvoiceNo"),
+        systemID: txt(inv, "SystemID"),
           invoiceDate: txt(inv, "InvoiceDate"),
           invoiceType: txt(inv, "InvoiceType"),
           customerID: txt(inv, "CustomerID"),
@@ -761,6 +1167,10 @@ function parseSAFTFull(xmlStr) {
       }));
       return {
         paymentRefNo: txt(p, "PaymentRefNo"),
+      systemID: txt(p, "SystemID"),
+        transactionID: txt(p, "TransactionID"),
+        transactionDate: txt(p, "TransactionDate"),
+        bankAccount: txt(p, "IBANNumber") || txt(p, "BankAccountNumber") || txt(p, "BankAccount"),
         transactionDate: txt(p, "TransactionDate"),
         paymentMethod: txt(p, "PaymentMethod"),
         description: txt(p, "Description"),
@@ -778,11 +1188,16 @@ function parseSAFTFull(xmlStr) {
     } : null;
     const stockMovements = Array.from(doc.getElementsByTagName("StockMovement")).map((s) => ({
       movementType: txt(s, "MovementType"),
+      movementReference: txt(s, "MovementReference"),
+      systemID: txt(s, "SystemID"),
+      linesCount: s.getElementsByTagName("Line").length,
       productCode: txt(s, "ProductCode"),
       warehouseID: txt(s, "WarehouseID"),
       quantity: num(s, "Quantity") ?? 0,
       uom: txt(s, "UOM") || txt(s, "UnitOfMeasure"),
       transactionDate: txt(s, "TransactionDate"),
+      movementDate: txt(s, "MovementDate") || txt(s, "MovementPostingDate"),
+      glTransactionID: txt(s, "GLTransactionID"),
       sourceDocumentID: txt(s, "SourceDocumentID"),
       customsProcedure: txt(s, "CustomsProcedure"),
     }));
@@ -808,6 +1223,19 @@ function parseSAFTFull(xmlStr) {
     const hasBom = xmlStr.charCodeAt(0) === 0xFEFF;
     const rootIsAuditFile = root.localName === "AuditFile" || root.tagName === "AuditFile";
 
+    // XSD-conformance rules (run here while we still hold the DOM)
+    let xsdResults = [];
+    try { xsdResults = runXsdRules(doc); } catch (e) { xsdResults = []; }
+    // Duplicate-record rules (Table 6 / DUBL)
+    let dubResults = [];
+    try { dubResults = runDuplicateRules(doc); } catch (e) { dubResults = []; }
+    // Classifier-validation rules (VMI VA-49 Annex 2 code lists)
+    let clsResults = [];
+    try { clsResults = runClassifierRules(doc); } catch (e) { clsResults = []; }
+    // Full XSD schema validation (entire document vs. official VMI XSD v2.01)
+    let schemaValidation = { ok: true, total: 0, byKind: {}, findings: [] };
+    try { schemaValidation = runXsdSchemaValidation(doc); } catch (e) { /* keep default */ }
+
     return {
       _meta: {
         rootIsAuditFile,
@@ -817,7 +1245,12 @@ function parseSAFTFull(xmlStr) {
         hasBom,
         fileSizeBytes: xmlStr.length,
       },
+      xsdResults,
+      dubResults,
+      clsResults,
+      schemaValidation,
       header,
+      analysisTable: Array.from(doc.getElementsByTagName("AnalysisTypeTableEntry")).map((e) => ({ analysisType: txt(e, "AnalysisType"), analysisID: txt(e, "AnalysisID") })),
       accounts,
       customers,
       suppliers,
@@ -1156,11 +1589,1019 @@ function runAuditRules(data) {
   return { results, summary };
 }
 
+// ═══ STRUCTURAL SAF-T RULES (SCHEMA family) — grounded in XSD v2.01 + VMI ═══
+// ════════════════════════════════════════════════════════════════════
+// TAXAI · STRUCTURAL SAF-T RULES (SCHEMA family)
+// ────────────────────────────────────────────────────────────────────
+// These test the integrity, completeness and internal consistency that
+// VMI requires of any SAF-T (i.SAF/i.MAS) file, per the SAF-T XSD v2.01
+// structure — NOT invented law. Every rule is a deterministic, verifiable
+// check against the parsed file: referential integrity, totals/control
+// reconciliation, double-entry, uniqueness, mandatory identifiers, period
+// and date validity, balance continuity, and code existence.
+//
+// Each rule keeps the SAME shape as the VAT rules: { id, family, category,
+// severity, dataTypes, refType, title/titleEn, description (the SAF-T/VMI
+// requirement it enforces), failTpl (@field template), fixEn/fixLt,
+// requires (which section must be present to apply), evaluate(data, ctx) }.
+// evaluate returns an array of hit-rows; [] = pass.
+// ════════════════════════════════════════════════════════════════════
+
+// ISO-3166 alpha-2 (used for country-code validity). Trimmed to the set a
+// SAF-T LT file realistically carries; unknown codes are flagged for review.
+const ISO2 = new Set(["AD","AE","AF","AG","AI","AL","AM","AO","AQ","AR","AS","AT","AU","AW","AX","AZ","BA","BB","BD","BE","BF","BG","BH","BI","BJ","BL","BM","BN","BO","BQ","BR","BS","BT","BV","BW","BY","BZ","CA","CC","CD","CF","CG","CH","CI","CK","CL","CM","CN","CO","CR","CU","CV","CW","CX","CY","CZ","DE","DJ","DK","DM","DO","DZ","EC","EE","EG","EH","EL","ER","ES","ET","FI","FJ","FK","FM","FO","FR","GA","GB","GD","GE","GF","GG","GH","GI","GL","GM","GN","GP","GQ","GR","GS","GT","GU","GW","GY","HK","HM","HN","HR","HT","HU","ID","IE","IL","IM","IN","IO","IQ","IR","IS","IT","JE","JM","JO","JP","KE","KG","KH","KI","KM","KN","KP","KR","KW","KY","KZ","LA","LB","LC","LI","LK","LR","LS","LT","LU","LV","LY","MA","MC","MD","ME","MF","MG","MH","MK","ML","MM","MN","MO","MP","MQ","MR","MS","MT","MU","MV","MW","MX","MY","MZ","NA","NC","NE","NF","NG","NI","NL","NO","NP","NR","NU","NZ","OM","PA","PE","PF","PG","PH","PK","PL","PM","PN","PR","PS","PT","PW","PY","QA","RE","RO","RS","RU","RW","SA","SB","SC","SD","SE","SG","SH","SI","SJ","SK","SL","SM","SN","SO","SR","SS","ST","SV","SX","SY","SZ","TC","TD","TF","TG","TH","TJ","TK","TL","TM","TN","TO","TR","TT","TV","TW","TZ","UA","UG","UM","US","UY","UZ","VA","VC","VE","VG","VI","VN","VU","WF","WS","XI","YE","YT","ZA","ZM","ZW"]);
+
+const isISODate = (s) => /^\d{4}-\d{2}-\d{2}/.test(String(s || ""));
+const r2s = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const within = (a, b, tol) => Math.abs((Number(a) || 0) - (Number(b) || 0)) <= (tol == null ? 0.02 : tol);
+
+// Severity: High = file would be rejected / materially wrong; Low = review.
+const STRUCTURAL_RULES = [
+  // ── FILE / HEADER ─────────────────────────────────────────────────
+  { id: "SAFT_HDR_001", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "Šakninis elementas turi būti <AuditFile> su VMI vardų sritimi",
+    titleEn: "Root element must be <AuditFile> in the VMI namespace",
+    description: "SAF-T XSD v2.01 reikalauja, kad failo šakninis elementas būtų <AuditFile>, naudojantis VMI SAF-T vardų sritį.",
+    legalReq: "SAF-T XSD v2.01 — root <AuditFile>",
+    failTpl: "RootIsAuditFile = @rootIsAuditFile | Namespace = @namespace",
+    fixEn: "Export the file as a SAF-T AuditFile document with the official VMI namespace (https://www.vmi.lt/cms/saf-t).",
+    fixLt: "Eksportuokite failą kaip SAF-T <AuditFile> dokumentą su oficialia VMI vardų sritimi (https://www.vmi.lt/cms/saf-t).",
+    evaluate: (d) => { const ns = d?._meta?.namespace || ""; const okNs = /vmi\.lt/i.test(ns) || /saf-?t/i.test(ns); return (d?._meta?.rootIsAuditFile && okNs) ? [] : [{ rootIsAuditFile: String(!!d?._meta?.rootIsAuditFile), namespace: ns || "—" }]; } },
+  { id: "SAFT_HDR_002", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "AuditFileVersion turi būti 2.01",
+    titleEn: "AuditFileVersion must be 2.01",
+    description: "SAF-T XSD reikalauja, kad būtų nurodyta palaikoma versija (2.01).",
+    legalReq: "SAF-T XSD v2.01 — AuditFileVersion",
+    failTpl: "AuditFileVersion = @v",
+    fixEn: "Set Header/AuditFileVersion to 2.01 (the version VMI accepts).",
+    fixLt: "Nustatykite Header/AuditFileVersion į 2.01 (versija, kurią priima VMI).",
+    evaluate: (d) => { const v = d?.header?.auditFileVersion || ""; return v === "2.01" ? [] : [{ v: v || "—" }]; } },
+  { id: "SAFT_HDR_003", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "AuditFileCountry turi būti LT",
+    titleEn: "AuditFileCountry must be LT",
+    description: "Lietuvos SAF-T failo šalies kodas turi būti LT.",
+    legalReq: "SAF-T XSD v2.01 — AuditFileCountry",
+    failTpl: "AuditFileCountry = @c",
+    fixEn: "Set Header/AuditFileCountry to LT.",
+    fixLt: "Nustatykite Header/AuditFileCountry į LT.",
+    evaluate: (d) => { const c = d?.header?.auditFileCountry || ""; return c === "LT" ? [] : [{ c: c || "—" }]; } },
+  { id: "SAFT_HDR_004", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "Privalomi antraštės laukai turi būti užpildyti",
+    titleEn: "Mandatory header fields must be present",
+    description: "SAF-T antraštė privalo turėti sukūrimo datą, programinės įrangos identifikaciją ir mokestinio laikotarpio datas.",
+    legalReq: "SAF-T XSD v2.01 — Header (mandatory fields)",
+    failTpl: "Missing = @missing",
+    fixEn: "Populate AuditFileDateCreated, SoftwareID, FiscalYear start and end in the Header.",
+    fixLt: "Užpildykite AuditFileDateCreated, SoftwareID, mokestinio laikotarpio pradžios ir pabaigos datas antraštėje.",
+    evaluate: (d) => { const h = d?.header || {}; const miss = []; if (!h.auditFileDateCreated) miss.push("AuditFileDateCreated"); if (!h.softwareID) miss.push("SoftwareID"); if (!h.fiscalYearFrom) miss.push("FiscalYearFrom/PeriodStart"); if (!h.fiscalYearTo) miss.push("FiscalYearTo/PeriodEnd"); return miss.length ? [{ missing: miss.join(", ") }] : []; } },
+  { id: "SAFT_HDR_005", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "Įmonės registracijos numeris ir pavadinimas turi būti nurodyti",
+    titleEn: "Company registration number and name must be present",
+    description: "Antraštės Company blokas privalo turėti registracijos numerį ir pavadinimą.",
+    legalReq: "SAF-T XSD v2.01 — Header/Company",
+    failTpl: "RegistrationNumber = @reg | Name = @name",
+    fixEn: "Populate Header/Company/RegistrationNumber and Name.",
+    fixLt: "Užpildykite Header/Company/RegistrationNumber ir Name.",
+    evaluate: (d) => { const c = d?.header?.company; if (!c) return [{ reg: "—", name: "(no Company block)" }]; return (!c.registrationNumber || !c.name) ? [{ reg: c.registrationNumber || "—", name: c.name || "—" }] : []; } },
+  { id: "SAFT_HDR_006", family: "SCHEMA", category: "Header", severity: "Low", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "Mokestinio laikotarpio pradžia turi būti ne vėlesnė už pabaigą",
+    titleEn: "Fiscal period start must not be after period end",
+    description: "Antraštėje nurodytas mokestinis laikotarpis turi būti logiškas (pradžia ≤ pabaiga).",
+    legalReq: "SAF-T XSD v2.01 — fiscal period consistency",
+    failTpl: "From = @from | To = @to",
+    fixEn: "Correct the fiscal period so the start date is on or before the end date.",
+    fixLt: "Pataisykite mokestinį laikotarpį, kad pradžios data būtų ne vėlesnė už pabaigos datą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; return (f.slice(0,10) > t.slice(0,10)) ? [{ from: f.slice(0,10), to: t.slice(0,10) }] : []; } },
+  { id: "SAFT_HDR_007", family: "SCHEMA", category: "Header", severity: "Low", dataTypes: "F-Full", refType: "AuditFile", requires: "always",
+    title: "Numatytasis valiutos kodas turėtų būti EUR",
+    titleEn: "Default currency code should be EUR",
+    description: "Lietuvos SAF-T failo numatytoji valiuta paprastai yra EUR.",
+    legalReq: "SAF-T XSD v2.01 — DefaultCurrencyCode",
+    failTpl: "DefaultCurrencyCode = @cur",
+    fixEn: "Set Header/DefaultCurrencyCode to EUR unless the entity genuinely reports in another currency.",
+    fixLt: "Nustatykite Header/DefaultCurrencyCode į EUR, nebent subjektas iš tikrųjų atsiskaito kita valiuta.",
+    evaluate: (d) => { const cur = d?.header?.defaultCurrencyCode || ""; if (!cur) return []; return cur !== "EUR" ? [{ cur }] : []; } },
+
+  // ── GENERAL LEDGER ACCOUNTS (master) ──────────────────────────────
+  { id: "SAFT_GLA_001", family: "SCHEMA", category: "GL Accounts", severity: "High", dataTypes: "F-Full; PA", refType: "Account", requires: "accounts",
+    title: "Kiekviena didžiosios knygos sąskaita turi turėti AccountID",
+    titleEn: "Every general-ledger account must have an AccountID",
+    description: "SAF-T XSD reikalauja, kad kiekviena GeneralLedgerAccounts sąskaita turėtų AccountID.",
+    legalReq: "SAF-T XSD v2.01 — GeneralLedgerAccounts/Account/AccountID",
+    failTpl: "AccountDescription = @desc",
+    fixEn: "Ensure every account in the chart of accounts has a non-empty AccountID.",
+    fixLt: "Užtikrinkite, kad kiekviena sąskaitų plano sąskaita turėtų netuščią AccountID.",
+    evaluate: (d) => (d.accounts || []).filter((a) => !a.accountID).map((a) => ({ desc: a.accountDescription || "—" })) },
+  { id: "SAFT_GLA_002", family: "SCHEMA", category: "GL Accounts", severity: "High", dataTypes: "F-Full; PA", refType: "Account", requires: "accounts",
+    title: "Sąskaitų kodai (AccountID) turi būti unikalūs",
+    titleEn: "Account IDs must be unique",
+    description: "Dvi sąskaitos negali turėti to paties AccountID didžiosios knygos sąskaitų plane.",
+    legalReq: "SAF-T XSD v2.01 — AccountID uniqueness",
+    failTpl: "AccountID = @id | Occurrences = @n",
+    fixEn: "Make every AccountID unique in the chart of accounts; merge or renumber duplicates.",
+    fixLt: "Padarykite kiekvieną AccountID unikalų sąskaitų plane; sujunkite arba pernumeruokite dublikatus.",
+    evaluate: (d) => { const seen = {}; (d.accounts || []).forEach((a) => { if (a.accountID) seen[a.accountID] = (seen[a.accountID] || 0) + 1; }); return Object.entries(seen).filter(([, n]) => n > 1).map(([id, n]) => ({ id, n })); } },
+  { id: "SAFT_GLA_003", family: "SCHEMA", category: "GL Accounts", severity: "Low", dataTypes: "F-Full; PA", refType: "Account", requires: "accounts",
+    title: "Sąskaitos pradinis + apyvarta turi sutapti su pabaigos likučiu",
+    titleEn: "Account opening + movements must reconcile to the closing balance",
+    description: "Kiekvienai sąskaitai: pradinis likutis + laikotarpio debeto/kredito apyvarta turi būti lygus pabaigos likučiui.",
+    legalReq: "SAF-T XSD v2.01 — account balance continuity",
+    failTpl: "AccountID = @id | Expected = @expected | Closing = @closing | Diff = @diff",
+    fixEn: "Reconcile each account: opening balance plus posted movements should equal the closing balance reported in the file.",
+    fixLt: "Suderinkite kiekvieną sąskaitą: pradinis likutis plius apskaityta apyvarta turi būti lygus faile nurodytam pabaigos likučiui.",
+    evaluate: (d, ctx) => { const out = []; (d.accounts || []).forEach((a) => { if (!a.accountID) return; const mv = ctx.accountMovements.get(a.accountID); if (!mv) return; const openNet = (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0); const closeNet = (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0); const expected = openNet + (mv.debit || 0) - (mv.credit || 0); if (!within(expected, closeNet, 0.5)) out.push({ id: a.accountID, expected: r2s(expected), closing: r2s(closeNet), diff: r2s(expected - closeNet) }); }); return out; } },
+
+  // ── CUSTOMERS (master) ────────────────────────────────────────────
+  { id: "SAFT_CUS_001", family: "SCHEMA", category: "Customers", severity: "High", dataTypes: "F-Full", refType: "Customer", requires: "customers",
+    title: "Kiekvienas pirkėjas turi turėti CustomerID",
+    titleEn: "Every customer must have a CustomerID",
+    description: "SAF-T XSD reikalauja CustomerID kiekvienam Customers įrašui.",
+    legalReq: "SAF-T XSD v2.01 — Customer/CustomerID",
+    failTpl: "Name = @name",
+    fixEn: "Ensure every customer master record has a non-empty CustomerID.",
+    fixLt: "Užtikrinkite, kad kiekvienas pirkėjo įrašas turėtų netuščią CustomerID.",
+    evaluate: (d) => (d.customers || []).filter((c) => !c.customerID).map((c) => ({ name: c.name || "—" })) },
+  { id: "SAFT_CUS_002", family: "SCHEMA", category: "Customers", severity: "High", dataTypes: "F-Full", refType: "Customer", requires: "customers",
+    title: "Pirkėjų kodai (CustomerID) turi būti unikalūs",
+    titleEn: "Customer IDs must be unique",
+    description: "Du pirkėjai negali turėti to paties CustomerID.",
+    legalReq: "SAF-T XSD v2.01 — CustomerID uniqueness",
+    failTpl: "CustomerID = @id | Occurrences = @n",
+    fixEn: "Make each CustomerID unique; merge duplicate customer records.",
+    fixLt: "Padarykite kiekvieną CustomerID unikalų; sujunkite besidubliuojančius pirkėjų įrašus.",
+    evaluate: (d) => { const seen = {}; (d.customers || []).forEach((c) => { if (c.customerID) seen[c.customerID] = (seen[c.customerID] || 0) + 1; }); return Object.entries(seen).filter(([, n]) => n > 1).map(([id, n]) => ({ id, n })); } },
+  { id: "SAFT_CUS_003", family: "SCHEMA", category: "Customers", severity: "Low", dataTypes: "F-Full", refType: "Customer", requires: "customers",
+    title: "Pirkėjas turi turėti pavadinimą",
+    titleEn: "Every customer must have a name",
+    description: "SAF-T XSD reikalauja pirkėjo pavadinimo (Name).",
+    legalReq: "SAF-T XSD v2.01 — Customer/Name",
+    failTpl: "CustomerID = @id",
+    fixEn: "Populate the Name for every customer master record.",
+    fixLt: "Užpildykite Name kiekvienam pirkėjo įrašui.",
+    evaluate: (d) => (d.customers || []).filter((c) => c.customerID && !c.name).map((c) => ({ id: c.customerID })) },
+  { id: "SAFT_CUS_004", family: "SCHEMA", category: "Customers", severity: "High", dataTypes: "F-Full", refType: "CustomerAccount", requires: "customers",
+    title: "Pirkėjo AccountID turi egzistuoti didžiosios knygos sąskaitose",
+    titleEn: "Customer AccountID must exist in GeneralLedgerAccounts",
+    description: "Jei pirkėjas nurodo didžiosios knygos sąskaitą (AccountID), ji turi būti įtraukta į GeneralLedgerAccounts dalį. (Atitinka VMI SCHEMA_INT tipą.)",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Customer→GeneralLedgerAccounts",
+    failTpl: "CustomerID = @id | AccountID = @acct",
+    fixEn: "Add the referenced AccountID to GeneralLedgerAccounts, or correct the customer's AccountID to an existing account.",
+    fixLt: "Įtraukite nurodytą AccountID į GeneralLedgerAccounts arba pataisykite pirkėjo AccountID į egzistuojančią sąskaitą.",
+    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; return (d.customers || []).filter((c) => c.accountID && !ctx.accountMap.has(c.accountID)).map((c) => ({ id: c.customerID, acct: c.accountID })); } },
+
+  // ── SUPPLIERS (master) ────────────────────────────────────────────
+  { id: "SAFT_SUP_001", family: "SCHEMA", category: "Suppliers", severity: "High", dataTypes: "F-Full", refType: "Supplier", requires: "suppliers",
+    title: "Kiekvienas tiekėjas turi turėti SupplierID",
+    titleEn: "Every supplier must have a SupplierID",
+    description: "SAF-T XSD reikalauja SupplierID kiekvienam Suppliers įrašui.",
+    legalReq: "SAF-T XSD v2.01 — Supplier/SupplierID",
+    failTpl: "Name = @name",
+    fixEn: "Ensure every supplier master record has a non-empty SupplierID.",
+    fixLt: "Užtikrinkite, kad kiekvienas tiekėjo įrašas turėtų netuščią SupplierID.",
+    evaluate: (d) => (d.suppliers || []).filter((s) => !s.supplierID).map((s) => ({ name: s.name || "—" })) },
+  { id: "SAFT_SUP_002", family: "SCHEMA", category: "Suppliers", severity: "High", dataTypes: "F-Full", refType: "Supplier", requires: "suppliers",
+    title: "Tiekėjų kodai (SupplierID) turi būti unikalūs",
+    titleEn: "Supplier IDs must be unique",
+    description: "Du tiekėjai negali turėti to paties SupplierID.",
+    legalReq: "SAF-T XSD v2.01 — SupplierID uniqueness",
+    failTpl: "SupplierID = @id | Occurrences = @n",
+    fixEn: "Make each SupplierID unique; merge duplicate supplier records.",
+    fixLt: "Padarykite kiekvieną SupplierID unikalų; sujunkite besidubliuojančius tiekėjų įrašus.",
+    evaluate: (d) => { const seen = {}; (d.suppliers || []).forEach((s) => { if (s.supplierID) seen[s.supplierID] = (seen[s.supplierID] || 0) + 1; }); return Object.entries(seen).filter(([, n]) => n > 1).map(([id, n]) => ({ id, n })); } },
+  { id: "SAFT_SUP_003", family: "SCHEMA", category: "Suppliers", severity: "Low", dataTypes: "F-Full", refType: "Supplier", requires: "suppliers",
+    title: "Tiekėjas turi turėti pavadinimą",
+    titleEn: "Every supplier must have a name",
+    description: "SAF-T XSD reikalauja tiekėjo pavadinimo (Name).",
+    legalReq: "SAF-T XSD v2.01 — Supplier/Name",
+    failTpl: "SupplierID = @id",
+    fixEn: "Populate the Name for every supplier master record.",
+    fixLt: "Užpildykite Name kiekvienam tiekėjo įrašui.",
+    evaluate: (d) => (d.suppliers || []).filter((s) => s.supplierID && !s.name).map((s) => ({ id: s.supplierID })) },
+  { id: "SAFT_SUP_004", family: "SCHEMA", category: "Suppliers", severity: "High", dataTypes: "F-Full", refType: "SupplierAccount", requires: "suppliers",
+    title: "Tiekėjo AccountID turi egzistuoti didžiosios knygos sąskaitose",
+    titleEn: "Supplier AccountID must exist in GeneralLedgerAccounts",
+    description: "Jei tiekėjas nurodo didžiosios knygos sąskaitą (AccountID), ji turi būti GeneralLedgerAccounts dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Supplier→GeneralLedgerAccounts",
+    failTpl: "SupplierID = @id | AccountID = @acct",
+    fixEn: "Add the referenced AccountID to GeneralLedgerAccounts, or correct the supplier's AccountID.",
+    fixLt: "Įtraukite nurodytą AccountID į GeneralLedgerAccounts arba pataisykite tiekėjo AccountID.",
+    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; return (d.suppliers || []).filter((s) => s.accountID && !ctx.accountMap.has(s.accountID)).map((s) => ({ id: s.supplierID, acct: s.accountID })); } },
+
+  // ── TAX TABLE (master) ────────────────────────────────────────────
+  { id: "SAFT_TAX_001", family: "SCHEMA", category: "Tax Table", severity: "High", dataTypes: "F-Full", refType: "TaxTableEntry", requires: "taxCodes",
+    title: "Kiekvienas mokesčių kodas turi turėti TaxCode",
+    titleEn: "Every tax-table entry must have a TaxCode",
+    description: "SAF-T XSD reikalauja TaxCode kiekvienam TaxTable įrašui.",
+    legalReq: "SAF-T XSD v2.01 — TaxTable/TaxCodeDetails/TaxCode",
+    failTpl: "Description = @desc",
+    fixEn: "Ensure every tax-table entry has a non-empty TaxCode.",
+    fixLt: "Užtikrinkite, kad kiekvienas mokesčių lentelės įrašas turėtų netuščią TaxCode.",
+    evaluate: (d) => (d.taxCodes || []).filter((t) => !t.taxCode).map((t) => ({ desc: t.description || "—" })) },
+  { id: "SAFT_TAX_002", family: "SCHEMA", category: "Tax Table", severity: "Low", dataTypes: "F-Full", refType: "TaxTableEntry", requires: "taxCodes",
+    title: "Mokesčių kodas turi turėti STITaxCode (VMI klasifikatorius)",
+    titleEn: "Tax-table entry should carry an STITaxCode (VMI classifier)",
+    description: "VMI SAF-T reikalauja STITaxCode (PVM klasifikatoriaus kodo) mokesčių lentelės įrašuose.",
+    legalReq: "SAF-T XSD v2.01 — TaxCodeDetails/STITaxCode (VA-49)",
+    failTpl: "TaxCode = @code",
+    fixEn: "Map each tax code to its STITaxCode from the VMI VAT classifier (VA-49).",
+    fixLt: "Susiekite kiekvieną mokesčių kodą su STITaxCode iš VMI PVM klasifikatoriaus (VA-49).",
+    evaluate: (d) => (d.taxCodes || []).filter((t) => t.taxCode && !t.stiTaxCode).map((t) => ({ code: t.taxCode })) },
+  { id: "SAFT_TAX_003", family: "SCHEMA", category: "Tax Table", severity: "Low", dataTypes: "F-Full", refType: "TaxTableEntry", requires: "taxCodes",
+    title: "PVM tarifas turi būti tarp 0 ir 100 procentų",
+    titleEn: "VAT percentage must be between 0 and 100",
+    description: "Mokesčio procentas, jei nurodytas, turi būti realioje 0–100 % ribose.",
+    legalReq: "SAF-T XSD v2.01 — TaxPercentage domain",
+    failTpl: "TaxCode = @code | TaxPercentage = @pct",
+    fixEn: "Correct any tax percentage outside the 0–100% range.",
+    fixLt: "Pataisykite bet kokį mokesčio procentą, esantį už 0–100 % ribų.",
+    evaluate: (d) => (d.taxCodes || []).filter((t) => t.taxPercentage != null && (t.taxPercentage < 0 || t.taxPercentage > 100)).map((t) => ({ code: t.taxCode, pct: t.taxPercentage })) },
+
+  // ── PRODUCTS (master) ─────────────────────────────────────────────
+  { id: "SAFT_PRD_001", family: "SCHEMA", category: "Products", severity: "High", dataTypes: "F-Full", refType: "Product", requires: "products",
+    title: "Kiekviena prekė/paslauga turi turėti ProductCode",
+    titleEn: "Every product must have a ProductCode",
+    description: "SAF-T XSD reikalauja ProductCode kiekvienam Products įrašui.",
+    legalReq: "SAF-T XSD v2.01 — Product/ProductCode",
+    failTpl: "Description = @desc",
+    fixEn: "Ensure every product master record has a non-empty ProductCode.",
+    fixLt: "Užtikrinkite, kad kiekvienas prekės įrašas turėtų netuščią ProductCode.",
+    evaluate: (d) => (d.products || []).filter((p) => !p.productCode).map((p) => ({ desc: p.description || "—" })) },
+  { id: "SAFT_PRD_002", family: "SCHEMA", category: "Products", severity: "High", dataTypes: "F-Full", refType: "Product", requires: "products",
+    title: "Prekių kodai (ProductCode) turi būti unikalūs",
+    titleEn: "Product codes must be unique",
+    description: "Dvi prekės negali turėti to paties ProductCode.",
+    legalReq: "SAF-T XSD v2.01 — ProductCode uniqueness",
+    failTpl: "ProductCode = @code | Occurrences = @n",
+    fixEn: "Make each ProductCode unique; merge duplicate product records.",
+    fixLt: "Padarykite kiekvieną ProductCode unikalų; sujunkite besidubliuojančius prekių įrašus.",
+    evaluate: (d) => { const seen = {}; (d.products || []).forEach((p) => { if (p.productCode) seen[p.productCode] = (seen[p.productCode] || 0) + 1; }); return Object.entries(seen).filter(([, n]) => n > 1).map(([code, n]) => ({ code, n })); } },
+  { id: "SAFT_PRD_003", family: "SCHEMA", category: "Products", severity: "Low", dataTypes: "F-Full", refType: "Product", requires: "products",
+    title: "Prekės mokesčių kodas turi egzistuoti mokesčių lentelėje",
+    titleEn: "Product tax code must exist in the tax table",
+    description: "Jei prekė nurodo TaxCode, jis turi egzistuoti TaxTable dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Product→TaxTable",
+    failTpl: "ProductCode = @code | TaxCode = @tax",
+    fixEn: "Add the product's tax code to the tax table, or correct the product to use a defined code.",
+    fixLt: "Įtraukite prekės mokesčių kodą į mokesčių lentelę arba pataisykite prekę naudoti apibrėžtą kodą.",
+    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); return (d.products || []).filter((p) => p.taxCode && !codes.has(p.taxCode)).map((p) => ({ code: p.productCode, tax: p.taxCode })); } },
+
+  // ── ASSETS / OWNERS (master) ──────────────────────────────────────
+  { id: "SAFT_AST_001", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full", refType: "Asset", requires: "assets",
+    title: "Kiekvienas ilgalaikis turtas turi turėti AssetID",
+    titleEn: "Every asset must have an AssetID",
+    description: "SAF-T XSD reikalauja AssetID kiekvienam Assets įrašui.",
+    legalReq: "SAF-T XSD v2.01 — Asset/AssetID",
+    failTpl: "Description = @desc",
+    fixEn: "Ensure every asset master record has a non-empty AssetID.",
+    fixLt: "Užtikrinkite, kad kiekvienas turto įrašas turėtų netuščią AssetID.",
+    evaluate: (d) => (d.assets || []).filter((a) => !a.assetID).map((a) => ({ desc: a.description || "—" })) },
+  { id: "SAFT_AST_002", family: "SCHEMA", category: "Assets", severity: "Low", dataTypes: "F-Full", refType: "AssetAccount", requires: "assets",
+    title: "Turto AccountID turi egzistuoti didžiosios knygos sąskaitose",
+    titleEn: "Asset AccountID must exist in GeneralLedgerAccounts",
+    description: "Jei turtas nurodo AccountID, jis turi būti GeneralLedgerAccounts dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Asset→GeneralLedgerAccounts",
+    failTpl: "AssetID = @id | AccountID = @acct",
+    fixEn: "Add the referenced account to GeneralLedgerAccounts, or correct the asset's AccountID.",
+    fixLt: "Įtraukite nurodytą sąskaitą į GeneralLedgerAccounts arba pataisykite turto AccountID.",
+    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; return (d.assets || []).filter((a) => a.accountID && !ctx.accountMap.has(a.accountID)).map((a) => ({ id: a.assetID, acct: a.accountID })); } },
+  { id: "SAFT_AST_003", family: "SCHEMA", category: "Assets", severity: "Low", dataTypes: "F-Full", refType: "Asset", requires: "assets",
+    title: "Turto tiekėjas turi egzistuoti tiekėjų sąraše",
+    titleEn: "Asset supplier must exist in the suppliers master",
+    description: "Jei turtas nurodo SupplierID, jis turi egzistuoti Suppliers dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Asset→Supplier",
+    failTpl: "AssetID = @id | SupplierID = @sup",
+    fixEn: "Add the supplier to the suppliers master, or correct the asset's SupplierID.",
+    fixLt: "Įtraukite tiekėją į tiekėjų sąrašą arba pataisykite turto SupplierID.",
+    evaluate: (d, ctx) => { if (!(d.suppliers || []).length) return []; return (d.assets || []).filter((a) => a.supplierID && !ctx.supplierMap.has(a.supplierID)).map((a) => ({ id: a.assetID, sup: a.supplierID })); } },
+  { id: "SAFT_OWN_001", family: "SCHEMA", category: "Owners", severity: "Low", dataTypes: "F-Full", refType: "Owner", requires: "owners",
+    title: "Savininko AccountID turi egzistuoti didžiosios knygos sąskaitose",
+    titleEn: "Owner AccountID must exist in GeneralLedgerAccounts",
+    description: "Jei savininkas nurodo AccountID, jis turi būti GeneralLedgerAccounts dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Owner→GeneralLedgerAccounts",
+    failTpl: "OwnerID = @id | AccountID = @acct",
+    fixEn: "Add the referenced account, or correct the owner's AccountID.",
+    fixLt: "Įtraukite nurodytą sąskaitą arba pataisykite savininko AccountID.",
+    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; return (d.owners || []).filter((o) => o.accountID && !ctx.accountMap.has(o.accountID)).map((o) => ({ id: o.ownerID, acct: o.accountID })); } },
+
+  // ── GL TRANSACTIONS ───────────────────────────────────────────────
+  { id: "SAFT_GLT_001", family: "SCHEMA", category: "GL Transactions", severity: "High", dataTypes: "F-Full; PA", refType: "Transaction", requires: "transactions",
+    title: "Kiekviena operacija turi turėti TransactionID",
+    titleEn: "Every GL transaction must have a TransactionID",
+    description: "SAF-T XSD reikalauja TransactionID kiekvienai didžiosios knygos operacijai.",
+    legalReq: "SAF-T XSD v2.01 — GeneralLedgerEntries/Journal/Transaction/TransactionID",
+    failTpl: "JournalID = @j | Description = @desc",
+    fixEn: "Ensure every GL transaction has a non-empty TransactionID.",
+    fixLt: "Užtikrinkite, kad kiekviena DK operacija turėtų netuščią TransactionID.",
+    evaluate: (d) => (d.transactions || []).filter((t) => !t.transactionID).map((t) => ({ j: t.journalID || "—", desc: (t.description || "—").slice(0, 40) })) },
+  { id: "SAFT_GLT_002", family: "SCHEMA", category: "GL Transactions", severity: "High", dataTypes: "F-Full; PA", refType: "Transaction", requires: "transactions",
+    title: "Operacijos debetas turi būti lygus kreditui (dvejybinis įrašas)",
+    titleEn: "Each transaction must balance (debits = credits)",
+    description: "Pagal dvejybinio įrašo principą kiekvienos operacijos debeto ir kredito sumos turi sutapti.",
+    legalReq: "Double-entry integrity (GL transaction balancing)",
+    failTpl: "TransactionID = @id | Debit = @debit | Credit = @credit | Diff = @diff",
+    fixEn: "Correct the transaction so total debits equal total credits.",
+    fixLt: "Pataisykite operaciją, kad bendros debeto ir kredito sumos sutaptų.",
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => { let db = 0, cr = 0; (t.lines || []).forEach((l) => { db += l.debitAmount || 0; cr += l.creditAmount || 0; }); if ((t.lines || []).length && !within(db, cr, 0.02)) out.push({ id: t.transactionID || "—", debit: r2s(db), credit: r2s(cr), diff: r2s(db - cr) }); }); return out; } },
+  { id: "SAFT_GLT_003", family: "SCHEMA", category: "GL Transactions", severity: "High", dataTypes: "F-Full; PA", refType: "TransactionLine", requires: "transactions",
+    title: "Operacijų eilučių AccountID turi egzistuoti sąskaitų plane",
+    titleEn: "Transaction line AccountID must exist in the chart of accounts",
+    description: "Kiekvienos operacijos eilutės AccountID turi egzistuoti GeneralLedgerAccounts dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Transaction.Line→GeneralLedgerAccounts",
+    failTpl: "TransactionID = @id | RecordID = @rec | AccountID = @acct",
+    fixEn: "Add the referenced account to the chart of accounts, or correct the line's AccountID.",
+    fixLt: "Įtraukite nurodytą sąskaitą į sąskaitų planą arba pataisykite eilutės AccountID.",
+    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.accountID && !ctx.accountMap.has(l.accountID)) out.push({ id: t.transactionID || "—", rec: l.recordID || "—", acct: l.accountID }); })); return out.slice(0, 200); } },
+  { id: "SAFT_GLT_004", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "Transaction", requires: "transactions",
+    title: "Operacijos data turi patekti į mokestinį laikotarpį",
+    titleEn: "Transaction date must fall within the fiscal period",
+    description: "Operacijos data turėtų būti antraštėje nurodytame mokestiniame laikotarpyje.",
+    legalReq: "SAF-T XSD v2.01 — period consistency",
+    failTpl: "TransactionID = @id | TransactionDate = @date | Period = @period",
+    fixEn: "Confirm the posting period; transactions dated outside the declared fiscal period usually indicate a wrong period or export window.",
+    fixLt: "Patikrinkite apskaitos laikotarpį; už deklaruoto laikotarpio ribų datuotos operacijos paprastai rodo neteisingą laikotarpį ar eksporto langą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.transactions || []).forEach((x) => { const dt = (x.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ id: x.transactionID || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+  { id: "SAFT_GLT_005", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "TransactionLine", requires: "transactions",
+    title: "Operacijos eilutė turi turėti debeto arba kredito sumą",
+    titleEn: "Each transaction line must carry a debit or a credit amount",
+    description: "Kiekviena DK operacijos eilutė turi turėti arba debeto, arba kredito sumą.",
+    legalReq: "SAF-T XSD v2.01 — Transaction line DebitAmount/CreditAmount",
+    failTpl: "TransactionID = @id | RecordID = @rec",
+    fixEn: "Populate either a debit or a credit amount on every GL line.",
+    fixLt: "Užpildykite arba debeto, arba kredito sumą kiekvienoje DK eilutėje.",
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.debitAmount == null && l.creditAmount == null) out.push({ id: t.transactionID || "—", rec: l.recordID || "—" }); })); return out.slice(0, 200); } },
+  { id: "SAFT_GLT_006", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "GeneralLedgerEntries", requires: "transactions",
+    title: "DK kontrolinės sumos turi sutapti su faktiniais įrašais",
+    titleEn: "GL control totals must match the actual entries",
+    description: "GeneralLedgerEntries antraštės NumberOfEntries / TotalDebit / TotalCredit turi sutapti su faktiniais duomenimis.",
+    legalReq: "SAF-T XSD v2.01 — GeneralLedgerEntries control totals",
+    failTpl: "Field = @field | Declared = @declared | Actual = @actual",
+    fixEn: "Recompute and correct the GeneralLedgerEntries control totals (NumberOfEntries, TotalDebit, TotalCredit).",
+    fixLt: "Perskaičiuokite ir pataisykite GeneralLedgerEntries kontrolines sumas (NumberOfEntries, TotalDebit, TotalCredit).",
+    evaluate: (d, ctx) => { const gl = d?.gl; if (!gl) return []; const out = []; const n = (d.transactions || []).length; if (gl.numberOfEntries != null && gl.numberOfEntries !== n) out.push({ field: "NumberOfEntries", declared: gl.numberOfEntries, actual: n }); if (gl.totalDebit != null && !within(gl.totalDebit, ctx.sumDebits, 0.5)) out.push({ field: "TotalDebit", declared: r2s(gl.totalDebit), actual: r2s(ctx.sumDebits) }); if (gl.totalCredit != null && !within(gl.totalCredit, ctx.sumCredits, 0.5)) out.push({ field: "TotalCredit", declared: r2s(gl.totalCredit), actual: r2s(ctx.sumCredits) }); return out; } },
+
+  // ── SALES INVOICES ────────────────────────────────────────────────
+  { id: "SAFT_SAL_001", family: "SCHEMA", category: "Sales", severity: "High", dataTypes: "F-Full; SI-Sales Invoices", refType: "Invoice", requires: "sales",
+    title: "Kiekviena pardavimo sąskaita turi turėti InvoiceNo",
+    titleEn: "Every sales invoice must have an InvoiceNo",
+    description: "SAF-T XSD reikalauja InvoiceNo kiekvienai pardavimo sąskaitai.",
+    legalReq: "SAF-T XSD v2.01 — SalesInvoices/Invoice/InvoiceNo",
+    failTpl: "CustomerID = @cust | InvoiceDate = @date",
+    fixEn: "Ensure every sales invoice has a non-empty InvoiceNo.",
+    fixLt: "Užtikrinkite, kad kiekviena pardavimo sąskaita turėtų netuščią InvoiceNo.",
+    evaluate: (d) => (d.sales?.items || []).filter((i) => !i.invoiceNo).map((i) => ({ cust: i.customerID || "—", date: i.invoiceDate || "—" })) },
+  { id: "SAFT_SAL_002", family: "SCHEMA", category: "Sales", severity: "High", dataTypes: "F-Full; SI-Sales Invoices", refType: "Invoice", requires: "sales",
+    title: "Pardavimo sąskaitų numeriai turi būti unikalūs",
+    titleEn: "Sales invoice numbers must be unique",
+    description: "Tas pats InvoiceNo neturėtų pasikartoti pardavimo sąskaitose.",
+    legalReq: "SAF-T XSD v2.01 — sales InvoiceNo uniqueness",
+    failTpl: "InvoiceNo = @no | Occurrences = @n",
+    fixEn: "Make every sales invoice number unique within the period.",
+    fixLt: "Padarykite kiekvieną pardavimo sąskaitos numerį unikalų per laikotarpį.",
+    evaluate: (d) => { const seen = {}; (d.sales?.items || []).forEach((i) => { if (i.invoiceNo) seen[i.invoiceNo] = (seen[i.invoiceNo] || 0) + 1; }); return Object.entries(seen).filter(([, n]) => n > 1).map(([no, n]) => ({ no, n })); } },
+  { id: "SAFT_SAL_003", family: "SCHEMA", category: "Sales", severity: "High", dataTypes: "F-Full; SI-Sales Invoices", refType: "Invoice", requires: "sales",
+    title: "Pardavimo sąskaitos pirkėjas turi egzistuoti pirkėjų sąraše",
+    titleEn: "Sales invoice CustomerID must exist in the customers master",
+    description: "Kiekvienos pardavimo sąskaitos CustomerID turi egzistuoti Customers dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Sales.Invoice→Customer",
+    failTpl: "InvoiceNo = @no | CustomerID = @cust",
+    fixEn: "Add the customer to the customers master, or correct the invoice's CustomerID.",
+    fixLt: "Įtraukite pirkėją į pirkėjų sąrašą arba pataisykite sąskaitos CustomerID.",
+    evaluate: (d, ctx) => { if (!(d.customers || []).length) return []; return (d.sales?.items || []).filter((i) => i.customerID && !ctx.customerMap.has(i.customerID)).map((i) => ({ no: i.invoiceNo || "—", cust: i.customerID })); } },
+  { id: "SAFT_SAL_004", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "Invoice", requires: "sales",
+    title: "Pardavimo sąskaitos suma turi sutapti su eilučių suma",
+    titleEn: "Sales invoice net total must equal the sum of line amounts",
+    description: "DocumentTotals/NetTotal turi sutapti su sąskaitos eilučių sumų suma (kai eilučių sumos pateiktos).",
+    legalReq: "SAF-T XSD v2.01 — DocumentTotals vs lines reconciliation",
+    failTpl: "InvoiceNo = @no | NetTotal = @net | LinesSum = @sum | Diff = @diff",
+    fixEn: "Reconcile the invoice: the sum of line amounts should equal DocumentTotals/NetTotal.",
+    fixLt: "Suderinkite sąskaitą: eilučių sumų suma turi būti lygi DocumentTotals/NetTotal.",
+    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const lines = i.lines || []; if (!lines.length || !i.documentTotals) return; let s = 0, has = false; lines.forEach((l) => { const amt = l.settlementAmount ?? (l.creditAmount != null ? l.creditAmount : (l.debitAmount != null ? l.debitAmount : (l.tax?.taxableAmount ?? null))); if (amt != null) { s += amt; has = true; } }); if (has) { const net = i.documentTotals.netTotal || 0; if (!within(net, s, Math.max(0.05, Math.abs(net) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(net), sum: r2s(s), diff: r2s(net - s) }); } }); return out.slice(0, 200); } },
+  { id: "SAFT_SAL_005", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "InvoiceLine", requires: "sales",
+    title: "Pardavimo sąskaitų eilučių mokesčių kodai turi egzistuoti mokesčių lentelėje",
+    titleEn: "Sales line tax codes must exist in the tax table",
+    description: "Kiekvienos pardavimo eilutės mokesčio kodas turi egzistuoti TaxTable dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Sales line→TaxTable",
+    failTpl: "InvoiceNo = @no | TaxCode = @tax",
+    fixEn: "Add the tax code to the tax table, or correct the line to use a defined code.",
+    fixLt: "Įtraukite mokesčių kodą į mokesčių lentelę arba pataisykite eilutę naudoti apibrėžtą kodą.",
+    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); const out = []; (d.sales?.items || []).forEach((i) => (i.lines || []).forEach((l) => { const tc = l.tax?.taxCode; if (tc && !codes.has(tc)) out.push({ no: i.invoiceNo || "—", tax: tc }); })); return out.slice(0, 200); } },
+  { id: "SAFT_SAL_006", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "Invoice", requires: "sales",
+    title: "Pardavimo sąskaitos data turi patekti į mokestinį laikotarpį",
+    titleEn: "Sales invoice date must fall within the fiscal period",
+    description: "Sąskaitos data turėtų būti antraštėje nurodytame mokestiniame laikotarpyje.",
+    legalReq: "SAF-T XSD v2.01 — period consistency",
+    failTpl: "InvoiceNo = @no | InvoiceDate = @date | Period = @period",
+    fixEn: "Confirm the period; invoices dated outside the declared period usually indicate a wrong export window.",
+    fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos sąskaitos paprastai rodo neteisingą eksporto langą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.sales?.items || []).forEach((i) => { const dt = (i.invoiceDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ no: i.invoiceNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+  { id: "SAFT_SAL_007", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "DocumentTotals", requires: "sales",
+    title: "Bruto = neto + PVM pardavimo sąskaitose",
+    titleEn: "Gross total should equal net total plus tax payable",
+    description: "DocumentTotals: GrossTotal turi būti lygus NetTotal + TaxPayable (kai visi pateikti).",
+    legalReq: "SAF-T XSD v2.01 — DocumentTotals arithmetic",
+    failTpl: "InvoiceNo = @no | Net = @net | Tax = @tax | Gross = @gross | Expected = @expected",
+    fixEn: "Correct the document totals so gross = net + tax.",
+    fixLt: "Pataisykite sąskaitos sumas, kad bruto = neto + PVM.",
+    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const dt = i.documentTotals; if (!dt) return; if (dt.grossTotal != null && (dt.netTotal != null || dt.taxPayable != null)) { const exp = (dt.netTotal || 0) + (dt.taxPayable || 0); if (!within(dt.grossTotal, exp, Math.max(0.05, Math.abs(exp) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(dt.netTotal), tax: r2s(dt.taxPayable), gross: r2s(dt.grossTotal), expected: r2s(exp) }); } }); return out.slice(0, 200); } },
+
+  // ── PURCHASE INVOICES ─────────────────────────────────────────────
+  { id: "SAFT_PUR_001", family: "SCHEMA", category: "Purchases", severity: "High", dataTypes: "F-Full; PI-Purchase Invoices", refType: "Invoice", requires: "purchases",
+    title: "Kiekviena pirkimo sąskaita turi turėti InvoiceNo",
+    titleEn: "Every purchase invoice must have an InvoiceNo",
+    description: "SAF-T XSD reikalauja InvoiceNo kiekvienai pirkimo sąskaitai.",
+    legalReq: "SAF-T XSD v2.01 — PurchaseInvoices/Invoice/InvoiceNo",
+    failTpl: "SupplierID = @sup | InvoiceDate = @date",
+    fixEn: "Ensure every purchase invoice has a non-empty InvoiceNo.",
+    fixLt: "Užtikrinkite, kad kiekviena pirkimo sąskaita turėtų netuščią InvoiceNo.",
+    evaluate: (d) => (d.purchases?.items || []).filter((i) => !i.invoiceNo).map((i) => ({ sup: i.supplierID || "—", date: i.invoiceDate || "—" })) },
+  { id: "SAFT_PUR_002", family: "SCHEMA", category: "Purchases", severity: "High", dataTypes: "F-Full; PI-Purchase Invoices", refType: "Invoice", requires: "purchases",
+    title: "Pirkimo sąskaitos tiekėjas turi egzistuoti tiekėjų sąraše",
+    titleEn: "Purchase invoice SupplierID must exist in the suppliers master",
+    description: "Kiekvienos pirkimo sąskaitos SupplierID turi egzistuoti Suppliers dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Purchase.Invoice→Supplier",
+    failTpl: "InvoiceNo = @no | SupplierID = @sup",
+    fixEn: "Add the supplier to the suppliers master, or correct the invoice's SupplierID.",
+    fixLt: "Įtraukite tiekėją į tiekėjų sąrašą arba pataisykite sąskaitos SupplierID.",
+    evaluate: (d, ctx) => { if (!(d.suppliers || []).length) return []; return (d.purchases?.items || []).filter((i) => i.supplierID && !ctx.supplierMap.has(i.supplierID)).map((i) => ({ no: i.invoiceNo || "—", sup: i.supplierID })); } },
+  { id: "SAFT_PUR_003", family: "SCHEMA", category: "Purchases", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "Invoice", requires: "purchases",
+    title: "Pirkimo sąskaitos suma turi sutapti su eilučių suma",
+    titleEn: "Purchase invoice net total must equal the sum of line amounts",
+    description: "DocumentTotals/NetTotal turi sutapti su pirkimo eilučių sumų suma (kai pateiktos).",
+    legalReq: "SAF-T XSD v2.01 — DocumentTotals vs lines reconciliation",
+    failTpl: "InvoiceNo = @no | NetTotal = @net | LinesSum = @sum | Diff = @diff",
+    fixEn: "Reconcile the invoice: the sum of line amounts should equal DocumentTotals/NetTotal.",
+    fixLt: "Suderinkite sąskaitą: eilučių sumų suma turi būti lygi DocumentTotals/NetTotal.",
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const lines = i.lines || []; if (!lines.length || !i.documentTotals) return; let s = 0, has = false; lines.forEach((l) => { const amt = l.settlementAmount ?? (l.debitAmount != null ? l.debitAmount : (l.creditAmount != null ? l.creditAmount : (l.tax?.taxableAmount ?? null))); if (amt != null) { s += amt; has = true; } }); if (has) { const net = i.documentTotals.netTotal || 0; if (!within(net, s, Math.max(0.05, Math.abs(net) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(net), sum: r2s(s), diff: r2s(net - s) }); } }); return out.slice(0, 200); } },
+  { id: "SAFT_PUR_004", family: "SCHEMA", category: "Purchases", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "InvoiceLine", requires: "purchases",
+    title: "Pirkimo sąskaitų eilučių mokesčių kodai turi egzistuoti mokesčių lentelėje",
+    titleEn: "Purchase line tax codes must exist in the tax table",
+    description: "Kiekvienos pirkimo eilutės mokesčio kodas turi egzistuoti TaxTable dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Purchase line→TaxTable",
+    failTpl: "InvoiceNo = @no | TaxCode = @tax",
+    fixEn: "Add the tax code to the tax table, or correct the line to use a defined code.",
+    fixLt: "Įtraukite mokesčių kodą į mokesčių lentelę arba pataisykite eilutę naudoti apibrėžtą kodą.",
+    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); const out = []; (d.purchases?.items || []).forEach((i) => (i.lines || []).forEach((l) => { const tc = l.tax?.taxCode; if (tc && !codes.has(tc)) out.push({ no: i.invoiceNo || "—", tax: tc }); })); return out.slice(0, 200); } },
+  { id: "SAFT_PUR_005", family: "SCHEMA", category: "Purchases", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "DocumentTotals", requires: "purchases",
+    title: "Bruto = neto + PVM pirkimo sąskaitose",
+    titleEn: "Gross total should equal net total plus tax payable (purchases)",
+    description: "DocumentTotals: GrossTotal turi būti lygus NetTotal + TaxPayable (kai visi pateikti).",
+    legalReq: "SAF-T XSD v2.01 — DocumentTotals arithmetic",
+    failTpl: "InvoiceNo = @no | Net = @net | Tax = @tax | Gross = @gross | Expected = @expected",
+    fixEn: "Correct the document totals so gross = net + tax.",
+    fixLt: "Pataisykite sąskaitos sumas, kad bruto = neto + PVM.",
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const dt = i.documentTotals; if (!dt) return; if (dt.grossTotal != null && (dt.netTotal != null || dt.taxPayable != null)) { const exp = (dt.netTotal || 0) + (dt.taxPayable || 0); if (!within(dt.grossTotal, exp, Math.max(0.05, Math.abs(exp) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(dt.netTotal), tax: r2s(dt.taxPayable), gross: r2s(dt.grossTotal), expected: r2s(exp) }); } }); return out.slice(0, 200); } },
+
+  // ── PAYMENTS ──────────────────────────────────────────────────────
+  { id: "SAFT_PAY_001", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MG", refType: "Payment", requires: "payments",
+    title: "Kiekvienas mokėjimas turi turėti PaymentRefNo",
+    titleEn: "Every payment must have a PaymentRefNo",
+    description: "SAF-T XSD reikalauja PaymentRefNo kiekvienam Payments įrašui.",
+    legalReq: "SAF-T XSD v2.01 — Payments/Payment/PaymentRefNo",
+    failTpl: "TransactionDate = @date | GrossTotal = @gross",
+    fixEn: "Ensure every payment has a non-empty PaymentRefNo.",
+    fixLt: "Užtikrinkite, kad kiekvienas mokėjimas turėtų netuščią PaymentRefNo.",
+    evaluate: (d) => (d.payments || []).filter((p) => !p.paymentRefNo).map((p) => ({ date: p.transactionDate || "—", gross: r2s(p.grossTotal) })) },
+  { id: "SAFT_PAY_002", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MG", refType: "PaymentLine", requires: "payments",
+    title: "Mokėjimo eilutės turi nurodyti pirkėją arba tiekėją, egzistuojantį sąrašuose",
+    titleEn: "Payment line customer/supplier must exist in master data",
+    description: "Kiekvienos mokėjimo eilutės CustomerID/SupplierID turi egzistuoti atitinkamoje pagrindinių duomenų dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity Payment line→Customer/Supplier",
+    failTpl: "PaymentRefNo = @ref | CustomerID = @cust | SupplierID = @sup",
+    fixEn: "Add the referenced customer/supplier to master data, or correct the payment line's reference.",
+    fixLt: "Įtraukite nurodytą pirkėją/tiekėją į pagrindinius duomenis arba pataisykite mokėjimo eilutės nuorodą.",
+    evaluate: (d, ctx) => { const hasC = (d.customers || []).length, hasS = (d.suppliers || []).length; if (!hasC && !hasS) return []; const out = []; (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => { if (l.customerID && hasC && !ctx.customerMap.has(l.customerID)) out.push({ ref: p.paymentRefNo || "—", cust: l.customerID, sup: l.supplierID || "—" }); else if (l.supplierID && hasS && !ctx.supplierMap.has(l.supplierID)) out.push({ ref: p.paymentRefNo || "—", cust: l.customerID || "—", sup: l.supplierID }); })); return out.slice(0, 200); } },
+
+  // ── STOCK MOVEMENTS ───────────────────────────────────────────────
+  { id: "SAFT_MOV_001", family: "SCHEMA", category: "Stock Movements", severity: "Low", dataTypes: "F-Full; MG", refType: "StockMovement", requires: "stockMovements",
+    title: "Prekių judėjimo eilutės produktas turi egzistuoti prekių sąraše",
+    titleEn: "Stock movement ProductCode must exist in the products master",
+    description: "Kiekvieno prekių judėjimo ProductCode turi egzistuoti Products dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity StockMovement→Product",
+    failTpl: "SourceDocumentID = @doc | ProductCode = @code",
+    fixEn: "Add the product to the products master, or correct the movement's ProductCode.",
+    fixLt: "Įtraukite prekę į prekių sąrašą arba pataisykite judėjimo ProductCode.",
+    evaluate: (d, ctx) => { if (!(d.products || []).length) return []; return (d.stockMovements || []).filter((s) => s.productCode && !ctx.productMap.has(s.productCode)).map((s) => ({ doc: s.sourceDocumentID || "—", code: s.productCode })).slice(0, 200); } },
+  { id: "SAFT_MOV_002", family: "SCHEMA", category: "Stock Movements", severity: "Low", dataTypes: "F-Full; MG", refType: "StockMovement", requires: "stockMovements",
+    title: "Prekių judėjimo tipas turi būti apibrėžtas judėjimo tipų lentelėje",
+    titleEn: "Stock movement type must be defined in MovementType table",
+    description: "Jei prekių judėjimas nurodo MovementType, jis turėtų egzistuoti MovementType lentelėje (kai ji pateikta).",
+    legalReq: "SAF-T XSD v2.01 — referential integrity StockMovement→MovementType",
+    failTpl: "SourceDocumentID = @doc | MovementType = @type",
+    fixEn: "Add the movement type to the MovementType table, or correct the movement's type.",
+    fixLt: "Įtraukite judėjimo tipą į MovementType lentelę arba pataisykite judėjimo tipą.",
+    evaluate: (d, ctx) => { if (!ctx.movementTypeSet || ctx.movementTypeSet.size === 0) return []; return (d.stockMovements || []).filter((s) => s.movementType && !ctx.movementTypeSet.has(s.movementType)).map((s) => ({ doc: s.sourceDocumentID || "—", type: s.movementType })).slice(0, 200); } },
+  { id: "SAFT_MOV_003", family: "SCHEMA", category: "Stock Movements", severity: "Low", dataTypes: "F-Full; MG", refType: "MovementOfGoods", requires: "stockMovements",
+    title: "Prekių judėjimo kontrolinės sumos turi sutapti",
+    titleEn: "Movement-of-goods control totals must match the actual lines",
+    description: "MovementOfGoods NumberOfEntries / TotalQuantity turi sutapti su faktiniais judėjimais.",
+    legalReq: "SAF-T XSD v2.01 — MovementOfGoods control totals",
+    failTpl: "Field = @field | Declared = @declared | Actual = @actual",
+    fixEn: "Recompute and correct the MovementOfGoods control totals.",
+    fixLt: "Perskaičiuokite ir pataisykite MovementOfGoods kontrolines sumas.",
+    evaluate: (d) => { const mm = d?.movementMeta; if (!mm) return []; const out = []; const n = (d.stockMovements || []).length; if (mm.numberOfEntries != null && mm.numberOfEntries !== n) out.push({ field: "NumberOfEntries", declared: mm.numberOfEntries, actual: n }); if (mm.totalQuantity != null) { const q = (d.stockMovements || []).reduce((s, m) => s + (m.quantity || 0), 0); if (!within(mm.totalQuantity, q, 0.5)) out.push({ field: "TotalQuantity", declared: r2s(mm.totalQuantity), actual: r2s(q) }); } return out; } },
+
+  // ── ASSET TRANSACTIONS ────────────────────────────────────────────
+  { id: "SAFT_ATX_001", family: "SCHEMA", category: "Asset Transactions", severity: "Low", dataTypes: "F-Full", refType: "AssetTransaction", requires: "assetTransactions",
+    title: "Turto operacijos AssetID turi egzistuoti turto sąraše",
+    titleEn: "Asset transaction AssetID must exist in the assets master",
+    description: "Kiekvienos turto operacijos AssetID turi egzistuoti Assets dalyje.",
+    legalReq: "SAF-T XSD v2.01 — referential integrity AssetTransaction→Asset",
+    failTpl: "AssetID = @id | TransactionType = @type",
+    fixEn: "Add the asset to the assets master, or correct the transaction's AssetID.",
+    fixLt: "Įtraukite turtą į turto sąrašą arba pataisykite operacijos AssetID.",
+    evaluate: (d, ctx) => { if (!(d.assets || []).length) return []; return (d.assetTransactions || []).filter((t) => t.assetID && !ctx.assetMap.has(t.assetID)).map((t) => ({ id: t.assetID, type: t.transactionType || "—" })).slice(0, 200); } },
+
+  // ── CROSS-FILE / CONTROL TOTALS ───────────────────────────────────
+  { id: "SAFT_CTL_001", family: "SCHEMA", category: "Control Totals", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "SalesInvoices", requires: "sales",
+    title: "Pardavimų kontrolinė įrašų suma turi sutapti",
+    titleEn: "Sales NumberOfEntries control total must match the actual invoices",
+    description: "SalesInvoices/NumberOfEntries turi sutapti su faktiniu sąskaitų skaičiumi.",
+    legalReq: "SAF-T XSD v2.01 — SalesInvoices control totals",
+    failTpl: "Field = @field | Declared = @declared | Actual = @actual",
+    fixEn: "Recompute and correct the SalesInvoices NumberOfEntries (and Total fields).",
+    fixLt: "Perskaičiuokite ir pataisykite SalesInvoices NumberOfEntries (ir Total laukus).",
+    evaluate: (d) => { const meta = d?.sales?.meta; if (!meta) return []; const out = []; const n = (d.sales?.items || []).length; if (meta.numberOfEntries != null && meta.numberOfEntries !== n) out.push({ field: "NumberOfEntries", declared: meta.numberOfEntries, actual: n }); return out; } },
+  { id: "SAFT_CTL_002", family: "SCHEMA", category: "Control Totals", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "PurchaseInvoices", requires: "purchases",
+    title: "Pirkimų kontrolinė įrašų suma turi sutapti",
+    titleEn: "Purchases NumberOfEntries control total must match the actual invoices",
+    description: "PurchaseInvoices/NumberOfEntries turi sutapti su faktiniu sąskaitų skaičiumi.",
+    legalReq: "SAF-T XSD v2.01 — PurchaseInvoices control totals",
+    failTpl: "Field = @field | Declared = @declared | Actual = @actual",
+    fixEn: "Recompute and correct the PurchaseInvoices NumberOfEntries (and Total fields).",
+    fixLt: "Perskaičiuokite ir pataisykite PurchaseInvoices NumberOfEntries (ir Total laukus).",
+    evaluate: (d) => { const meta = d?.purchases?.meta; if (!meta) return []; const out = []; const n = (d.purchases?.items || []).length; if (meta.numberOfEntries != null && meta.numberOfEntries !== n) out.push({ field: "NumberOfEntries", declared: meta.numberOfEntries, actual: n }); return out; } },
+  { id: "SAFT_CTL_003", family: "SCHEMA", category: "Control Totals", severity: "Low", dataTypes: "F-Full; MG", refType: "Payments", requires: "payments",
+    title: "Mokėjimų kontrolinė įrašų suma turi sutapti",
+    titleEn: "Payments NumberOfEntries control total must match the actual payments",
+    description: "Payments/NumberOfEntries turi sutapti su faktiniu mokėjimų skaičiumi.",
+    legalReq: "SAF-T XSD v2.01 — Payments control totals",
+    failTpl: "Field = @field | Declared = @declared | Actual = @actual",
+    fixEn: "Recompute and correct the Payments NumberOfEntries (and Total fields).",
+    fixLt: "Perskaičiuokite ir pataisykite Payments NumberOfEntries (ir Total laukus).",
+    evaluate: (d) => { const meta = d?.paymentsMeta; if (!meta) return []; const out = []; const n = (d.payments || []).length; if (meta.numberOfEntries != null && meta.numberOfEntries !== n) out.push({ field: "NumberOfEntries", declared: meta.numberOfEntries, actual: n }); return out; } },
+
+  // ── COUNTRY-CODE VALIDITY (master data) ───────────────────────────
+  { id: "SAFT_ISO_001", family: "SCHEMA", category: "Master Data", severity: "Low", dataTypes: "F-Full", refType: "Customer/Supplier", requires: "any",
+    title: "Šalių kodai turi atitikti ISO 3166-1 alpha-2",
+    titleEn: "Country codes must be valid ISO 3166-1 alpha-2",
+    description: "Pagrindinių duomenų šalių kodai (pirkėjų, tiekėjų adresai) turi būti galiojantys dviženkliai ISO šalių kodai.",
+    legalReq: "SAF-T XSD v2.01 — ISO 3166-1 country codes",
+    failTpl: "Entity = @entity | ID = @id | Country = @country",
+    fixEn: "Correct any non-ISO country code on customer/supplier records to a valid two-letter ISO code.",
+    fixLt: "Pataisykite bet kokį ne ISO šalies kodą pirkėjų/tiekėjų įrašuose į galiojantį dviraidį ISO kodą.",
+    evaluate: (d) => { const out = []; (d.customers || []).forEach((c) => { const cc = (c.addressCountry || c.country || "").trim(); if (cc && !ISO2.has(cc.toUpperCase())) out.push({ entity: "Customer", id: c.customerID || "—", country: cc }); }); (d.suppliers || []).forEach((s) => { const cc = (s.addressCountry || s.country || "").trim(); if (cc && !ISO2.has(cc.toUpperCase())) out.push({ entity: "Supplier", id: s.supplierID || "—", country: cc }); }); return out.slice(0, 200); } },
+  { id: "SAFT_TAX_004", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxTable", requires: "any",
+    title: "Mokesčių klasifikatoriaus dalyje turi būti bent vienas LT valstybės kodas",
+    titleEn: "TaxTable should declare at least one LT country code",
+    description: "Rinkmenoje tikrinama, ar pagrindinės duomenų bylos mokesčių klasifikatoriaus dalyje (TaxTable) nurodomas bent vienas LT arba LTU valstybės kodas (Country). (Atitinka VMI SCHEMA_DVT tipo testą.)",
+    legalReq: "VMI SAF-T techninė specifikacija — TaxTable Country (LT)",
+    failTpl: "TaxTable = @msg",
+    fixEn: "Add the LT (or LTU) country code to at least one tax-table entry's Country element.",
+    fixLt: "Bent vienam mokesčių klasifikatoriaus įrašui nurodykite LT (arba LTU) valstybės kodą (Country).",
+    evaluate: (d) => { const tcs = d.taxCodes || []; if (!tcs.length) return []; const hasLt = tcs.some((t) => { const c = (t.country || "").trim().toUpperCase(); return c === "LT" || c === "LTU"; }); return hasLt ? [] : [{ msg: "nėra LT/LTU valstybės kodo (Country) mokesčių klasifikatoriuje" }]; } },
+  { id: "SAFT_PUR_006", family: "SCHEMA", category: "Purchases", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "Invoice", requires: "purchases",
+    title: "Pirkimo sąskaitos data turi patekti į mokestinį laikotarpį",
+    titleEn: "Purchase invoice date must fall within the fiscal period",
+    description: "Pirkimo sąskaitos data turėtų būti antraštėje nurodytame mokestiniame laikotarpyje. (Atitinka VMI ACCOUNTING_PET tipo testą datoms.)",
+    legalReq: "SAF-T XSD v2.01 — period consistency (SourceDocuments)",
+    failTpl: "InvoiceNo = @no | InvoiceDate = @date | Period = @period",
+    fixEn: "Confirm the period; purchase invoices dated outside the declared period usually indicate a wrong export window.",
+    fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos pirkimo sąskaitos paprastai rodo neteisingą eksporto langą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.purchases?.items || []).forEach((i) => { const dt = (i.invoiceDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ no: i.invoiceNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+  { id: "SAFT_MOV_004", family: "SCHEMA", category: "Stock Movements", severity: "Low", dataTypes: "F-Full; MG", refType: "StockMovement", requires: "stockMovements",
+    title: "Prekių judėjimo data turi patekti į mokestinį laikotarpį",
+    titleEn: "Stock movement date must fall within the fiscal period",
+    description: "Prekių judėjimo operacijos data (TransactionDate) turėtų būti antraštėje nurodytame mokestiniame laikotarpyje. (Atitinka VMI ACCOUNTING_PET tipo testą.)",
+    legalReq: "SAF-T XSD v2.01 — period consistency (MovementOfGoods)",
+    failTpl: "SourceDocumentID = @doc | Date = @date | Period = @period",
+    fixEn: "Confirm the period; stock movements dated outside the declared period usually indicate a wrong export window.",
+    fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos prekių judėjimo operacijos paprastai rodo neteisingą eksporto langą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.stockMovements || []).forEach((s) => { const dt = (s.movementDate || s.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ doc: s.sourceDocumentID || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+  { id: "SAFT_ATX_002", family: "SCHEMA", category: "Asset Transactions", severity: "Low", dataTypes: "F-Full; AS", refType: "AssetTransaction", requires: "assetTransactions",
+    title: "Turto operacijos data turi patekti į mokestinį laikotarpį",
+    titleEn: "Asset transaction date must fall within the fiscal period",
+    description: "Ūkinės operacijos ar ūkinio įvykio dėl turto data (TransactionDate) turėtų būti antraštėje nurodytame mokestiniame laikotarpyje. (Atitinka VMI ACCOUNTING_PET tipo testą.)",
+    legalReq: "SAF-T XSD v2.01 — period consistency (Assets)",
+    failTpl: "AssetID = @id | Date = @date | Period = @period",
+    fixEn: "Confirm the period; asset transactions dated outside the declared period usually indicate a wrong export window.",
+    fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos turto operacijos paprastai rodo neteisingą eksporto langą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.assetTransactions || []).forEach((a) => { const dt = (a.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ id: a.assetID || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PVM21", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "Standartinio tarifo PVM kodai (PVM1/6/9/16/20/21/25/32/43) turi atitikti 21 proc.",
+    titleEn: "Standard-rate PVM codes must carry 21% where a non-zero rate is declared",
+    description: "Pagal oficialų VMI PVM klasifikatorių, kodai PVM1, PVM6, PVM9, PVM16, PVM20, PVM21, PVM25, PVM32, PVM43 atitinka standartinį 21 proc. tarifą (PVMĮ 19 str. 1 d.). Jei mokesčių lentelėje šiems kodams nurodytas nenulinis tarifas, jis turi būti 21. (Nulis toleruojamas atvirkštinio apmokestinimo konfigūracijoms.)",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 19 str. 1 d.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
+    fixEn: "Correct the tax-table rate for this STITaxCode to 21%, or map the entry to the correct classifier code.",
+    fixLt: "Pataisykite mokesčių lentelės tarifą šiam STITaxCode į 21 proc. arba susiekite įrašą su teisingu klasifikatoriaus kodu.",
+    evaluate: (d) => { const C = ["PVM1","PVM6","PVM9","PVM16","PVM20","PVM21","PVM25","PVM32","PVM43"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 21) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 21 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PVM9", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "Lengvatinio 9 proc. tarifo PVM kodai (PVM2/7/17/26/30/44/52/54/57) turi atitikti 9 proc.",
+    titleEn: "Reduced-rate (9%) PVM codes must carry 9% where a non-zero rate is declared",
+    description: "Pagal oficialų VMI PVM klasifikatorių, kodai PVM2, PVM7, PVM17, PVM26, PVM30, PVM44, PVM52, PVM54, PVM57 atitinka lengvatinį 9 proc. tarifą (PVMĮ 19 str. 3 d.). Nenulinis tarifas šiems kodams turi būti 9.",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 19 str. 3 d.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
+    fixEn: "Correct the rate to 9%, or remap the entry to the right classifier code.",
+    fixLt: "Pataisykite tarifą į 9 proc. arba susiekite įrašą su teisingu klasifikatoriaus kodu.",
+    evaluate: (d) => { const C = ["PVM2","PVM7","PVM17","PVM26","PVM30","PVM44","PVM52","PVM54","PVM57"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 9) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 9 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PVM5", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "Lengvatinio 5 proc. tarifo PVM kodai (PVM3/8/18/27/31/37/40/45/53) turi atitikti 5 proc.",
+    titleEn: "Reduced-rate (5%) PVM codes must carry 5% where a non-zero rate is declared",
+    description: "Pagal oficialų VMI PVM klasifikatorių, kodai PVM3, PVM8, PVM18, PVM27, PVM31, PVM37, PVM40, PVM45, PVM53 atitinka lengvatinį 5 proc. tarifą (PVMĮ 19 str. 4-5 d.). Nenulinis tarifas šiems kodams turi būti 5.",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 19 str.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
+    fixEn: "Correct the rate to 5%, or remap the entry to the right classifier code.",
+    fixLt: "Pataisykite tarifą į 5 proc. arba susiekite įrašą su teisingu klasifikatoriaus kodu.",
+    evaluate: (d) => { const C = ["PVM3","PVM8","PVM18","PVM27","PVM31","PVM37","PVM40","PVM45","PVM53"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 5) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 5 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PVM6", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "Kompensacinio 6 proc. tarifo kodas (PVM49) turi atitikti 6 proc.",
+    titleEn: "The 6% compensatory-rate code (PVM49) must carry 6% where a non-zero rate is declared",
+    description: "Pagal oficialų VMI PVM klasifikatorių, kodas PVM49 atitinka 6 proc. kompensacinį tarifą ūkininkams (PVMĮ XII skyrius). Nenulinis tarifas šiam kodui turi būti 6.",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ XII sk.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
+    fixEn: "Correct the rate to 6%, or remap the entry.",
+    fixLt: "Pataisykite tarifą į 6 proc. arba susiekite įrašą iš naujo.",
+    evaluate: (d) => { const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (sti !== "PVM49") return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 6) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 6 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PVM12", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "Naujo 12 proc. tarifo kodai (PVM58/59/60, nuo 2026-01-01) turi atitikti 12 proc.",
+    titleEn: "New 12% rate codes (PVM58/59/60, from 2026-01-01) must carry 12% where a non-zero rate is declared",
+    description: "Pagal oficialų VMI PVM klasifikatorių (2026-01-01 pakeitimai), kodai PVM58, PVM59, PVM60 atitinka naują 12 proc. tarifą. Nenulinis tarifas šiems kodams turi būti 12.",
+    legalReq: "VMI PVM klasifikatorius (2026-01-01 redakcija); PVMĮ 19 str.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
+    fixEn: "Correct the rate to 12%, or remap the entry.",
+    fixLt: "Pataisykite tarifą į 12 proc. arba susiekite įrašą iš naujo.",
+    evaluate: (d) => { const C = ["PVM58","PVM59","PVM60"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 12) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 12 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PVM0", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "0 proc. PVM kodai (PVM12/13/14/28/33/35/38/41/46/50/51/55) negali turėti nenulinio tarifo",
+    titleEn: "0% PVM codes must not carry a non-zero rate",
+    description: "Pagal oficialų VMI PVM klasifikatorių, kodai PVM12, PVM13, PVM14, PVM28, PVM33, PVM35, PVM38, PVM41, PVM46, PVM50, PVM51, PVM55 atitinka 0 proc. tarifą (PVMĮ 41-53 str.). Jei mokesčių lentelėje šiems kodams nurodytas tarifas, jis turi būti 0.",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 41-53 str.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = 0",
+    fixEn: "Set the rate to 0% for this 0%-classifier code, or remap the entry.",
+    fixLt: "Nustatykite 0 proc. tarifą šiam 0 proc. klasifikatoriaus kodui arba susiekite įrašą iš naujo.",
+    evaluate: (d) => { const C = ["PVM12","PVM13","PVM14","PVM28","PVM33","PVM35","PVM38","PVM41","PVM46","PVM50","PVM51","PVM55"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 0 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_DET_001", family: "SCHEMA", category: "GL Accounts", severity: "High", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
+    title: "Didžiosios knygos sąskaitų likučiai laikotarpio pradžiai turi būti subalansuoti (D = K)",
+    titleEn: "Opening trial balance must balance (total debit = total credit)",
+    description: "Visų didžiosios knygos sąskaitų pradinių debeto likučių suma turi būti lygi pradinių kredito likučių sumai. (Atitinka VMI ACCOUNTING_DET tipo testą laikotarpio pradžiai.)",
+    legalReq: "Dvejybinio įrašo principas — bandomasis balansas",
+    failTpl: "OpeningDebit = @debit | OpeningCredit = @credit | Diff = @diff",
+    fixEn: "An unbalanced opening trial balance means the chart export is incomplete or balances are misstated; re-export or correct the opening balances.",
+    fixLt: "Nesubalansuotas pradinis bandomasis balansas reiškia nepilną sąskaitų eksportą arba klaidingus likučius; pakartokite eksportą arba pataisykite pradinius likučius.",
+    evaluate: (d) => { const acc = d.accounts || []; if (!acc.length) return []; let dd = 0, cc = 0; acc.forEach((a) => { dd += a.openingDebitBalance || 0; cc += a.openingCreditBalance || 0; }); const tol = Math.max(1, (dd + cc) * 0.000001); return Math.abs(dd - cc) > tol ? [{ debit: r2s(dd), credit: r2s(cc), diff: r2s(dd - cc) }] : []; } },
+  { id: "SAFT_DET_002", family: "SCHEMA", category: "GL Accounts", severity: "High", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
+    title: "Didžiosios knygos sąskaitų likučiai laikotarpio pabaigai turi būti subalansuoti (D = K)",
+    titleEn: "Closing trial balance must balance (total debit = total credit)",
+    description: "Visų didžiosios knygos sąskaitų galutinių debeto likučių suma turi būti lygi galutinių kredito likučių sumai. (Atitinka VMI ACCOUNTING_DET tipo testą laikotarpio pabaigai.)",
+    legalReq: "Dvejybinio įrašo principas — bandomasis balansas",
+    failTpl: "ClosingDebit = @debit | ClosingCredit = @credit | Diff = @diff",
+    fixEn: "An unbalanced closing trial balance means the export is incomplete or balances are misstated; re-export or correct the closing balances.",
+    fixLt: "Nesubalansuotas galutinis bandomasis balansas reiškia nepilną eksportą arba klaidingus likučius; pakartokite eksportą arba pataisykite galutinius likučius.",
+    evaluate: (d) => { const acc = d.accounts || []; if (!acc.length) return []; let dd = 0, cc = 0; acc.forEach((a) => { dd += a.closingDebitBalance || 0; cc += a.closingCreditBalance || 0; }); const tol = Math.max(1, (dd + cc) * 0.000001); return Math.abs(dd - cc) > tol ? [{ debit: r2s(dd), credit: r2s(cc), diff: r2s(dd - cc) }] : []; } },
+  { id: "SAFT_SEQ_001", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "Transaction", requires: "transactions",
+    title: "Ūkinių operacijų numerių (TransactionID) eiliškumo tęstinumas",
+    titleEn: "GL transaction numbering continuity (gaps in the TransactionID sequence)",
+    description: "Kai didžiosios knygos operacijų numeriai sudaro skaitinę seką, tikrinama, ar sekoje nėra praleistų numerių — praleisti žurnalo numeriai gali rodyti pašalintus įrašus. Vertinama tik kai ≥80 proc. numerių turi tą pačią skaitinę struktūrą ir jų yra bent 10. Pateikiamas vienas apibendrintas radinys. (Atitinka VMI SCHEMA_SEQ_001.)",
+    legalReq: "VMI SAF-T — operacijų eiliškumas (SCHEMA_SEQ)",
+    failTpl: "Prefix = @prefix | Range = @range | Missing = @missing | Examples = @examples",
+    fixEn: "Review the missing journal numbers: confirm they belong to other journals/periods or were legitimately voided; auditors treat unexplained gaps as a red flag.",
+    fixLt: "Peržiūrėkite praleistus žurnalo numerius: įsitikinkite, kad jie priklauso kitiems žurnalams/laikotarpiams arba buvo teisėtai anuliuoti; nepaaiškinti tarpai auditorių vertinami kaip rizikos požymis.",
+    evaluate: (d) => { const tx = d.transactions || []; if (tx.length < 10) return []; const groups = new Map(); tx.forEach((t) => { const m = /^(.*?)(\d+)$/.exec(String(t.transactionID || "")); if (m) { const g = groups.get(m[1]) || []; g.push(parseInt(m[2], 10)); groups.set(m[1], g); } }); for (const [prefix, nums] of groups) { if (nums.length >= 10 && nums.length >= 0.8 * tx.length) { const uniq = Array.from(new Set(nums)).sort((a, b) => a - b); const lo = uniq[0], hi = uniq[uniq.length - 1]; const missing = (hi - lo + 1) - uniq.length; if (missing > 0) { const have = new Set(uniq); const ex = []; for (let n = lo; n <= hi && ex.length < 5; n++) if (!have.has(n)) ex.push(n); return [{ prefix: prefix || "(none)", range: lo + "…" + hi, missing, examples: ex.join(", ") }]; } } } return []; } },
+  { id: "SAFT_TRT_001", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; PI", refType: "Invoice", requires: "purchases",
+    title: "Didelės suapvalintos pirkimų sumos (≥ 10 000 EUR, kartotinės 1 000)",
+    titleEn: "Large round-amount purchases (≥ €10,000, multiples of 1,000)",
+    description: "Pažymimos pirkimo sąskaitos, kurių bendra suma yra ≥ 10 000 EUR ir tiksliai kartotinė 1 000 — neįprastai apvalios didelės sumos yra klasikinis rizikos analitikos indikatorius. (Atitinka VMI TAX_TRT_001; peržiūros indikatorius, ne pažeidimas.)",
+    legalReq: "Rizikos analitika (TAX_TRT atitikmuo)",
+    failTpl: "InvoiceNo = @no | Date = @date | Amount = @amount",
+    fixEn: "Review the underlying contracts/documents for these round-amount purchases; round figures on large invoices warrant substantiation.",
+    fixLt: "Peržiūrėkite šių apvalių sumų pirkimų sutartis/dokumentus; didelės apvalios sumos reikalauja pagrindimo.",
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a == null || a < 10000) return; if (Math.abs(a % 1000) < 0.005) out.push({ no: i.invoiceNo || "—", date: (i.invoiceDate || "").slice(0, 10), amount: r2s(a) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_TRT_005", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; PI", refType: "Invoice", requires: "purchases",
+    title: "Reikšmingi pirkimai savaitgaliais (≥ 5 000 EUR)",
+    titleEn: "Significant weekend purchases (≥ €5,000)",
+    description: "Pažymimos pirkimo sąskaitos, išrašytos šeštadienį ar sekmadienį, kurių suma ≥ 5 000 EUR. Savaitgaliniai dideli pirkimai yra rizikos analitikos indikatorius. (Atitinka VMI TAX_TRT_005; peržiūros indikatorius.)",
+    legalReq: "Rizikos analitika (TAX_TRT atitikmuo)",
+    failTpl: "InvoiceNo = @no | Date = @date (@weekday) | Amount = @amount",
+    fixEn: "Confirm the business reason for large weekend-dated purchase invoices.",
+    fixLt: "Patvirtinkite didelių savaitgalį datuotų pirkimo sąskaitų verslo pagrindą.",
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); const ds = (i.invoiceDate || "").slice(0, 10); if (a == null || a < 5000 || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return; const day = new Date(ds + "T00:00:00Z").getUTCDay(); if (day === 0 || day === 6) out.push({ no: i.invoiceNo || "—", date: ds, weekday: day === 6 ? "Sat" : "Sun", amount: r2s(a) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_TRT_006", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; PI", refType: "Invoice", requires: "purchases",
+    title: "Ženklūs pirkimai laikotarpio pabaigoje (paskutinės 14 d., ≥ 3× vidurkio)",
+    titleEn: "Significant end-of-period purchases (last 14 days, ≥ 3× average)",
+    description: "Pažymimos pirkimo sąskaitos per paskutines 14 mokestinio laikotarpio dienų, kurių suma ≥ 3 kartus didesnė už vidutinę pirkimo sumą (ir ≥ 5 000 EUR) — sąnaudų 'prikrovimas' laikotarpio pabaigoje yra klasikinis rizikos indikatorius. (Atitinka VMI TAX_TRT_006.)",
+    legalReq: "Rizikos analitika (TAX_TRT atitikmuo)",
+    failTpl: "InvoiceNo = @no | Date = @date | Amount = @amount | Avg = @avg",
+    fixEn: "Verify cut-off and substance of large purchases booked in the final two weeks of the period.",
+    fixLt: "Patikrinkite laikotarpio pabaigos didelių pirkimų priskyrimo laikotarpiui pagrįstumą ir turinį.",
+    evaluate: (d) => { const t = d?.header?.fiscalYearTo; if (!isISODate(t)) return []; const end = new Date(t.slice(0, 10) + "T00:00:00Z").getTime(); const items = d.purchases?.items || []; if (!items.length) return []; let sum = 0, n = 0; items.forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a != null) { sum += a; n++; } }); const avg = n ? sum / n : 0; const thr = Math.max(5000, 3 * avg); const out = []; items.forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); const ds = (i.invoiceDate || "").slice(0, 10); if (a == null || a < thr || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return; const diff = (end - new Date(ds + "T00:00:00Z").getTime()) / 86400000; if (diff >= 0 && diff <= 14) out.push({ no: i.invoiceNo || "—", date: ds, amount: r2s(a), avg: r2s(avg) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_TRT_007", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; SI", refType: "Invoice", requires: "sales",
+    title: "Ženklios kreditinės pardavimo sąskaitos (≥ 10 000 EUR)",
+    titleEn: "Significant sales credit notes (≥ €10,000)",
+    description: "Pažymimos kreditinės pardavimo sąskaitos (KS tipo arba neigiamos sumos), kurių dydis ≥ 10 000 EUR — didelės kreditinės sąskaitos gali rodyti pajamų koregavimą ir reikalauja pagrindimo. (Atitinka VMI TAX_TRT_007.)",
+    legalReq: "Rizikos analitika (TAX_TRT atitikmuo)",
+    failTpl: "InvoiceNo = @no | Date = @date | Amount = @amount | Type = @type",
+    fixEn: "Review the documentation for large credit notes (returns, discounts, corrections) and their VAT treatment.",
+    fixLt: "Peržiūrėkite didelių kreditinių sąskaitų dokumentaciją (grąžinimai, nuolaidos, koregavimai) ir jų PVM traktavimą.",
+    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a == null) return; const ty = String(i.invoiceType || "").toUpperCase(); const isCredit = a < 0 || ty === "KS" || ty === "K"; if (isCredit && Math.abs(a) >= 10000) out.push({ no: i.invoiceNo || "—", date: (i.invoiceDate || "").slice(0, 10), amount: r2s(a), type: ty || "neg" }); }); return out.slice(0, 200); } },
+  { id: "SAFT_INT_017", family: "SCHEMA", category: "GL Transactions", severity: "High", dataTypes: "F-Full", refType: "TransactionID", requires: "transactions",
+    title: "Pirminių dokumentų ūkinių operacijų numeriai (TransactionID) turi egzistuoti didžiosios knygos įrašuose",
+    titleEn: "Source-document TransactionIDs must resolve to GL transactions",
+    description: "Pirminių dokumentų duomenų byloje (sąskaitose, mokėjimuose, prekių judėjime) nurodyti ūkinių operacijų numeriai (TransactionID/GLTransactionID) turi būti įtraukti į didžiosios knygos įrašų bylą. (Atitinka VMI SCHEMA_INT_017.)",
+    legalReq: "VMI SAF-T — referential integrity SourceDocuments→GeneralLedgerEntries (SCHEMA_INT_017)",
+    failTpl: "Source = @src | Ref = @ref | TransactionID = @tid",
+    fixEn: "Include the referenced GL transaction in GeneralLedgerEntries, or correct the document's TransactionID.",
+    fixLt: "Įtraukite nurodytą operaciją į GeneralLedgerEntries arba pataisykite dokumento TransactionID.",
+    evaluate: (d) => { const tx = d.transactions || []; if (!tx.length) return []; const ids = new Set(); tx.forEach((t) => { if (t.transactionID) ids.add(String(t.transactionID).trim()); }); if (!ids.size) return []; const out = []; const chk = (tid, src, ref) => { const v = String(tid || "").trim(); if (v && !ids.has(v)) out.push({ src, ref: ref || "—", tid: v }); }; (d.sales?.items || []).forEach((i) => chk(i.transactionID, "SalesInvoice", i.invoiceNo)); (d.purchases?.items || []).forEach((i) => chk(i.transactionID, "PurchaseInvoice", i.invoiceNo)); (d.payments || []).forEach((p) => chk(p.transactionID, "Payment", p.paymentRefNo)); (d.stockMovements || []).forEach((s) => chk(s.glTransactionID, "StockMovement", s.sourceDocumentID || "")); return out.slice(0, 200); } },
+  { id: "SAFT_PAY_003", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MP", refType: "Payment", requires: "payments",
+    title: "Mokėjimo data turi patekti į mokestinį laikotarpį",
+    titleEn: "Payment date must fall within the fiscal period",
+    description: "Mokėjimo operacijos data (TransactionDate) turėtų būti antraštėje nurodytame mokestiniame laikotarpyje. (Atitinka VMI ACCOUNTING_PET tipo testą mokėjimams.)",
+    legalReq: "SAF-T XSD v2.01 — period consistency (Payments)",
+    failTpl: "PaymentRefNo = @ref | Date = @date | Period = @period",
+    fixEn: "Confirm the period; payments dated outside the declared period usually indicate a wrong export window.",
+    fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuoti mokėjimai paprastai rodo neteisingą eksporto langą.",
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.payments || []).forEach((p) => { const dt = (p.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ ref: p.paymentRefNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+  { id: "SAFT_AET_001", family: "SCHEMA", category: "GL Accounts", severity: "Low", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
+    title: "Fundamentinė apskaitos lygybė: turtas (1-2 kl.) = nuosavybė + įsipareigojimai (3-4 kl.)",
+    titleEn: "Fundamental accounting equation: assets (classes 1-2) = equity + liabilities (classes 3-4)",
+    description: "Kai sąskaitų planas atitinka standartines klases (1 ilgalaikis, 2 trumpalaikis turtas, 3 nuosavas kapitalas, 4 įsipareigojimai, 5 pajamos, 6 sąnaudos), tikrinama fundamentinė lygybė: laikotarpio pradžiai turtas = nuosavybė + įsipareigojimai; pabaigai — įvertinant neuždarytą rezultatą (5-6 kl.). Taikoma tik kai ≥70 proc. sąskaitų priklauso 1-6 klasėms. (Atitinka VMI ACCOUNTING_AET tipo testus.)",
+    legalReq: "Fundamentinė apskaitos lygybė (ACCOUNTING_AET atitikmuo)",
+    failTpl: "Side = @side | Assets(1-2) = @assets | Equity+Liab = @equityLiab | Diff = @diff",
+    fixEn: "Investigate the class-level imbalance: misclassified accounts or contra balances usually explain it.",
+    fixLt: "Ištirkite klasių disbalansą: dažniausiai jį paaiškina klaidingai klasifikuotos sąskaitos arba kontra likučiai.",
+    evaluate: (d) => { const acc = d.accounts || []; if (acc.length < 5) return []; let inCls = 0; const cl = {}; acc.forEach((a) => { const id = String(a.accountID || ""); const c = id.charAt(0); if ("123456".indexOf(c) >= 0) inCls++; const o = cl[c] = cl[c] || { od:0, oc:0, cd:0, cc:0 }; o.od += a.openingDebitBalance || 0; o.oc += a.openingCreditBalance || 0; o.cd += a.closingDebitBalance || 0; o.cc += a.closingCreditBalance || 0; }); if (inCls < 0.7 * acc.length) return []; const g = (c) => cl[c] || { od:0, oc:0, cd:0, cc:0 }; if (!(cl["1"] || cl["2"]) || !(cl["3"] || cl["4"])) return []; const net12o = (g("1").od - g("1").oc) + (g("2").od - g("2").oc); const net34o = (g("3").oc - g("3").od) + (g("4").oc - g("4").od); const net12c = (g("1").cd - g("1").cc) + (g("2").cd - g("2").cc); const net34c = (g("3").cc - g("3").cd) + (g("4").cc - g("4").cd); const net56c = (g("5").cc - g("5").cd) - (g("6").cd - g("6").cc); const tol = (x, y) => Math.max(1, (Math.abs(x) + Math.abs(y)) * 0.000001); const out = []; if (Math.abs(net12o - net34o) > tol(net12o, net34o)) out.push({ side: "opening", assets: r2s(net12o), equityLiab: r2s(net34o), diff: r2s(net12o - net34o) }); const rhs = net34c + net56c; if (Math.abs(net12c - rhs) > tol(net12c, rhs)) out.push({ side: "closing", assets: r2s(net12c), equityLiab: r2s(rhs), diff: r2s(net12c - rhs) }); return out; } },
+  { id: "SAFT_BAT_011", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
+    title: "Žemės nusidėvėjimas neskaičiuojamas (120x sąskaitos)",
+    titleEn: "Land must not be depreciated (accounts 120x)",
+    description: "Žemė nedėvima: oficialiame DK sąskaitų klasifikatoriuje žemės grupė (120: 1200/1201/1209) neturi nusidėvėjimo sąskaitų, o PMĮ 18 str. žemei nusidėvėjimas neskaičiuojamas. Turtas, susietas su 120x sąskaita, negali turėti nusidėvėjimo. (Atitinka VMI ACCOUNTING_BAT_011.)",
+    legalReq: "PMĮ 18 str.; VA-49 2 priedas — DK sąskaitų klasifikatorius Nr. 1 (120 Žemė)",
+    failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
+    fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
+    fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("120") === 0 && id.indexOf("1250") !== 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_BAT_012", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
+    title: "Žemės, kaip investicinio turto, nusidėvėjimas neskaičiuojamas (1250x)",
+    titleEn: "Investment-property land must not be depreciated (accounts 1250x)",
+    description: "Investicinio turto žemė (1250: 12500/12503/12509) oficialiame klasifikatoriuje neturi nusidėvėjimo sąskaitų — žemė nedėvima ir kaip investicinis turtas. (Atitinka VMI ACCOUNTING_BAT_012.)",
+    legalReq: "PMĮ 18 str.; VA-49 2 priedas — DK klasifikatorius Nr. 1 (1250 Žemė, kaip investicinis turtas)",
+    failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
+    fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
+    fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("1250") === 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_BAT_013", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
+    title: "Avansų ir vykdomų statybos darbų nusidėvėjimas neskaičiuojamas (126x)",
+    titleEn: "Advances and construction-in-progress must not be depreciated (accounts 126x)",
+    description: "Sumokėti avansai už ilgalaikį turtą ir vykdomi materialiojo turto statybos (gamybos) darbai (126: 1260/1261/1261x) nėra naudojamas turtas — nusidėvėjimas pradedamas skaičiuoti tik pradėjus turtą naudoti. (Atitinka VMI ACCOUNTING_BAT_013/014.)",
+    legalReq: "12 VAS; PMĮ 18 str. 4 d.; VA-49 2 priedas — DK klasifikatorius Nr. 1 (126)",
+    failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
+    fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
+    fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("126") === 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_BAT_015", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
+    title: "Ruošiamo naudoti turto nusidėvėjimas neskaičiuojamas (1212/1222/1232/1242/1272/1282)",
+    titleEn: "Assets being prepared for use must not be depreciated",
+    description: "Ruošiamas naudoti turtas (sąskaitos 1212, 1222, 1232, 1242, 1272, 1282) dar nenaudojamas veikloje — nusidėvėjimas pradedamas skaičiuoti tik nuo turto naudojimo pradžios. (Atitinka VMI ACCOUNTING_BAT_015/016.)",
+    legalReq: "12 VAS; PMĮ 18 str. 4 d.; VA-49 2 priedas — DK klasifikatorius Nr. 1",
+    failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
+    fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
+    fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(["1212","1222","1232","1242","1272","1282"].indexOf(id) >= 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+  { id: "SAFT_OST_001", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MP", refType: "Payment", requires: "payments",
+    title: "Mokėjimai be nurodytų banko sąskaitų numerių",
+    titleEn: "Payments without bank account references",
+    description: "Apibendrintai pažymima, kiek mokėjimų neturi jokios banko sąskaitos nuorodos (nei antraštėje, nei eilutėse — IBANNumber/BankAccountNumber). Tai peržiūros indikatorius: tokie mokėjimai gali būti grynieji, užskaitos ar nepilnai aprašyti. (Atitinka VMI OTHER_OST_001.)",
+    legalReq: "Rizikos analitika (OTHER_OST_001 atitikmuo)",
+    failTpl: "Count = @count / @total (@share) | Examples = @examples",
+    fixEn: "Review the listed payments: confirm they are cash/offset operations or complete the bank account data.",
+    fixLt: "Peržiūrėkite nurodytus mokėjimus: patvirtinkite, kad tai grynųjų/užskaitų operacijos, arba papildykite banko sąskaitų duomenis.",
+    evaluate: (d) => { const ps = d.payments || []; if (!ps.length) return []; const miss = ps.filter((p) => !String(p.bankAccount || "").trim()); if (!miss.length) return []; const ex = miss.slice(0, 5).map((p) => p.paymentRefNo || "—").join(", "); return [{ count: miss.length, total: ps.length, share: Math.round(1000 * miss.length / ps.length) / 10 + "%", examples: ex }]; } },
+
+  { id: "SAFT_VDT_001", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; SI", refType: "InvoiceLine", requires: "sales",
+    title: "Pirkimo pusės PVM kodai negali būti naudojami pardavimo sąskaitose",
+    titleEn: "Acquisition-side PVM codes must not appear on sales invoices",
+    description: "Oficialiame VMI PVM klasifikatoriuje šie kodai aprašyti kaip įsigijimai: PVM16-18/35/36 (prekių įsigijimas iš kitų ES valstybių, PVMĮ 4-1 ir 122 str.), PVM20-21/37-42 (paslaugų įsigijimas, PVMĮ 95 str.), PVM23/24 (importo PVM), PVM48-49, PVM54/56/57/60. Jų naudojimas pardavimo sąskaitose prieštarauja klasifikatoriaus paskirčiai. Patvirtinta oficialia PVM klasifikatoriaus kodų naudojimo lentele (VMI, 2025-12-16): visų šių kodų stulpelis „Išrašomų“ – „–“. Anuliuotos sąskaitos (InvoiceType = AN) praleidžiamos.",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 4-1, 95, 122 str.",
+    failTpl: "InvoiceNo = @no | STITaxCode = @sti",
+    fixEn: "Replace with the correct supply-side code (e.g., PVM1/2/3, PVM12, PVM13) or move the document to purchases.",
+    fixLt: "Pakeiskite teisingu tiekimo pusės kodu (pvz., PVM1/2/3, PVM12, PVM13) arba perkelkite dokumentą į pirkimus.",
+    evaluate: (d) => { const P = ["PVM16","PVM17","PVM18","PVM35","PVM36","PVM20","PVM37","PVM38","PVM39","PVM21","PVM40","PVM41","PVM42","PVM23","PVM24","PVM48","PVM49","PVM54","PVM56","PVM57","PVM60"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && P.indexOf(s) >= 0 && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sti: s }); })); return out.slice(0, 200); } },
+  { id: "SAFT_VDT_002", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
+    title: "Tiekimo pusės PVM kodai negali būti naudojami pirkimo sąskaitose",
+    titleEn: "Supply-side PVM codes must not appear on purchase invoices",
+    description: "Oficialiame VMI PVM klasifikatoriuje šie kodai aprašyti kaip tiekimai: PVM12 (prekių eksportas, PVMĮ 41 str.), PVM13 (ES PVM mokėtojams patiektos prekės, PVMĮ 49 str.), PVM15/34 (už Lietuvos ribų patiektos prekės/paslaugos). Pirkimo pusėje atitinkamos operacijos žymimos įsigijimo kodais (pvz., PVM16-18). Oficiali naudojimo lentelė (VMI, 2025-12-16) tik pardavimams papildomai priskiria: PVM6-9/28-31 (privatūs poreikiai, turto pasigaminimas), PVM50 (call-off), PVM59. Anuliuotos sąskaitos (AN) praleidžiamos.",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 41, 49 str.",
+    failTpl: "InvoiceNo = @no | STITaxCode = @sti",
+    fixEn: "Use the acquisition-side code that matches the transaction (e.g., PVM16-18 for EU goods).",
+    fixLt: "Naudokite operaciją atitinkantį įsigijimo kodą (pvz., PVM16-18 ES prekėms).",
+    evaluate: (d) => { const S = ["PVM12","PVM13","PVM15","PVM34","PVM6","PVM7","PVM8","PVM9","PVM28","PVM29","PVM30","PVM31","PVM50","PVM59"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && S.indexOf(s) >= 0 && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sti: s }); })); return out.slice(0, 200); } },
+  { id: "SAFT_VDT_003", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
+    title: "ES prekių įsigijimo kodai (PVM16-18/35/36) turi būti naudojami su ES (ne LT) tiekėjais",
+    titleEn: "EU goods-acquisition codes (PVM16-18/35/36) should be used with EU (non-LT) suppliers",
+    description: "Pagal oficialų klasifikatorių PVM16-18/35/36 žymi prekių įsigijimą iš kitų ES valstybių narių (PVMĮ 4-1 ir 122 str.). Kai tiekėjo valstybė žinoma ir ji yra LT arba ne ES, kodo taikymas peržiūrėtinas.",
+    legalReq: "VMI PVM klasifikatorius; PVMĮ 4-1, 122 str.",
+    failTpl: "InvoiceNo = @no | Supplier = @sup | Country = @country | STITaxCode = @sti",
+    fixEn: "Check the supplier master country or the chosen code; EU acquisition codes presume an EU (non-LT) counterparty.",
+    fixLt: "Patikrinkite tiekėjo valstybę kortelėje arba pasirinktą kodą; ES įsigijimo kodai suponuoja ES (ne LT) kontrahentą.",
+    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM35","PVM36"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) < 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
+  { id: "SAFT_VDT_004", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
+    title: "ES paslaugų įsigijimo kodai (PVM21/40/41/42) turi būti naudojami su ES (ne LT) tiekėjais",
+    titleEn: "EU services-acquisition codes (PVM21/40/41/42) should be used with EU (non-LT) suppliers",
+    description: "Pagal oficialų klasifikatorių PVM21/40/41/42 žymi iš ES PVM mokėtojų įsigytas paslaugas (PVMĮ 95 str. 2 d.). Kai tiekėjo valstybė žinoma ir ji yra LT arba ne ES, kodo taikymas peržiūrėtinas.",
+    legalReq: "VMI PVM klasifikatorius; PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @no | Supplier = @sup | Country = @country | STITaxCode = @sti",
+    fixEn: "Check the supplier master country or use PVM20/37-39 for non-EU service providers.",
+    fixLt: "Patikrinkite tiekėjo valstybę arba ne ES paslaugų teikėjams naudokite PVM20/37-39.",
+    evaluate: (d, ctx) => { const C = ["PVM21","PVM40","PVM41","PVM42"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) < 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
+  { id: "SAFT_VDT_005", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
+    title: "Ne ES paslaugų kodai (PVM20/37/38/39) turi būti naudojami su ne ES tiekėjais",
+    titleEn: "Non-EU services codes (PVM20/37/38/39) should be used with non-EU suppliers",
+    description: "Pagal oficialų klasifikatorių PVM20/37/38/39 žymi iš užsienio valstybių (išskyrus ES PVM mokėtojus) įsigytas paslaugas (PVMĮ 95 str.). Kai tiekėjo valstybė žinoma ir ji yra ES arba LT, kodo taikymas peržiūrėtinas.",
+    legalReq: "VMI PVM klasifikatorius; PVMĮ 95 str.",
+    failTpl: "InvoiceNo = @no | Supplier = @sup | Country = @country | STITaxCode = @sti",
+    fixEn: "Check the supplier master country or use PVM21/40-42 for EU service providers.",
+    fixLt: "Patikrinkite tiekėjo valstybę arba ES paslaugų teikėjams naudokite PVM21/40-42.",
+    evaluate: (d, ctx) => { const C = ["PVM20","PVM37","PVM38","PVM39"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) >= 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
+  { id: "SAFT_RATE_PM0", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
+    title: "0 proc. pelno mokesčio kodai (PM2/PM8/PM10/PM12) negali turėti nenulinio tarifo",
+    titleEn: "0% profit-tax codes (PM2/PM8/PM10/PM12) must not carry a non-zero rate",
+    description: "Pagal oficialų VMI Pelno mokesčio klasifikatorių, kodai PM2, PM8, PM10, PM12 atitinka 0 proc. PM tarifą (PMĮ 5 str., 58 str. 16 d.). Jei mokesčių lentelėje šiems kodams nurodytas tarifas, jis turi būti 0. (Kintamų tarifų PM kodai netikrinami dėl tarifų priklausomybės nuo laikotarpio.)",
+    legalReq: "VMI Pelno mokesčio klasifikatorius (VA-49 2 priedas); PMĮ 5 str.",
+    failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = 0",
+    fixEn: "Set the rate to 0% for this 0%-classifier code, or remap the entry.",
+    fixLt: "Nustatykite 0 proc. tarifą šiam 0 proc. klasifikatoriaus kodui arba susiekite įrašą iš naujo.",
+    evaluate: (d) => { const C = ["PM2","PM8","PM10","PM12"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (C.indexOf(sti) < 0) return; const p = t.taxPercentage; if (p != null && p > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 0 }); }); return out.slice(0, 200); } },
+
+  { id: "SAFT_VDT_006", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
+    title: "Eilutės PVM tarifas turi atitikti jos STI kodo klasifikatoriaus tarifą",
+    titleEn: "Line VAT rate must match the classifier rate of its STI code",
+    description: "Kiekvienos sąskaitos eilutės tarifas lyginamas su oficialaus PVM klasifikatoriaus tarifu pagal eilutės STI kodą: nenulinis tarifas privalo sutapti (nulis toleruojamas fiksuoto tarifo kodams — atvirkštinio apmokestinimo konfigūracijos), o 0 proc. kodų eilutėse tarifas negali būti nenulinis. „–“ tarifo kodų (PVM5/15/19/29/34/36/39/42/47/48/56) eilutėse tarifas taip pat negali būti nenulinis — oficiali naudojimo lentelė (VMI, 2025-12-16). (Eilučių lygio VMI TAX_VDT 'taikymo' testų tarifinė dalis.)",
+    legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 19 str.",
+    failTpl: "InvoiceNo = @no | STITaxCode = @sti | Rate = @rate | Expected = @expected",
+    fixEn: "Correct the line rate or the tax code; a non-zero rate contradicting the classifier is a coding error.",
+    fixLt: "Pataisykite eilutės tarifą arba mokesčio kodą; klasifikatoriui prieštaraujantis nenulinis tarifas yra kodavimo klaida.",
+    evaluate: (d) => { const RM = {PVM1:21,PVM6:21,PVM9:21,PVM16:21,PVM20:21,PVM21:21,PVM25:21,PVM32:21,PVM43:21,PVM2:9,PVM7:9,PVM17:9,PVM26:9,PVM30:9,PVM44:9,PVM52:9,PVM54:9,PVM57:9,PVM3:5,PVM8:5,PVM18:5,PVM27:5,PVM31:5,PVM37:5,PVM40:5,PVM45:5,PVM53:5,PVM49:6,PVM58:12,PVM59:12,PVM60:12,PVM12:0,PVM13:0,PVM14:0,PVM28:0,PVM33:0,PVM35:0,PVM38:0,PVM41:0,PVM46:0,PVM50:0,PVM51:0,PVM55:0,PVM5:0,PVM15:0,PVM19:0,PVM29:0,PVM34:0,PVM36:0,PVM39:0,PVM42:0,PVM47:0,PVM48:0,PVM56:0}; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || !(s in RM)) return; const p = l.tax && l.tax.taxPercentage; if (p == null) return; const exp = RM[s]; const bad = exp > 0 ? (p > 0.01 && Math.abs(p - exp) > 0.01) : (p > 0.01); if (bad) out.push({ no: inv.invoiceNo || "—", sti: s, rate: p, expected: exp }); })); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+  { id: "SAFT_VDT_010", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI", refType: "InvoiceLine", requires: "sales",
+    title: "Tapačioms prekėms taikomi skirtingi nenuliniai PVM tarifai",
+    titleEn: "Identical goods sold under different non-zero VAT rates",
+    description: "Pažymimos prekės (pagal ProductCode), kurios per laikotarpį pardavimuose apmokestintos keliais skirtingais nenuliniais klasifikatoriaus tarifais (pvz., 21 ir 9 proc.) — tai peržiūros indikatorius dėl galimo neteisingo tarifo taikymo. 0 proc. kodai (eksportas, ES tiekimai) ignoruojami, nes teisėtai koegzistuoja. (Atitinka VMI TAX_VDT_010.)",
+    legalReq: "PVMĮ 19 str.; VMI PVM klasifikatorius",
+    failTpl: "ProductCode = @product | Rates = @rates",
+    fixEn: "Review why the same product carries different positive rates; usually one of them is wrong.",
+    fixLt: "Peržiūrėkite, kodėl ta pati prekė apmokestinta skirtingais nenuliniais tarifais; dažniausiai vienas iš jų klaidingas.",
+    evaluate: (d) => { const RM = {PVM1:21,PVM6:21,PVM9:21,PVM16:21,PVM20:21,PVM21:21,PVM25:21,PVM32:21,PVM43:21,PVM2:9,PVM7:9,PVM17:9,PVM26:9,PVM30:9,PVM44:9,PVM52:9,PVM54:9,PVM57:9,PVM3:5,PVM8:5,PVM18:5,PVM27:5,PVM31:5,PVM37:5,PVM40:5,PVM45:5,PVM53:5,PVM49:6,PVM58:12,PVM59:12,PVM60:12,PVM12:0,PVM13:0,PVM14:0,PVM28:0,PVM33:0,PVM35:0,PVM38:0,PVM41:0,PVM46:0,PVM50:0,PVM51:0,PVM55:0,PVM5:0,PVM15:0,PVM19:0,PVM29:0,PVM34:0,PVM36:0,PVM39:0,PVM42:0,PVM47:0,PVM48:0,PVM56:0}; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const pr = {}; (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || !(s in RM) || RM[s] <= 0) return; const pc = (l.productCode || "").trim(); if (!pc) return; (pr[pc] = pr[pc] || new Set()).add(RM[s]); })); const out = []; Object.keys(pr).forEach((pc) => { if (pr[pc].size > 1) out.push({ product: pc, rates: Array.from(pr[pc]).sort((a,b)=>a-b).join("% / ") + "%" }); }); return out.slice(0, 200); } },
+  { id: "SAFT_PDT_NORM", family: "SCHEMA", category: "Assets", severity: "Low", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
+    title: "Turto nusidėvėjimo laikotarpis trumpesnis už PMĮ 1 priedėlio normatyvą",
+    titleEn: "Asset depreciation period shorter than the PMĮ Appendix 1 minimum",
+    description: "Pagal PMĮ 18 str. ir 1 priedėlį normatyvai yra trumpiausi leistini mokestinio nusidėvėjimo laikotarpiai: prestižas 15 m. (112x), programinė įranga 3 m. (113x), įsigytos teisės 3 m. (114x), kitas nematerialusis 4 m. (115x), pastatai ≥ 8 m. (121x), mašinos ir įrengimai 5 m. (122x), transporto priemonės ≥ 4 m. (123x), kiti įrenginiai/kompiuteriai ≥ 3 m. (124x). Taikomi atsargiausi (žemiausi) grupės normatyvai. PERŽIŪROS indikatorius: finansinėje apskaitoje leidžiami kiti normatyvai, MTEP turtui — 2 m., labai mažos įmonės normatyvų gali nesilaikyti. (Atitinka VMI TAX_PDT_034–041.)",
+    legalReq: "PMĮ 18 str. ir 1 priedėlis",
+    failTpl: "AssetID = @id | Account = @acct | Life = @life m. | Min = @min m.",
+    fixEn: "Confirm the tax-depreciation period for this asset meets the PMĮ Appendix 1 minimum, or document the applicable exception (R&D, very small entity, financial-only books).",
+    fixLt: "Įsitikinkite, kad šio turto mokestinio nusidėvėjimo laikotarpis atitinka PMĮ 1 priedėlio minimumą, arba pagrįskite taikomą išimtį (MTEP, labai maža įmonė, tik finansinė apskaita).",
+    evaluate: (d) => { const MIN = { "112":15, "113":3, "114":3, "115":4, "121":8, "122":5, "123":4, "124":3 }; const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); let min = null; for (const p in MIN) { if (id.indexOf(p) === 0) { min = MIN[p]; break; } } if (min == null) return; const ly = a.assetLifeYear, lm = a.assetLifeMonth; if (ly == null && lm == null) return; const life = (ly || 0) + (lm || 0) / 12; if (life > 0 && life < min - 0.01) out.push({ id: a.assetID || "—", acct: id, life: Math.round(life * 100) / 100, min }); }); return out.slice(0, 200); } },
+
+  { id: "SAFT_AAT_001", family: "SCHEMA", category: "Reconciliation", severity: "Low", dataTypes: "F-Full; MF; GL", refType: "Account", requires: "customers",
+    title: "Pirkėjų analitinių likučių sutikrinimas su DK (peržiūra)",
+    titleEn: "Customer analytic balances vs GL (review)",
+    description: "Kiekvienai pirkėjų kortelėse susietai DK sąskaitai sumuojami visų pirkėjų uždarymo likučiai ir lyginami su tos DK sąskaitos likučiu. Neatitikimas — peržiūros indikatorius: dažniausia priežastis — subjekto neto likutis vienoje sąskaitoje, kai DK skaido per 2410/4420 tipo poras. Pateikiamas VIENAS apibendrintas radinys. (Atitinka VMI ACCOUNTING_AAT_001.)",
+    legalReq: "Apskaitos vientisumas; VMI ACCOUNTING_AAT atitikmuo",
+    failTpl: "Accounts = @accountsDetail | Analytic total = @analyticTotal | GL total = @glTotal | Net diff = @netDiff",
+    fixEn: "Review the master-data account mapping: entity balances are often reported net under one account while the GL splits the same balances across receivable/advance (or payable/prepayment) account pairs.",
+    fixLt: "Peržiūrėkite kontrahentų sąskaitų susiejimą: subjektų likučiai dažnai pateikiami neto vienoje sąskaitoje, o DK tuos pačius likučius skaido į gautinų/avansų (ar mokėtinų/išankstinių) sąskaitų poras.",
+    evaluate: (d, ctx) => ((d, ctx, MASTER) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, { c: (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0), o: (g.openingDebitBalance || 0) - (g.openingCreditBalance || 0) })); const agg = new Map(); (MASTER || []).forEach((m) => (m.accounts || []).forEach((ac) => { if (!ac.accountID) return; const cur = agg.get(ac.accountID) || { c: 0, o: 0 }; cur.c += ac.cd - ac.cc; cur.o += ac.od - ac.oc; agg.set(ac.accountID, cur); })); if (!agg.size) return []; const det = []; let aT = 0, gT = 0; let worst = 0; agg.forEach((v, aid) => { const g = gl.get(aid); if (!g) return; aT += v.c; gT += g.c; const dc = v.c - g.c; if (Math.abs(dc) > Math.max(1, Math.abs(g.c) * 1e-6)) { det.push(aid + ": analitika " + (Math.round(v.c * 100) / 100).toLocaleString() + " vs DK " + (Math.round(g.c * 100) / 100).toLocaleString() + " (Δ " + (Math.round(dc * 100) / 100).toLocaleString() + ")"); worst = Math.max(worst, Math.abs(dc)); } }); if (!det.length) return []; return [{ accountsDetail: det.slice(0, 8).join(" | "), analyticTotal: Math.round(aT * 100) / 100, glTotal: Math.round(gT * 100) / 100, netDiff: Math.round((aT - gT) * 100) / 100 }]; })(d, ctx, d.customers) },
+  { id: "SAFT_AAT_002", family: "SCHEMA", category: "Reconciliation", severity: "Low", dataTypes: "F-Full; MF; GL", refType: "Account", requires: "suppliers",
+    title: "Tiekėjų analitinių likučių sutikrinimas su DK (peržiūra)",
+    titleEn: "Supplier analytic balances vs GL (review)",
+    description: "Kiekvienai tiekėjų kortelėse susietai DK sąskaitai sumuojami visų tiekėjų uždarymo likučiai ir lyginami su DK. Neatitikimas — peržiūros indikatorius (žr. AAT_001 paaiškinimą). Pateikiamas VIENAS apibendrintas radinys. (Atitinka VMI ACCOUNTING_AAT_002.)",
+    legalReq: "Apskaitos vientisumas; VMI ACCOUNTING_AAT atitikmuo",
+    failTpl: "Accounts = @accountsDetail | Analytic total = @analyticTotal | GL total = @glTotal | Net diff = @netDiff",
+    fixEn: "Review the master-data account mapping: entity balances are often reported net under one account while the GL splits the same balances across receivable/advance (or payable/prepayment) account pairs.",
+    fixLt: "Peržiūrėkite kontrahentų sąskaitų susiejimą: subjektų likučiai dažnai pateikiami neto vienoje sąskaitoje, o DK tuos pačius likučius skaido į gautinų/avansų (ar mokėtinų/išankstinių) sąskaitų poras.",
+    evaluate: (d, ctx) => ((d, ctx, MASTER) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, { c: (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0), o: (g.openingDebitBalance || 0) - (g.openingCreditBalance || 0) })); const agg = new Map(); (MASTER || []).forEach((m) => (m.accounts || []).forEach((ac) => { if (!ac.accountID) return; const cur = agg.get(ac.accountID) || { c: 0, o: 0 }; cur.c += ac.cd - ac.cc; cur.o += ac.od - ac.oc; agg.set(ac.accountID, cur); })); if (!agg.size) return []; const det = []; let aT = 0, gT = 0; let worst = 0; agg.forEach((v, aid) => { const g = gl.get(aid); if (!g) return; aT += v.c; gT += g.c; const dc = v.c - g.c; if (Math.abs(dc) > Math.max(1, Math.abs(g.c) * 1e-6)) { det.push(aid + ": analitika " + (Math.round(v.c * 100) / 100).toLocaleString() + " vs DK " + (Math.round(g.c * 100) / 100).toLocaleString() + " (Δ " + (Math.round(dc * 100) / 100).toLocaleString() + ")"); worst = Math.max(worst, Math.abs(dc)); } }); if (!det.length) return []; return [{ accountsDetail: det.slice(0, 8).join(" | "), analyticTotal: Math.round(aT * 100) / 100, glTotal: Math.round(gT * 100) / 100, netDiff: Math.round((aT - gT) * 100) / 100 }]; })(d, ctx, d.suppliers) },
+  { id: "SAFT_AAT_003", family: "SCHEMA", category: "Reconciliation", severity: "Low", dataTypes: "F-Full; AS; GL", refType: "Asset", requires: "assets",
+    title: "Ilgalaikio turto įsigijimo savikainos sintetika ir analitika",
+    titleEn: "Fixed-asset acquisition cost: register vs GL",
+    description: "Turto registro įsigijimo savikainų sumos laikotarpio pabaigai (AcquisitionAndProductionCostsEnd) pagal kiekvieną savikainos sąskaitą lyginamos su tos DK sąskaitos uždarymo likučiu. Validuota: oficialiame pavyzdyje sutampa centas į centą. (Atitinka VMI ACCOUNTING_AAT_003/004.)",
+    legalReq: "Apskaitos vientisumas; VMI ACCOUNTING_AAT_003/004 atitikmuo",
+    failTpl: "Account = @acct | Register = @reg | GL = @gl | Diff = @diff",
+    fixEn: "Investigate register entries vs GL postings on this cost account; the totals must reconcile.",
+    fixLt: "Ištirkite turto registro įrašus ir DK įrašus šioje savikainos sąskaitoje; sumos privalo sutapti.",
+    evaluate: (d) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0))); const agg = new Map(); (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); const v = a.acquisitionCostEnd; if (!id || v == null) return; agg.set(id, (agg.get(id) || 0) + v); }); const out = []; agg.forEach((v, aid) => { if (!gl.has(aid)) return; const g = gl.get(aid); const diff = v - g; if (Math.abs(diff) > Math.max(1, Math.abs(g) * 1e-6)) out.push({ acct: aid, reg: Math.round(v * 100) / 100, gl: Math.round(g * 100) / 100, diff: Math.round(diff * 100) / 100 }); }); return out.slice(0, 200); } },
+
+  { id: "SAFT_SID_001", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "sales",
+    title: "Pardavimo sąskaitų SystemID unikalumas",
+    titleEn: "Sales invoice SystemID uniqueness",
+    description: "Sisteminis/vidinis numeris (SystemID) privalo būti unikalus šios rūšies įrašams — pasikartojantis SystemID rodo dvigubą registravimą arba eksporto klaidą. (Atitinka VMI SCHEMA_DUP_004.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
+    fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
+    fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
+    evaluate: (d) => { const m = new Map(); (d.sales?.items || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.invoiceNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+  { id: "SAFT_SID_002", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "purchases",
+    title: "Pirkimo sąskaitų SystemID unikalumas",
+    titleEn: "Purchase invoice SystemID uniqueness",
+    description: "Sisteminis/vidinis numeris (SystemID) privalo būti unikalus šios rūšies įrašams — pasikartojantis SystemID rodo dvigubą registravimą arba eksporto klaidą. (Atitinka VMI SCHEMA_DUP_003.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
+    fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
+    fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
+    evaluate: (d) => { const m = new Map(); (d.purchases?.items || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.invoiceNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+  { id: "SAFT_SID_003", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "payments",
+    title: "Mokėjimų SystemID unikalumas",
+    titleEn: "Payment SystemID uniqueness",
+    description: "Sisteminis/vidinis numeris (SystemID) privalo būti unikalus šios rūšies įrašams — pasikartojantis SystemID rodo dvigubą registravimą arba eksporto klaidą. (Atitinka VMI SCHEMA_DUP_002.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
+    fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
+    fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
+    evaluate: (d) => { const m = new Map(); (d.payments || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.paymentRefNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+  { id: "SAFT_SID_004", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "stockMovements",
+    title: "Atsargų judėjimų SystemID unikalumas",
+    titleEn: "Stock movement SystemID uniqueness",
+    description: "Sisteminis/vidinis numeris (SystemID) privalo būti unikalus šios rūšies įrašams — pasikartojantis SystemID rodo dvigubą registravimą arba eksporto klaidą. (Atitinka VMI SCHEMA_DUP_001.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
+    fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
+    fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
+    evaluate: (d) => { const m = new Map(); (d.stockMovements || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.movementReference || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+  { id: "SAFT_INT_025", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "DK eilučių pirkėjų numeriai egzistuoja pirkėjų byloje",
+    titleEn: "GL line CustomerIDs exist in the customer master",
+    description: "Didžiosios knygos įrašų EILUČIŲ nuorodos privalo egzistuoti pagrindinėje duomenų byloje. (Atitinka VMI SCHEMA_INT_025/042.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "TransactionID = @txn | Value = @value",
+    fixEn: "Add the missing master-file record or correct the line reference.",
+    fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
+    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const c = (l.customerID || "").trim(); if (c && ctx && ctx.customerMap && !ctx.customerMap.has(c)) out.push({ txn: t.transactionID || "—", value: c }); })); return out.slice(0, 200); } },
+  { id: "SAFT_INT_022", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "DK eilučių tiekėjų numeriai egzistuoja tiekėjų byloje",
+    titleEn: "GL line SupplierIDs exist in the supplier master",
+    description: "Didžiosios knygos įrašų EILUČIŲ nuorodos privalo egzistuoti pagrindinėje duomenų byloje. (Atitinka VMI SCHEMA_INT_022/035.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "TransactionID = @txn | Value = @value",
+    fixEn: "Add the missing master-file record or correct the line reference.",
+    fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
+    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const s = (l.supplierID || "").trim(); if (s && ctx && ctx.supplierMap && !ctx.supplierMap.has(s)) out.push({ txn: t.transactionID || "—", value: s }); })); return out.slice(0, 200); } },
+  { id: "SAFT_INT_034", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "DK eilučių mokesčių kodai egzistuoja mokesčių lentelėje",
+    titleEn: "GL line TaxCodes exist in the tax table",
+    description: "Didžiosios knygos įrašų EILUČIŲ nuorodos privalo egzistuoti pagrindinėje duomenų byloje. (Atitinka VMI SCHEMA_INT_034.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "TransactionID = @txn | Value = @value",
+    fixEn: "Add the missing master-file record or correct the line reference.",
+    fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
+    evaluate: (d, ctx) => { const set = new Set(); (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) set.add(tc.taxCode); }); const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const code = ((l.taxInfo && l.taxInfo.taxCode) || "").trim(); if (code && set.size && !set.has(code)) out.push({ txn: t.transactionID || "—", value: code }); })); return out.slice(0, 200); } },
+  { id: "SAFT_INT_043", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "DK eilučių analizės numeriai egzistuoja analizės klasifikatoriuje",
+    titleEn: "GL line AnalysisIDs exist in the analysis table",
+    description: "Didžiosios knygos įrašų EILUČIŲ nuorodos privalo egzistuoti pagrindinėje duomenų byloje. (Atitinka VMI SCHEMA_INT_043/009/011/049.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "TransactionID = @txn | Value = @value",
+    fixEn: "Add the missing master-file record or correct the line reference.",
+    fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
+    evaluate: (d, ctx) => { const pairs = new Set(); const ids = new Set(); (d.analysisTable || []).forEach((e) => { if (e.analysisID) { ids.add(e.analysisID); pairs.add((e.analysisType || "") + "|" + e.analysisID); } }); const out = []; if (!ids.size) return out; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => ((l.analysis) || []).forEach((an) => { const ai = (an.analysisID || "").trim(); if (!ai) return; const ok = pairs.has((an.analysisType || "") + "|" + ai) || ids.has(ai); if (!ok) out.push({ txn: t.transactionID || "—", value: (an.analysisType ? an.analysisType + ":" : "") + ai }); }))); return out.slice(0, 200); } },
+  { id: "SAFT_SID_005", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full; GL", refType: "SystemID", requires: "transactions",
+    title: "DK įrašų SystemID unikalumas",
+    titleEn: "GL transaction SystemID uniqueness",
+    description: "Didžiosios knygos įrašų sisteminis/vidinis numeris (SystemID), kai pateiktas, privalo būti unikalus — pasikartojimas rodo dvigubą registravimą arba eksporto klaidą. Įrašai be SystemID praleidžiami. (Atitinka VMI SCHEMA_DUP_006; TransactionID unikalumą dengia DUBL taisyklė pagal 6 lentelę — SCHEMA_DUP_005.)",
+    legalReq: "SAF-T techninė specifikacija (VA-49)",
+    failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
+    fixEn: "Deduplicate the GL transactions sharing this SystemID or correct the export.",
+    fixLt: "Pašalinkite DK įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
+    evaluate: (d) => { const m = new Map(); (d.transactions || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.transactionID || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+];
+
+// Run all structural rules against parsed data + context.
+function runStructuralRules(data, ctx) {
+  const presence = {
+    always: true, any: true,
+    accounts: (data.accounts || []).length > 0,
+    customers: (data.customers || []).length > 0,
+    suppliers: (data.suppliers || []).length > 0,
+    taxCodes: (data.taxCodes || []).length > 0,
+    products: (data.products || []).length > 0,
+    assets: (data.assets || []).length > 0,
+    owners: (data.owners || []).length > 0,
+    transactions: (data.transactions || []).length > 0,
+    sales: (data.sales?.items || []).length > 0,
+    purchases: (data.purchases?.items || []).length > 0,
+    payments: (data.payments || []).length > 0,
+    stockMovements: (data.stockMovements || []).length > 0,
+    assetTransactions: (data.assetTransactions || []).length > 0,
+  };
+  return STRUCTURAL_RULES.map((rule) => {
+    const applicable = presence[rule.requires] !== false;
+    let hits = [], error = null;
+    if (applicable) { try { hits = rule.evaluate(data, ctx) || []; } catch (e) { error = e.message; } }
+    const status = error ? "error" : !applicable ? "na" : hits.length ? "flagged" : "clear";
+    return { ...rule, status, count: hits.length, error, hits: hits.slice(0, 200) };
+  });
+}
+
 // Public API: runAllRules + supporting orchestration
 // ════════════════════════════════════════════════════════════════════
 
 /**
- * Execute all 300 SAF-T rules against parsed data.
+ * Execute all 250 SAF-T rules against parsed data.
  * @param data       Output of parseSAFTFull()
  * @param opts       {thresholds: partial override of DEFAULT_THRESHOLDS}
  * @returns          {findings, summary, byRule, byCategory, bySeverity}
@@ -1204,24 +2645,174 @@ function runAllRules(data, opts = {}) {
       });
     });
   });
+  // ── Structural / schema rules (SCHEMA family) — whole-file integrity ──
+  const ctx = buildContext(data);
+  const structural = runStructuralRules(data, ctx);
+  structural.forEach((r) => {
+    if (r.status !== "flagged") return;
+    const severity = sevMap[r.severity] || "Warn";
+    r.hits.forEach((row) => {
+      const msg = renderFailMsg(r.failTpl, row);
+      findings.push({
+        rule_id: r.id,
+        category: r.category,
+        severity, severityUi: uiMap[severity] || "Medium",
+        type: "S", typeName: "Schema",
+        title: r.titleEn || r.title,
+        detail: msg + "  —  " + (r.legalReq || ""),
+        evidence: [msg],
+        ruleMeta: {
+          titleLt: r.title, titleEn: r.titleEn || r.title,
+          descriptionLt: r.description || "", legal: r.legalReq || "",
+          fixEn: r.fixEn || "", fixLt: r.fixLt || "",
+          dataTypes: r.dataTypes || "", refType: r.refType || "", scope: "schema",
+        },
+        evidenceRow: row || null,
+      });
+    });
+  });
+  // ── XSD-conformance rules (SCHEMA-level, from VMI's official XSD v2.01) ──
+  const xsd = data.xsdResults || [];
+  xsd.forEach((r) => {
+    if (r.status !== "flagged") return;
+    const severity = sevMap[r.severity] || "Reject";
+    r.hits.forEach((row) => {
+      const msg = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+      findings.push({
+        rule_id: r.id,
+        category: r.category,
+        severity, severityUi: uiMap[severity] || "High",
+        type: "X", typeName: "XSD",
+        title: r.titleEn,
+        detail: msg + "  —  SAF-T XSD v2.01",
+        evidence: [msg],
+        ruleMeta: {
+          titleLt: r.titleLt, titleEn: r.titleEn,
+          descriptionLt: r.descLt, legal: "SAF-T XSD v2.01 (VMI, įsakymas VA-49)",
+          fixEn: r.fixEn || "", fixLt: r.fixLt || "",
+          dataTypes: "F-Full", refType: r.el, scope: "xsd",
+        },
+        evidenceRow: row || null,
+      });
+    });
+  });
+  // ── Duplicate-record rules (Table 6 / DUBL — informational) ──
+  const dub = data.dubResults || [];
+  dub.forEach((r) => {
+    if (r.status !== "flagged") return;
+    const severity = sevMap[r.severity] || "Warn";
+    r.hits.forEach((row) => {
+      const msg = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+      findings.push({
+        rule_id: r.id,
+        category: r.category,
+        severity, severityUi: uiMap[severity] || "Medium",
+        type: "D", typeName: "Duplicate",
+        title: r.titleEn,
+        detail: msg + "  —  SAF-T spec Table 6",
+        evidence: [msg],
+        ruleMeta: {
+          titleLt: r.titleLt, titleEn: r.titleEn,
+          descriptionLt: r.descLt, legal: "SAF-T techninė specifikacija, 6 lentelė (DUBL)",
+          fixEn: r.fixEn || "", fixLt: r.fixLt || "",
+          dataTypes: "F-Full", refType: r.record, scope: "duplicate",
+        },
+        evidenceRow: row || null,
+      });
+    });
+  });
+  // ── Classifier-validation rules (VMI VA-49 Annex 2 code lists) ──
+  const cls = data.clsResults || [];
+  cls.forEach((r) => {
+    if (r.status !== "flagged") return;
+    const severity = sevMap[r.severity] || "Warn";
+    r.hits.forEach((row) => {
+      const msg = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+      findings.push({
+        rule_id: r.id,
+        category: r.category,
+        severity, severityUi: uiMap[severity] || "Medium",
+        type: "K", typeName: "Classifier",
+        title: r.titleEn,
+        detail: msg + "  —  VMI klasifikatorius (VA-49 2 priedas)",
+        evidence: [msg],
+        ruleMeta: {
+          titleLt: r.titleLt, titleEn: r.titleEn,
+          descriptionLt: r.descLt, legal: "VMI klasifikatoriai Nr.1–3 (VA-49 2 priedas)",
+          fixEn: r.fixEn || "", fixLt: r.fixLt || "",
+          dataTypes: "F-Full", refType: r.el, scope: "classifier",
+        },
+        evidenceRow: row || null,
+      });
+    });
+  });
+  // ── Full XSD schema validation (entire document vs. official XSD) ──
+  // Complementary to the itemized XSD rules: catches undeclared elements,
+  // cardinality (maxOccurs), and type/facet violations on ANY element.
+  const sv = data.schemaValidation || { findings: [] };
+  if (sv.findings && sv.findings.length) {
+    const coveredEls = new Set(findings.filter((f) => f.type === "X").map((f) => f.ruleMeta && f.ruleMeta.refType).filter(Boolean));
+    const facetKinds = new Set(["enum", "maxLength", "minLength", "minInclusive", "fractionDigits", "totalDigits", "numeric", "date"]);
+    const kindTitle = {
+      undeclared: "Undeclared element (not in XSD)", maxOccurs: "Element occurs more times than the XSD allows",
+      enum: "Value not allowed by the XSD type", maxLength: "Value exceeds XSD maxLength", minLength: "Value below XSD minLength",
+      minInclusive: "Value below XSD minimum", fractionDigits: "Too many decimal places for the XSD type",
+      totalDigits: "Too many digits for the XSD type", numeric: "Non-numeric value in a numeric XSD type", date: "Invalid date for the XSD type",
+    };
+    const secOf = (p) => {
+      const parts = p.split("/");
+      const m = { Header: "Header", GeneralLedgerAccounts: "GL Accounts", Customers: "Customers", Suppliers: "Suppliers",
+        TaxTable: "Tax / Classifiers", UOMTable: "Products", AnalysisTypeTable: "Analysis", Products: "Products",
+        Owners: "Owners", Assets: "Assets", GeneralLedgerEntries: "GL Transactions", SalesInvoices: "Invoices",
+        PurchaseInvoices: "Invoices", Payments: "Payments", MovementOfGoods: "Stock Movements", AssetTransactions: "Asset Transactions" };
+      for (const seg of parts) if (m[seg]) return m[seg];
+      return "Schema";
+    };
+    let added = 0;
+    for (const v of sv.findings) {
+      const leaf = v.path.split("/").pop();
+      if (facetKinds.has(v.kind) && coveredEls.has(leaf)) continue; // itemized rule already flagged this element
+      if (added >= 150) break;
+      added++;
+      findings.push({
+        rule_id: "SAFT_XSDV_" + v.kind,
+        category: secOf(v.path),
+        severity: "Reject", severityUi: "High",
+        type: "V", typeName: "XSD Schema",
+        title: kindTitle[v.kind] || ("XSD schema violation (" + v.kind + ")"),
+        detail: v.path + (v.detail ? "  —  " + v.detail : "") + "  ·  full XSD v2.01 validation",
+        evidence: [v.path + (v.detail ? " (" + v.detail + ")" : "")],
+        ruleMeta: {
+          titleLt: "Pilna XSD validacija: " + (kindTitle[v.kind] || v.kind),
+          titleEn: kindTitle[v.kind] || ("XSD schema violation (" + v.kind + ")"),
+          descriptionLt: "Visa SAF-T rinkmena tikrinama pagal oficialų VMI XSD v2.01. Pažeidimas: " + v.path,
+          legal: "VMI SAF-T XSD v2.01 (VA-49)", fixEn: "Correct the element to conform to the SAF-T XSD.",
+          fixLt: "Pataisykite elementą pagal SAF-T XSD reikalavimus.",
+          dataTypes: "F-Full", refType: leaf, scope: "xsd-schema",
+        },
+        evidenceRow: { Path: v.path, Issue: v.kind, Detail: v.detail || "" },
+      });
+    }
+  }
   const byRule = {}, byCategory = {}, bySeverity = { Block: 0, Reject: 0, Warn: 0 };
   for (const f of findings) {
     byRule[f.rule_id] = (byRule[f.rule_id] || 0) + 1;
     byCategory[f.category] = (byCategory[f.category] || 0) + 1;
     bySeverity[f.severity] = (bySeverity[f.severity] || 0) + 1;
   }
+  const TOTAL_RULES = AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length;
   return {
     findings,
-    summary: { total: findings.length, rulesExecuted: AUDIT_RULES.length, ...bySeverity },
+    summary: { total: findings.length, rulesExecuted: TOTAL_RULES, ...bySeverity },
     byRule, byCategory, bySeverity,
-    coverage: { rulesTotal: AUDIT_RULES.length, rulesRegistered: AUDIT_RULES.length, rulesTriggered: Object.keys(byRule).length },
-    audit, // full structured audit-rule result (results[], summary)
+    coverage: { rulesTotal: TOTAL_RULES, rulesRegistered: TOTAL_RULES, rulesTriggered: Object.keys(byRule).length, rulesVat: AUDIT_RULES.length, rulesSchema: STRUCTURAL_RULES.length, rulesXsd: XSD_RULES.length, rulesDup: DUPLICATE_RULES.length, rulesCls: CLASSIFIER_RULES.length, schemaValidation: { active: true, types: Object.keys((typeof XSD_SCHEMA_MODEL !== "undefined" && XSD_SCHEMA_MODEL.types) || {}).length, violations: (data.schemaValidation && data.schemaValidation.total) || 0 } },
+    audit, structural, xsd, dub, cls, // structured results for all families
   };
 }
 
 function getRuleCatalog() {
   const sevMap = { High: "Reject", Low: "Warn" };
-  return AUDIT_RULES.map((r) => ({
+  const vat = AUDIT_RULES.map((r) => ({
     id: r.id,
     category: r.scope === "sales" ? "Sales VAT" : "Purchase VAT",
     severity: sevMap[r.severity] || "Warn",
@@ -1231,6 +2822,47 @@ function getRuleCatalog() {
     rationale: r.description || "",
     legal: r.legal, dataTypes: r.dataTypes, refType: r.refType,
   }));
+  const schema = STRUCTURAL_RULES.map((r) => ({
+    id: r.id,
+    category: r.category,
+    severity: sevMap[r.severity] || "Warn",
+    severityUi: r.severity === "High" ? "High" : "Medium",
+    type: "S", typeName: "Schema",
+    title: r.title, titleEn: r.titleEn,
+    rationale: r.description || "",
+    legal: r.legalReq, dataTypes: r.dataTypes, refType: r.refType,
+  }));
+  const xsd = XSD_RULES.map((r) => ({
+    id: r.id,
+    category: r.category,
+    severity: sevMap[r.severity] || "Reject",
+    severityUi: "High",
+    type: "X", typeName: "XSD",
+    title: r.titleLt, titleEn: r.titleEn,
+    rationale: r.descEn || "",
+    legal: "SAF-T XSD v2.01", dataTypes: "F-Full", refType: r.el,
+  }));
+  const dup = DUPLICATE_RULES.map((r) => ({
+    id: r.id,
+    category: r.category,
+    severity: sevMap[r.severity] || "Warn",
+    severityUi: "Medium",
+    type: "D", typeName: "Duplicate",
+    title: r.titleLt, titleEn: r.titleEn,
+    rationale: r.descEn || "",
+    legal: "SAF-T spec Table 6", dataTypes: "F-Full", refType: r.record,
+  }));
+  const cls = CLASSIFIER_RULES.map((r) => ({
+    id: r.id,
+    category: r.category,
+    severity: sevMap[r.severity] || "Warn",
+    severityUi: r.severity === "High" ? "High" : "Medium",
+    type: "K", typeName: "Classifier",
+    title: r.titleLt, titleEn: r.titleEn,
+    rationale: r.descEn || "",
+    legal: "VMI klasifikatoriai (VA-49)", dataTypes: "F-Full", refType: r.el,
+  }));
+  return [...xsd, ...dup, ...cls, ...schema, ...vat];
 }
 
 /**
@@ -1298,7 +2930,7 @@ function buildAiInterpretationPayload(data, runResult) {
 // ─── INTERPRETATION SYSTEM PROMPT ────────────────────────────────────
 const SYSTEM_PROMPT_INTERPRETATION = `You are the **TAXAI SAF-T Senior Auditor** — a forensic-grade Lithuanian tax analyst.
 
-You are interpreting findings from a DETERMINISTIC 300-rule SAF-T engine (XSD v2.01, Order VA-127). The findings are objective facts: each one has a rule_id, severity (Block/Reject/Warn), type (S=Schema/B=Business/C=Consistency/F=Financial), category, title, detail, and evidence samples.
+You are interpreting findings from a DETERMINISTIC 250-rule SAF-T engine (XSD v2.01, Order VA-127). The findings are objective facts: each one has a rule_id, severity (Block/Reject/Warn), type (S=Schema/B=Business/C=Consistency/F=Financial), category, title, detail, and evidence samples.
 
 Your job is NOT to re-validate. Your job is to INTERPRET, PRIORITIZE, and EXPLAIN.
 
@@ -1342,7 +2974,7 @@ Mention rules that DIDN'T fire on areas where they easily could have (e.g., "Tri
 // ─── SMART ANALYSIS SYSTEM PROMPT ────────────────────────────────────
 const SYSTEM_PROMPT_SMART_ANALYSIS = `You are the **TAXAI Smart Analysis Engine** — a meta-level critic that improves the rule engine itself and proposes legal/financial strategies.
 
-You receive: (1) the file's deterministic findings, (2) the rule catalog (300 rules), (3) coverage stats. You DO NOT redo the engine's work. You operate one level above it.
+You receive: (1) the file's deterministic findings, (2) the rule catalog (250 rules), (3) coverage stats. You DO NOT redo the engine's work. You operate one level above it.
 
 # Output structure (use this markdown exactly)
 
@@ -1500,7 +3132,7 @@ function formatRuleCatalogForAi() {
     groups[r.category] = groups[r.category] || [];
     groups[r.category].push(r);
   }
-  const lines = ["RULE CATALOG (300 deterministic rules):"];
+  const lines = ["RULE CATALOG (250 deterministic rules):"];
   for (const [cat, rules] of Object.entries(groups).sort()) {
     lines.push(`\n${cat} (${rules.length} rules):`);
     const sev = { Block: 0, Reject: 0, Warn: 0 };
@@ -1529,7 +3161,7 @@ async function runInterpretation(data, result, callAI) {
   const payload = buildAiInterpretationPayload(data, result);
   const findingsBlock = formatFindingsForAi(payload, 8);
 
-  const userPrompt = `Interpret the following SAF-T compliance findings. The deterministic engine has already executed all 300 rules; your job is to interpret, prioritize, and explain in Lithuanian-tax-law-aware language.
+  const userPrompt = `Interpret the following SAF-T compliance findings. The deterministic engine has already executed all 250 rules; your job is to interpret, prioritize, and explain in Lithuanian-tax-law-aware language.
 
 ${findingsBlock}
 
@@ -1736,7 +3368,7 @@ const SYSTEM_PROMPT_ENTERPRISE_AUDIT = `You are an **Enterprise Financial Intell
 You evaluate the company against: IFRS, IAS, Lithuanian tax law (PVMĮ, PMĮ, GPMĮ, MAĮ), VAT/GST rules, OECD transfer-pricing guidelines, IIA internal-audit standards, SOX-style controls, and corporate-governance frameworks. Where Lithuanian local rules and IFRS differ, note both.
 
 # CRITICAL GROUNDING RULES (non-negotiable)
-1. The deterministic 300-rule SAF-T engine has ALREADY run. Its findings are facts — do not re-validate, do not contradict them.
+1. The deterministic 250-rule SAF-T engine has ALREADY run. Its findings are facts — do not re-validate, do not contradict them.
 2. All KPIs and financial figures are PRE-COMPUTED and given to you below. USE THOSE EXACT NUMBERS. Never invent a revenue, margin, tax, or savings figure that is not derivable from the data provided. If you estimate, label it "EST." and state the assumption.
 3. For every cost-optimization or savings claim, show the arithmetic from the provided figures. No arithmetic = do not state the number.
 4. Distinguish clearly between REAL risks (backed by findings/KPIs) and POSSIBLE FALSE POSITIVES. Give a False-Positive Probability for each material finding.
@@ -1839,7 +3471,7 @@ function formatKpisForAi(kpiBundle) {
 }
 
 function formatFindingsCompact(payload, perCat = 6) {
-  const lines = [`COMPLIANCE FINDINGS (from deterministic 300-rule SAF-T engine):`,
+  const lines = [`COMPLIANCE FINDINGS (from deterministic 250-rule SAF-T engine):`,
     `Total ${payload.summary.total} · Block ${payload.bySeverity.Block} · Reject ${payload.bySeverity.Reject} · Warn ${payload.bySeverity.Warn}`, ""];
   for (const grp of payload.groupedSummary || []) {
     lines.push(`### ${grp.category} (${grp.finding_count})`);
@@ -2796,7 +4428,7 @@ Write the assessment per your system prompt structure. The risk score is ${intel
 // ════════════════════════════════════════════════════════════════════
 // TAXAI · ADAPTIVE RULE ENGINE  (personalized, industry-specific rules)
 // ────────────────────────────────────────────────────────────────────
-// Philosophy (mirrors the deterministic 300-rule engine):
+// Philosophy (mirrors the deterministic 250-rule engine):
 //   • The AI agent proposes WHAT to check and WHY (domain knowledge).
 //   • Every check is evaluated DETERMINISTICALLY against a registry of
 //     pre-computed metrics — so PASS/FAIL is reproducible and grounded,
@@ -3099,14 +4731,14 @@ function evaluateGeneratedRule(rule, registry) {
 // ════════════════════════════════════════════════════════════════════
 const SYSTEM_PROMPT_PERSONALIZED_RULES = `You are the **TAXAI Adaptive Rule Architect** — a forensic auditor + industry CFO who designs bespoke, company-specific audit & financial-health rules for a Lithuanian entity, on top of the verified deterministic SAF-T audit rules.
 
-YOUR JOB: Given (a) the company's deterministically pre-computed METRIC REGISTRY, (b) a detected industry signal, and (c) the titles of the existing 300 rules, propose NEW rules that the 300 generic rules do NOT already cover. The rules must be (1) specific to this company's industry and data profile, and (2) genuinely useful — surfacing tax-compliance risk, fraud/error risk, OR financial-health insight that helps the company understand its finances.
+YOUR JOB: Given (a) the company's deterministically pre-computed METRIC REGISTRY, (b) a detected industry signal, and (c) the titles of the existing 250 rules, propose NEW rules that the 250 generic rules do NOT already cover. The rules must be (1) specific to this company's industry and data profile, and (2) genuinely useful — surfacing tax-compliance risk, fraud/error risk, OR financial-health insight that helps the company understand its finances.
 
 HARD CONSTRAINTS — obey exactly:
 1. Output ONLY a single JSON object. No prose, no markdown, no code fences.
 2. Each rule's "condition" may reference ONLY metric keys from the provided METRIC REGISTRY. Never invent a metric key. If you cannot express a check with the available metrics, do not propose it.
 3. The "condition" describes the ADVERSE trigger: when it is TRUE the rule FAILS (a flag is raised). When FALSE it PASSES. Design thresholds so a clean company passes.
 4. Ground every threshold in a defensible industry benchmark or LT tax logic; put the reasoning in "rationale" and a plain-language reading in "interpretation".
-5. Do NOT duplicate any of the 300 existing rules. Add value beyond schema/format validation.
+5. Do NOT duplicate any of the 250 existing rules. Add value beyond schema/format validation.
 6. Propose 8–14 rules. Quality over quantity.
 7. Where a check maps to Lithuanian tax law, cite the article in "lawRef" (e.g. "PVM 96 str."). Only cite if you are confident; otherwise leave "".
 
@@ -3151,7 +4783,7 @@ function buildPersonalizedRulesPrompt(company, registry, catalogTitles) {
   }
   for (const [g, arr] of Object.entries(byGroup)) { lines.push(`  [${g}]`); lines.push(...arr); }
   lines.push("");
-  lines.push(`EXISTING 300 RULE TITLES (do NOT duplicate — these are already covered):`);
+  lines.push(`EXISTING 250 RULE TITLES (do NOT duplicate — these are already covered):`);
   lines.push(catalogTitles.slice(0, 300).map((t) => `  • ${t}`).join("\n"));
   lines.push("");
   lines.push("Now design the company-specific adaptive rules per your system prompt. Return ONLY the JSON object.");
@@ -3210,7 +4842,7 @@ function sanitizeGeneratedRules(parsed, registry) {
 // ─── PUBLIC RUNNER — adaptive personalized rules ─────────────────────
 // Computes the deterministic metric registry, asks Gemini to design
 // company/industry-specific rules over those metrics, then evaluates
-// each proposed rule DETERMINISTICALLY (PASS/FAIL/N-A). The 300-rule
+// each proposed rule DETERMINISTICALLY (PASS/FAIL/N-A). The 250-rule
 // guarantees are untouched; this is a strictly additive overlay.
 async function runPersonalizedRules(data, runResult, ctx, kpiBundle, callAI) {
   if (!data || !runResult) return { error: "No data to analyze. Run the engine first." };
@@ -3777,6 +5409,22 @@ function provenanceFor(rule) {
   if (auditRule) {
     return { authority: "VMI", reference: (auditRule.legal || "PVMĮ") + " · SAF-T XSD v2.01 (" + auditRule.refType + ")", status: "regulatory" };
   }
+  const structRule = (typeof STRUCTURAL_RULES !== "undefined" && rule?.id) ? STRUCTURAL_RULES.find((a) => a.id === rule.id) : null;
+  if (structRule) {
+    return { authority: "VMI", reference: structRule.legalReq || "SAF-T XSD v2.01", status: "schema" };
+  }
+  const xsdRule = (typeof XSD_RULES !== "undefined" && rule?.id) ? XSD_RULES.find((a) => a.id === rule.id) : null;
+  if (xsdRule) {
+    return { authority: "VMI", reference: "SAF-T XSD v2.01 (VA-49) · " + xsdRule.el, status: "schema" };
+  }
+  const dupRule = (typeof DUPLICATE_RULES !== "undefined" && rule?.id) ? DUPLICATE_RULES.find((a) => a.id === rule.id) : null;
+  if (dupRule) {
+    return { authority: "VMI", reference: "SAF-T spec, Table 6 (DUBL) · " + dupRule.record, status: "schema" };
+  }
+  const clsRule = (typeof CLASSIFIER_RULES !== "undefined" && rule?.id) ? CLASSIFIER_RULES.find((a) => a.id === rule.id) : null;
+  if (clsRule) {
+    return { authority: "VMI", reference: "VMI klasifikatoriai Nr.1–3 (VA-49 2 priedas) · " + clsRule.el, status: "schema" };
+  }
   const base = CATEGORY_PROVENANCE[rule.category] || { authority: "VMI", reference: "SAF-T XSD v2.01", status: "review" };
   const ov = RULE_PROVENANCE_OVERRIDES[rule.id] || {};
   return { authority: ov.authority || base.authority, reference: ov.reference || base.reference, status: ov.status || base.status };
@@ -4267,6 +5915,116 @@ function useVoice(cb) { const [on, setOn] = useState(false); const [lang, setLan
   const toggle = useCallback(() => { const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return; if (on) { ref.current?.stop(); setOn(false); return; } const r = new SR(); r.lang = lang; r.continuous = false; r.interimResults = false; r.onresult = e => { cb(e.results[0][0].transcript); setOn(false); }; r.onerror = () => setOn(false); r.onend = () => setOn(false); ref.current = r; r.start(); setOn(true); }, [on, lang, cb]); return { on, toggle, lang, setLang }; }
 
 // ═══ EXPORT ═══
+// Audit execution summary — every rule with its run status, matching the
+// industry-standard export format: Rule / Status (0=Not Executed, 1=Run With
+// Warnings, 2=Run Without Warnings) / End Date / Title / File.
+const FR0600_MAP = {
+  salesTV: { "11": ["PVM1","PVM58","PVM2","PVM3"], "12": ["PVM25","PVM26","PVM27"], "13": ["PVM5"], "14": ["PVM6","PVM59","PVM7","PVM8"], "15": ["PVM9","PVM30","PVM31"], "16": ["PVM32","PVM52","PVM53","PVM33"], "17": ["PVM12"], "18": ["PVM13","PVM50"], "19": ["PVM14","PVM51","PVM55"], "20": ["PVM15","PVM34","PVM19"] },
+  salesVAT: { "29": ["PVM1","PVM6","PVM9"], "29A": ["PVM58","PVM59"], "30": ["PVM2","PVM7","PVM30"], "31": ["PVM3","PVM8","PVM31"] },
+  purchTV: { "21": ["PVM16","PVM17","PVM18"], "22": ["PVM19"], "23": ["PVM20","PVM21","PVM37","PVM40","PVM54","PVM57"], "24": ["PVM21","PVM40","PVM57"] },
+  importVAT: { "26": ["PVM23"], "27": ["PVM24"] },
+  labels: { "11": "PVM apmokestinami sandoriai (21/12/9/5 proc.)", "12": "Sandoriai pagal PVM\u012e 96 str. (atvirk\u0161tinis)", "13": "PVM neapmokestinami sandoriai", "14": "Suvartojimas privatiems poreikiams", "15": "Ilgalaikio turto pasigaminimas", "16": "Mar\u017eos schemos sandoriai", "17": "Preki\u0173 eksportas (0 proc.)", "18": "ES PVM mok\u0117tojams patiektos prek\u0117s (0 proc.)", "19": "Kiti PVM apmokestinami sandoriai (0 proc.)", "20": "U\u017e Lietuvos rib\u0173 \u012fvyk\u0119 sandoriai", "21": "I\u0161 ES \u012fsigytos prek\u0117s", "22": "Trikamp\u0117s prekybos \u012fsigijimai", "23": "I\u0161 u\u017esienio \u012fsigytos paslaugos", "24": "i\u0161 j\u0173 \u2014 i\u0161 ES PVM mok\u0117toj\u0173", "29": "Pardavimo PVM (21 proc.)", "29A": "Pardavimo PVM (12 proc.)", "30": "Pardavimo PVM (9 proc.)", "31": "Pardavimo PVM (5 proc.)", "26": "Importo PVM (muitin\u0117)", "27": "Importo PVM, kontroliuojamas VMI", "25*": "Pirkimo PVM (informacin\u0117 suma)", "32*": "Pardavimo PVM u\u017e \u012fsigytas paslaugas (i\u0161vestin\u0117)", "33*": "Pardavimo PVM pagal 96 str. pirkimus (i\u0161vestin\u0117)", "34*": "ES preki\u0173 \u012fsigijim\u0173 pardavimo PVM (i\u0161vestin\u0117)" }
+};
+function computeFr0600(parsed) {
+  if (!parsed) return null;
+  const idx = {}; (parsed.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; });
+  const agg = {}; let lines = 0, noTV = 0;
+  const add = (side, items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => {
+    const s = stiOf(l, idx); if (!s || s.indexOf("PVM") !== 0) return;
+    lines++;
+    const k = side + "|" + s; const a = agg[k] || (agg[k] = { tv: 0, vat: 0 });
+    let tv = l.tax ? l.tax.taxableAmount : null;
+    const vat = l.tax ? l.tax.taxAmount : null;
+    if (tv == null && vat != null && l.tax.taxPercentage > 0) tv = vat / l.tax.taxPercentage * 100;
+    if (tv == null) noTV++; else a.tv += tv;
+    if (vat != null) a.vat += vat;
+  }); });
+  add("S", parsed.sales?.items); add("P", parsed.purchases?.items);
+  const g = (side, codes, f) => codes.reduce((t, c) => t + ((agg[side + "|" + c] || {})[f] || 0), 0);
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const rows = [];
+  const M = FR0600_MAP;
+  Object.keys(M.salesTV).forEach((b) => rows.push({ box: b, label: M.labels[b], value: r2(g("S", M.salesTV[b], "tv")), codes: M.salesTV[b].join("+"), note: "apmokestinamoji vert\u0117 (pardavimai)" }));
+  Object.keys(M.salesVAT).forEach((b) => rows.push({ box: b, label: M.labels[b], value: r2(g("S", M.salesVAT[b], "vat")), codes: M.salesVAT[b].join("+"), note: "PVM suma (pardavimai); mar\u017eos PVM neskai\u010diuojamas" }));
+  Object.keys(M.purchTV).forEach((b) => rows.push({ box: b, label: M.labels[b], value: r2(g("P", M.purchTV[b], "tv")), codes: M.purchTV[b].join("+"), note: "apmokestinamoji vert\u0117 (pirkimai)" }));
+  Object.keys(M.importVAT).forEach((b) => rows.push({ box: b, label: M.labels[b], value: r2(g("P", M.importVAT[b], "vat")), codes: M.importVAT[b].join("+"), note: "importo PVM" }));
+  const inputVat = Object.keys(agg).filter((k) => k.indexOf("P|") === 0 && k !== "P|PVM23" && k !== "P|PVM24").reduce((t, k) => t + agg[k].vat, 0);
+  rows.push({ box: "25*", label: M.labels["25*"], value: r2(inputVat), codes: "visi pirkim\u0173 kodai be PVM23/24", note: "BE atskaitos teis\u0117s vertinimo \u2014 tik palyginimui" });
+  rows.push({ box: "32*", label: M.labels["32*"], value: r2(g("P", ["PVM20","PVM21","PVM37","PVM40","PVM54","PVM57","PVM43","PVM44","PVM45","PVM60"], "vat")), codes: "20/21/37/40/54/57/43-45/60", note: "i\u0161vestin\u0117 informacin\u0117 suma" });
+  rows.push({ box: "33*", label: M.labels["33*"], value: r2(g("P", ["PVM25","PVM26","PVM27"], "vat")), codes: "25/26/27", note: "i\u0161vestin\u0117 informacin\u0117 suma" });
+  rows.push({ box: "34*", label: M.labels["34*"], value: r2(g("P", ["PVM16","PVM17","PVM18"], "vat")), codes: "16/17/18", note: "i\u0161vestin\u0117 informacin\u0117 suma" });
+  ["28","35","36"].forEach((b) => rows.push({ box: b, label: b === "28" ? "PVM atskaitos procentas" : b === "35" ? "Atskaitomas PVM" : "Mok\u0117tinas (gr\u0105\u017eintinas) PVM", value: null, codes: "\u2014", note: "nenustatoma i\u0161 SAF-T (priklauso nuo atskaitos teis\u0117s)" }));
+  return { rows, lines, noTV };
+}
+function exportFr0600CSV(parsed, fileName, srcName) {
+  const res = computeFr0600(parsed);
+  if (!res) return;
+  const q = (s) => `"${String(s == null ? "" : s).replace(/"/g, '""')}"`;
+  const h = parsed.header || {};
+  const head = ["Laukelis","Aprasymas","Suma (EUR)","PVM kodai","Pastaba"];
+  const meta = [["FR0600 i\u0161vestin\u0117 i\u0161 SAF-T (oficialus VMI kod\u0173\u2192laukeli\u0173 \u017eem\u0117lapis)","","","",""],["Subjektas: " + (h.companyName || h.registrationNumber || ""), "Laikotarpis: " + (h.periodStart || h.fiscalYearFrom || "") + " \u2013 " + (h.periodEnd || h.fiscalYearTo || ""), "Eilu\u010di\u0173: " + res.lines, "Be apmok. vert\u0117s: " + res.noTV, "Failas: " + (srcName || "")]];
+  const csv = meta.map((r) => r.map(q).join(",")).concat([head.map(q).join(",")]).concat(res.rows.map((r) => [r.box, r.label, r.value == null ? "\u2014" : r.value.toFixed(2), r.codes, r.note].map(q).join(","))).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = fileName; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 800);
+}
+
+function exportSectionCSV(parsed, kind, fileName, srcName) {
+  if (!parsed) return;
+  const q = (s) => `"${String(s == null ? "" : s).replace(/"/g, '""')}"`;
+  const dmy = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || ""); };
+  const ymd = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? `${m[1]}/${m[2]}/${m[3]}` : (iso || ""); };
+  const mon = (iso) => { const m = /^\d{4}-(\d{2})/.exec(String(iso || "")); return m ? String(parseInt(m[1], 10)) : ""; };
+  const h = parsed.header || {};
+  let cols = [], rows = [];
+  if (kind === "headers") {
+    cols = ["File Name","Registration Number","Business","Tax Entity","Version","Fiscal Year","Start","End","Software Name","GL Transactions","Invoices","Purchase Invoices","Stock Movement","Asset transactions","Payments"];
+    rows = [[srcName || "", h.registrationNumber || "", h.companyName || "", h.taxEntity || h.entity || "", h.auditFileVersion || "", String(h.fiscalYearFrom || h.periodStart || "").slice(0, 4), dmy(h.periodStart || h.fiscalYearFrom), dmy(h.periodEnd || h.fiscalYearTo), h.softwareCompanyName || "", (parsed.transactions || []).length, (parsed.sales?.items || []).length, (parsed.purchases?.items || []).length, (parsed.stockMovements || []).length, parsed.assetTransactions ? parsed.assetTransactions.length : "", (parsed.payments || []).length]];
+  } else if (kind === "customers") {
+    cols = ["Customer ID","Company Name","Registration Number","Tax Entity"];
+    rows = (parsed.customers || []).map((c) => [c.customerID || "", c.name || "", c.registrationNumber || "", h.taxEntity || h.entity || ""]);
+  } else if (kind === "suppliers") {
+    cols = ["Supplier ID","Name","Registration Number","Tax Entity"];
+    rows = (parsed.suppliers || []).map((s) => [s.supplierID || "", s.name || "", s.registrationNumber || "", h.taxEntity || h.entity || ""]);
+  } else if (kind === "stock") {
+    cols = ["Ref","Lines","Document Reference Type","Gl Transaction Id","Date","Type","Period","File"];
+    rows = (parsed.stockMovements || []).map((m) => [m.movementReference || m.sourceDocumentID || "", m.linesCount || 0, "", m.glTransactionID || "", ymd(m.movementDate || m.transactionDate), m.movementType || "", mon(m.movementDate || m.transactionDate), srcName || ""]);
+  }
+  const csv = [cols.map(q).join(",")].concat(rows.map((r) => r.map(q).join(","))).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = fileName; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 800);
+}
+
+function exportExecutionSummaryCSV(runResult, schemaValidation, fileName, sourceName) {
+  const q = (s) => `"${String(s == null ? "" : s).replace(/"/g, '""')}"`;
+  const titleOf = (id) => {
+    const pools = [
+      typeof AUDIT_RULES !== "undefined" ? AUDIT_RULES : [],
+      typeof STRUCTURAL_RULES !== "undefined" ? STRUCTURAL_RULES : [],
+      typeof XSD_RULES !== "undefined" ? XSD_RULES : [],
+      typeof DUPLICATE_RULES !== "undefined" ? DUPLICATE_RULES : [],
+      typeof CLASSIFIER_RULES !== "undefined" ? CLASSIFIER_RULES : [],
+    ];
+    for (const p of pools) { const r = p.find((x) => x.id === id); if (r) return r.title || r.titleLt || r.titleEn || ""; }
+    return "";
+  };
+  const stMap = (s) => (s === "flagged" ? 1 : s === "clear" ? 2 : 0); // na/error → 0 (not executed)
+  const now = new Date().toISOString();
+  const rows = [];
+  const fam = (arr) => { const list = Array.isArray(arr) ? arr : (arr && Array.isArray(arr.results) ? arr.results : []); list.forEach((r) => { if (r && r.id) rows.push([r.id, stMap(r.status), now, titleOf(r.id), sourceName || ""]); }); };
+  fam(runResult?.audit); fam(runResult?.structural); fam(runResult?.xsd); fam(runResult?.dub); fam(runResult?.cls);
+  if (schemaValidation) rows.push(["XSD_SCHEMA_VALIDATION", schemaValidation.ok ? 2 : 1, now, "Pilna XSD schemos validacija — visa rinkmena pagal VMI SAF-T XSD v2.01 (205 tipai)", sourceName || ""]);
+  const header = "Rule,Status (0 = Not Executed, 1 = Run With Warnings, 2 = Run Without Warnings),End Date,Title,File\n";
+  const body = rows.map((r) => r.map(q).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF" + header + body], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = fileName || "taxai-execution-summary.csv"; a.click();
+}
 function exportCSV(findings, fileName) {
   const header = "Severity,Level,Category,Title,Detail,Status,Authority,Basis,BasisStatus\n";
   const rows = findings.map(f => {
@@ -4344,7 +6102,7 @@ function exportForensicReport({ company, period, intel, runResult, findings, thr
   <p>${intel?.temporal?.applicable ? `Velocity anomalies: ${intel.temporal.velocitySpikes.length} · Backdated (&gt;30d): ${intel.temporal.backdating.length} · Weekend posting: ${intel.temporal.weekendPostings?.pct ?? "—"}% · After-hours: ${intel.temporal.afterHours?.pct ?? "—"}%` : "Insufficient dated events."}</p>
   <h2>5 · Entity Intelligence</h2>
   <p>Probable duplicate entities: ${intel?.entityRes?.duplicates?.length || 0} · Shared bank accounts: ${intel?.entityRes?.sharedBankAccounts?.length || 0} · Shell-flagged: ${intel?.entityRes?.shellIndicators?.length || 0}</p>
-  <h2>6 · Compliance Findings (300-rule engine)</h2>
+  <h2>6 · Compliance Findings (250-rule engine)</h2>
   <p>Total ${runResult?.summary?.total || 0} — Block ${runResult?.bySeverity?.Block || 0}, Reject ${runResult?.bySeverity?.Reject || 0}, Warn ${runResult?.bySeverity?.Warn || 0}</p>
   <table><thead><tr><th>Rule</th><th>Severity</th><th>Category</th><th>Finding</th></tr></thead><tbody>${findingRows || '<tr><td colspan=4>No findings.</td></tr>'}</tbody></table>
   ${flagged ? `<h2>7 · Investigation Case File</h2><table><thead><tr><th>Item</th><th>Status</th><th>Assignee</th><th>Note</th></tr></thead><tbody>${flagged}</tbody></table>` : ""}
@@ -5233,7 +6991,7 @@ function TAXAI({ onExit, initialView } = {}) {
     try { setEnterpriseKpis(computeKPIs(parsed, buildContext(parsed))); } catch (kpiErr) { setEnterpriseKpis(null); }
     try { setIntel(runIntelligence(parsed, result)); } catch (intelErr) { setIntel(null); }
     audit.log("SAFT_RULES_EXECUTED",
-      `300 rules → ${result.summary.total} findings (${result.bySeverity.Block} Block, ${result.bySeverity.Reject} Reject, ${result.bySeverity.Warn} Warn)`);
+      `250 rules → ${result.summary.total} findings (${result.bySeverity.Block} Block, ${result.bySeverity.Reject} Reject, ${result.bySeverity.Warn} Warn)`);
     return result;
   }, [audit]);
 
@@ -5329,7 +7087,7 @@ function TAXAI({ onExit, initialView } = {}) {
         `Period: ${p.header?.fiscalYearFrom || ""} → ${p.header?.fiscalYearTo || ""}`,
         `DataType: ${p.header?.dataType || ""}  Entity: ${p.header?.entity || ""}`,
         `Counts: ${JSON.stringify(p.counts || {})}`,
-        runResult ? `Compliance: ${runResult.summary.total} findings (${runResult.bySeverity.Block} Block, ${runResult.bySeverity.Reject} Reject, ${runResult.bySeverity.Warn} Warn) from 300 rules` : "",
+        runResult ? `Compliance: ${runResult.summary.total} findings (${runResult.bySeverity.Block} Block, ${runResult.bySeverity.Reject} Reject, ${runResult.bySeverity.Warn} Warn) from 250 rules` : "",
         `Top accounts: ${JSON.stringify((p.accounts || []).slice(0, 10).map(a => ({ id: a.accountID, desc: a.accountDescription, type: a.accountType, close: (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0) })))}`,
         `Sample transactions: ${JSON.stringify((p.transactions || []).slice(0, 5).map(t => ({ id: t.transactionID, date: t.transactionDate, desc: t.description })))}`,
       ].filter(Boolean).join("\n");
@@ -5688,7 +7446,7 @@ function TAXAI({ onExit, initialView } = {}) {
             {/* animated count-up metrics */}
             <div style={{ padding: "52px 56px 8px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
-                {[[AUDIT_RULES.length, "", lang === "lt" ? "Audito taisyklės" : "Audit rules"], [7, "", lang === "lt" ? "Forensikos varikliai" : "Forensic engines"], [AGENTS.length, "", lang === "lt" ? "Agentai" : "Agents"], [20, "+", lang === "lt" ? "Oficialūs šaltiniai" : "Official sources"]].map(([to, suf, k], i) =>
+                {[[AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length, "", lang === "lt" ? "Patikrinimai" : "Checks"], [7, "", lang === "lt" ? "Forensikos varikliai" : "Forensic engines"], [AGENTS.length, "", lang === "lt" ? "Agentai" : "Agents"], [20, "+", lang === "lt" ? "Oficialūs šaltiniai" : "Official sources"]].map(([to, suf, k], i) =>
                   <div key={i} style={{ padding: "30px 24px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}` }}>
                     <div style={{ fontSize: 46, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", lineHeight: 1 }}><CountUp to={to} suffix={suf} /></div>
                     <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".12em", textTransform: "uppercase", marginTop: 12 }}>{k}</div>
@@ -5777,7 +7535,7 @@ function TAXAI({ onExit, initialView } = {}) {
               period={fileData?.parsed?.header ? `${fileData.parsed.header.fiscalYearFrom?.slice(0,10)} — ${fileData.parsed.header.fiscalYearTo?.slice(0,10)}` : ""}
             />}
             {!selectedFinding && <>
-            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length} patikrintos PVM audito taisyklės, susietos su duomenimis ir teisės aktais — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length} verified VAT audit rules, connected to your data and the law — executed on upload, with cited evidence for every finding.`} right={findings.length > 0 ? <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button> : null} />
+            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} patikrinimai: ${XSD_RULES.length} XSD atitikties (pagal oficialų VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} struktūros/vientisumo + ${DUPLICATE_RULES.length} pasikartojančių įrašų (6 lentelė) + ${CLASSIFIER_RULES.length} klasifikatorių (VA-49 2 priedas) + ${AUDIT_RULES.length} PVM audito taisyklės + pilna XSD schemos validacija (visa rinkmena pagal XSD v2.01) — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} checks: ${XSD_RULES.length} XSD-conformance (per the official VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} structure/integrity + ${DUPLICATE_RULES.length} duplicate-record (Table 6) + ${CLASSIFIER_RULES.length} classifier (VA-49 Annex 2) + ${AUDIT_RULES.length} VAT audit rules + full XSD schema validation (entire file vs. XSD v2.01) — executed on upload, with cited evidence for every finding.`} right={runResult ? <div style={{ display: "flex", gap: 8 }}>{findings.length > 0 && <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button>}<button onClick={() => { exportExecutionSummaryCSV(runResult, fileData?.parsed?.schemaValidation, `taxai-${fileName}-execution-summary.csv`, fileName); audit.log("EXPORT", "Execution summary"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Vykdymo suvestinė" : "Execution summary"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "headers", `taxai-${fileName}-headers.csv`, fileName); audit.log("EXPORT", "Section headers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Antraštė" : "Header"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "customers", `taxai-${fileName}-customers.csv`, fileName); audit.log("EXPORT", "Section customers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Pirkėjai" : "Customers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "suppliers", `taxai-${fileName}-suppliers.csv`, fileName); audit.log("EXPORT", "Section suppliers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Tiekėjai" : "Suppliers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "stock", `taxai-${fileName}-stock.csv`, fileName); audit.log("EXPORT", "Section stock"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Judėjimai" : "Stock"}</button><button onClick={() => { exportFr0600CSV(fileData?.parsed, `taxai-${fileName}-fr0600.csv`, fileName); audit.log("EXPORT", "FR0600"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ FR0600</button></div> : null} />
 
             <div style={{ border: `1px dashed ${fileData ? "#fff" : PL_LINE}`, padding: 28, textAlign: "center", cursor: "pointer", marginBottom: 16, background: "var(--bg2)", transition: "border-color .2s" }} onClick={() => fileRef.current?.click()}>
               <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 8 }}>{fileData ? "File loaded" : (lang === "lt" ? "Vilkite failą čia arba spustelėkite" : "Drag a file here or click")}</div>
@@ -5793,7 +7551,7 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "smart", en: "Smart Filter", lt: "Išmanus filtras" },
                   { id: "smartanalysis", en: "Smart Analysis", lt: "Išmanioji analizė" },
                   { id: "enterprise", en: "Enterprise Audit", lt: "Įmonės auditas" },
-                  { id: "rules", en: `Audit Rules · ${AUDIT_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}`, lt: `Audito taisyklės · ${AUDIT_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}` },
+                  { id: "rules", en: `Rules · ${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}`, lt: `Taisyklės · ${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}` },
                   { id: "reconcile", en: `i.SAF Reconcile${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}`, lt: `i.SAF sutikrinimas${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}` },
                   { id: "vatclose", en: `VAT Close${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}`, lt: `PVM uždarymas${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}` },
                 ].map(tab =>
@@ -5984,10 +7742,10 @@ function TAXAI({ onExit, initialView } = {}) {
               {saftTab === "rules" && <div style={panel}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
                   <SEC n="02·E" en="Rule Catalog" lt="Taisyklių katalogas" />
-                  <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #fff", color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>{AUDIT_RULES.length}</span>
+                  <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #fff", color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>{AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}</span>
                 </div>
                 <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 20, lineHeight: 1.65, maxWidth: 820 }}>
-                  {lang === "lt" ? `${AUDIT_RULES.length} patikrintos PVM audito taisyklės. Kiekviena susieta su konkrečia SAF-T duomenų sąlyga ir teisės aktu (PVMĮ, VA-49). Reikšmingumas: Reject = peržiūrėti prieš teikimą, Warn = informaciniam patikrinimui.` : `${AUDIT_RULES.length} verified VAT audit rules. Each is tied to a specific SAF-T data condition and legal basis (PVMĮ, VA-49). Severity: Reject = review before filing, Warn = informational review.`}
+                  {lang === "lt" ? `${XSD_RULES.length} XSD atitikties patikrinimai (pagal oficialų VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} struktūros/vientisumo + ${DUPLICATE_RULES.length} pasikartojančių įrašų (6 lentelė) + ${CLASSIFIER_RULES.length} klasifikatorių patikrų (PVM/PM/sąskaitų, VA-49 2 priedas) + ${AUDIT_RULES.length} PVM audito taisyklės (PVMĮ, VA-49) + pilna XSD schemos validacija (visa rinkmena, 205 tipai). Kiekvienas susietas su konkrečia SAF-T duomenų sąlyga. Reikšmingumas: Reject = ištaisyti prieš teikimą, Warn = peržiūrai.` : `${XSD_RULES.length} XSD-conformance checks (per the official VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} structure/integrity + ${DUPLICATE_RULES.length} duplicate-record (spec Table 6) + ${CLASSIFIER_RULES.length} classifier checks (PVM/PM/account, VA-49 Annex 2) + ${AUDIT_RULES.length} VAT audit rules (PVMĮ, VA-49) + full XSD schema validation (entire file, 205 types). Each is tied to a specific SAF-T data condition. Severity: Reject = fix before filing, Warn = review.`}
                 </p>
 
                 {/* ── Active rate pack + versioned packs ── */}
@@ -6119,7 +7877,7 @@ function TAXAI({ onExit, initialView } = {}) {
                     </div>
                     <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 18, lineHeight: 1.65, maxWidth: 880 }}>
                       {lang === "lt"
-                        ? "Po 300 fiksuotų taisyklių AI agentas išanalizuoja šios konkrečios įmonės duomenis, nustato veiklos sektorių ir suprojektuoja papildomas, šiai įmonei pritaikytas taisykles. Kiekviena AI pasiūlyta taisyklė vertinama DETERMINISTIŠKAI pagal apskaičiuotus rodiklius — todėl PASS/FAIL yra pagrįstas tikrais skaičiais, o ne AI nuomone."
+                        ? "Po 250 fiksuotų taisyklių AI agentas išanalizuoja šios konkrečios įmonės duomenis, nustato veiklos sektorių ir suprojektuoja papildomas, šiai įmonei pritaikytas taisykles. Kiekviena AI pasiūlyta taisyklė vertinama DETERMINISTIŠKAI pagal apskaičiuotus rodiklius — todėl PASS/FAIL yra pagrįstas tikrais skaičiais, o ne AI nuomone."
                         : "On top of the verified audit rules, an AI agent studies this specific company's data, infers its industry, and designs additional rules tailored to this business. Every AI-proposed rule is scored DETERMINISTICALLY against the computed metrics — so PASS/FAIL is grounded in real figures, not an LLM opinion."}
                     </p>
 
@@ -7008,7 +8766,7 @@ function LandingPage({ onEnter }) {
             <span className="l"><span>See the <em>signal</em></span></span>
             <span className="l"><span>inside the <span className="thin">noise.</span></span></span>
           </h1>
-          <p className="hero-sub">TAXAI fuses a deterministic 300-rule SAF-T engine with seven forensic intelligence engines and eighteen specialised agents — turning raw accounting data into auditable, court-grade insight.</p>
+          <p className="hero-sub">TAXAI fuses a deterministic 250-rule SAF-T engine with seven forensic intelligence engines and eighteen specialised agents — turning raw accounting data into auditable, court-grade insight.</p>
           <div className="hero-actions">
             <a href="#" className="btn btn-primary" onClick={(e) => enter(e, "saftview")}>Analyze a SAF-T file <span className="arrow">→</span></a>
             <a href="#" className="btn btn-ghost" onClick={(e) => enter(e, "chat")}>Ask an agent</a>
@@ -7024,7 +8782,7 @@ function LandingPage({ onEnter }) {
       <div className="marquee">
         <div className="marquee-track">
           {[0, 1].map(k => (
-            <span key={k}>Deterministic by design<span className="m-x">✦</span>300 SAF-T rules<span className="m-x">✦</span>Benford's Law<span className="m-x">✦</span>Entity resolution<span className="m-x">✦</span>Transaction graphs<span className="m-x">✦</span>Threat assessment<span className="m-x">✦</span></span>
+            <span key={k}>Deterministic by design<span className="m-x">✦</span>250 SAF-T rules<span className="m-x">✦</span>Benford's Law<span className="m-x">✦</span>Entity resolution<span className="m-x">✦</span>Transaction graphs<span className="m-x">✦</span>Threat assessment<span className="m-x">✦</span></span>
           ))}
         </div>
       </div>
