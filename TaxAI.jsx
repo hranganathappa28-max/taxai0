@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 /*
@@ -956,6 +957,8 @@ function parseSAFTFull(xmlStr) {
       productCode: txt(s, "ProductCode"),
       openingStockQuantity: num(s, "OpeningStockQuantity") ?? 0,
       closingStockQuantity: num(s, "ClosingStockQuantity") ?? 0,
+      openingStockValue: num(s, "OpeningStockValue"),
+      closingStockValue: num(s, "ClosingStockValue"),
     }));
 
     const assets = Array.from(doc.getElementsByTagName("Asset")).map((a) => {
@@ -1003,6 +1006,7 @@ function parseSAFTFull(xmlStr) {
 
     // ── GeneralLedgerEntries ──
     const glEl = doc.getElementsByTagName("GeneralLedgerEntries")[0];
+    const glMeta = glEl ? { numberOfEntries: num(glEl, "NumberOfEntries"), totalDebit: num(glEl, "TotalDebit"), totalCredit: num(glEl, "TotalCredit") } : null;
     const gl = glEl ? {
       numberOfEntries: num(glEl, "NumberOfEntries"),
       totalDebit: num(glEl, "TotalDebit"),
@@ -1167,6 +1171,9 @@ function parseSAFTFull(xmlStr) {
           ? num(l.getElementsByTagName("DebitAmount")[0], "Amount") : null,
         creditAmount: l.getElementsByTagName("CreditAmount")[0]
           ? num(l.getElementsByTagName("CreditAmount")[0], "Amount") : null,
+        debitCreditIndicator: txt(l, "DebitCreditIndicator"),
+        paymentLineAmount: l.getElementsByTagName("PaymentLineAmount")[0]
+          ? num(l.getElementsByTagName("PaymentLineAmount")[0], "Amount") : null,
       }));
       return {
         paymentRefNo: txt(p, "PaymentRefNo"),
@@ -1273,10 +1280,11 @@ function parseSAFTFull(xmlStr) {
       transactions,
       sales,
       purchases,
-      paymentsMeta,
       payments,
       movementMeta,
       stockMovements,
+      glMeta,
+      paymentsMeta,
       assetTxMeta,
       assetTransactions,
       counts: {
@@ -2428,14 +2436,14 @@ const STRUCTURAL_RULES = [
     fixLt: "Patikrinkite tiekėjo valstybę arba ES paslaugų teikėjams naudokite PVM21/40-42.",
     evaluate: (d, ctx) => { const C = ["PVM20","PVM37","PVM38","PVM39"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) >= 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
   { id: "SAFT_RATE_PM0", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
-    title: "0 proc. pelno mokesčio kodai (PM2/PM8/PM10/PM12) negali turėti nenulinio tarifo",
-    titleEn: "0% profit-tax codes (PM2/PM8/PM10/PM12) must not carry a non-zero rate",
+    title: "Fiksuoto tarifo PM kodai (PM2/8/10/12=0; PM7/11=5; PM3=10) — tarifas lentelėje turi atitikti",
+    titleEn: "Fixed-rate PM codes (PM2/8/10/12=0%; PM7/11=5%; PM3=10%) must match the classifier rate",
     description: "Pagal oficialų VMI Pelno mokesčio klasifikatorių, kodai PM2, PM8, PM10, PM12 atitinka 0 proc. PM tarifą (PMĮ 5 str., 58 str. 16 d.). Jei mokesčių lentelėje šiems kodams nurodytas tarifas, jis turi būti 0. (Kintamų tarifų PM kodai netikrinami dėl tarifų priklausomybės nuo laikotarpio.)",
     legalReq: "VMI Pelno mokesčio klasifikatorius (VA-49 2 priedas); PMĮ 5 str.",
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = 0",
     fixEn: "Set the rate to 0% for this 0%-classifier code, or remap the entry.",
     fixLt: "Nustatykite 0 proc. tarifą šiam 0 proc. klasifikatoriaus kodui arba susiekite įrašą iš naujo.",
-    evaluate: (d) => { const C = ["PM2","PM8","PM10","PM12"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (C.indexOf(sti) < 0) return; const p = t.taxPercentage; if (p != null && p > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 0 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const M = { PM2: 0, PM8: 0, PM10: 0, PM12: 0, PM3: 10, PM7: 5, PM11: 5 }; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!(sti in M)) return; const p = t.taxPercentage; if (p != null && Math.abs(p - M[sti]) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: M[sti] }); }); return out.slice(0, 200); } },
 
   { id: "SAFT_VDT_006", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
     title: "Eilutės PVM tarifas turi atitikti jos STI kodo klasifikatoriaus tarifą",
@@ -2812,6 +2820,135 @@ const STRUCTURAL_RULES = [
     fixLt: "Patikrinkite atskaitos proporcij\u0105 pagal 58 str.",
     evaluate: (d) => { const RMpos = ["PVM1","PVM2","PVM3","PVM25","PVM26","PVM27","PVM6","PVM7","PVM8","PVM9","PVM43","PVM44","PVM45","PVM52","PVM53","PVM58","PVM59","PVM60"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); let ex = 0, tx = 0; (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; let e = false, t = false; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s === "PVM5") e = true; if (RMpos.indexOf(s) >= 0) t = true; }); if (e) ex++; if (t) tx++; }); if (ex > 0 && tx > 0) return [{ ex, tx }]; return []; } },
 
+  { id: "SAFT_DET_003", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "GeneralLedgerEntries", requires: "transactions",
+    title: "DK \u012fra\u0161\u0173 byla: bendras subalansavimas ir antra\u0161t\u0117s kontroliniai skai\u010diai",
+    titleEn: "GL entries file: overall balance and header control totals",
+    description: "Vis\u0173 DK eilu\u010di\u0173 debetai turi b\u016bti lyg\u016bs kreditams; antra\u0161t\u0117s TotalDebit/TotalCredit/NumberOfEntries turi atitikti apskai\u010diuotus. Validuota: oficialiame pavyzdyje 8 024 210,95 = 8 024 210,95 centas \u012f cent\u0105. (Dengia VMI ACCOUNTING_DET_003 ir DVT kontrolini\u0173 \u012fra\u0161\u0173 dal\u012f.)",
+    legalReq: "SAF-T technin\u0117 specifikacija (VA-49); dvejybinis \u012fra\u0161as",
+    failTpl: "Check = @k | Header = @h | Computed = @c | Diff = @diff",
+    fixEn: "Reconcile the GL export: totals and entry counts must match the lines.",
+    fixLt: "Suderinkite DK eksport\u0105.",
+    evaluate: (d) => { let D = 0, C = 0; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { D += l.debitAmount || 0; C += l.creditAmount || 0; })); const r2 = (x) => Math.round(x * 100) / 100; const out = []; if (Math.abs(D - C) > 0.01) out.push({ k: "\u03a3Debit=\u03a3Credit", h: r2(D), c: r2(C), diff: r2(D - C) }); const m = d.glMeta; if (m) { if (m.totalDebit != null && Math.abs(m.totalDebit - D) > 0.01) out.push({ k: "TotalDebit", h: r2(m.totalDebit), c: r2(D), diff: r2(m.totalDebit - D) }); if (m.totalCredit != null && Math.abs(m.totalCredit - C) > 0.01) out.push({ k: "TotalCredit", h: r2(m.totalCredit), c: r2(C), diff: r2(m.totalCredit - C) }); if (m.numberOfEntries != null && m.numberOfEntries !== (d.transactions || []).length) out.push({ k: "NumberOfEntries", h: m.numberOfEntries, c: (d.transactions || []).length, diff: m.numberOfEntries - (d.transactions || []).length }); } return out; } },
+  { id: "SAFT_DET_004", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "Transaction", requires: "transactions",
+    title: "Kiekviena \u016bkin\u0117 operacija subalansuota (debetai = kreditai)",
+    titleEn: "Every GL transaction must balance (debits = credits)",
+    description: "Dvejybinio \u012fra\u0161o principas: kiekvienos operacijos eilu\u010di\u0173 debet\u0173 suma lygi kredit\u0173 sumai. Validuota: oficialiame pavyzdyje visos 4 177 operacijos subalansuotos. (Dengia VMI ACCOUNTING_DET_004.)",
+    legalReq: "BA\u012e 12 str.; dvejybinis \u012fra\u0161as",
+    failTpl: "TransactionID = @tx | Debits = @d | Credits = @c | Diff = @diff",
+    fixEn: "Fix the unbalanced journal entry; debits must equal credits.",
+    fixLt: "Pataisykite nesubalansuot\u0105 \u012fra\u0161\u0105.",
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => { let D = 0, C = 0; (t.lines || []).forEach((l) => { D += l.debitAmount || 0; C += l.creditAmount || 0; }); if (Math.abs(D - C) > 0.01) out.push({ tx: t.transactionID || "\u2014", d: Math.round(D * 100) / 100, c: Math.round(C * 100) / 100, diff: Math.round((D - C) * 100) / 100 }); }); return out.slice(0, 200); } },
+  { id: "SAFT_DET_005", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; PA", refType: "Payments", requires: "payments",
+    title: "Mok\u0117jim\u0173 byla: antra\u0161t\u0117s kontroliniai skai\u010diai atitinka eilutes",
+    titleEn: "Payments file: header control totals must match the lines",
+    description: "Mok\u0117jim\u0173 dalies TotalDebit/TotalCredit/NumberOfEntries lyginami su apskai\u010diuotomis eilu\u010di\u0173 sumomis (debetai ir kreditai mok\u0117jimuose neprivalo b\u016bti lyg\u016bs tarpusavyje). Validuota: pavyzdyje 831 329,18 / 1 303 867,89 sutampa. (Dengia VMI ACCOUNTING_DET_005/006.)",
+    legalReq: "SAF-T technin\u0117 specifikacija (VA-49)",
+    failTpl: "Check = @k | Header = @h | Computed = @c | Diff = @diff",
+    fixEn: "Reconcile the payments export header with its lines.",
+    fixLt: "Suderinkite mok\u0117jim\u0173 antra\u0161t\u0119 su eilut\u0117mis.",
+    evaluate: (d) => { const m = d.paymentsMeta; if (!m) return []; let D = 0, C = 0; (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => { const ind = String(l.debitCreditIndicator || "").toUpperCase(); const pla = l.paymentLineAmount; D += l.debitAmount != null ? l.debitAmount : (pla != null && ind === "D" ? pla : 0); C += l.creditAmount != null ? l.creditAmount : (pla != null && (ind === "K" || ind === "C") ? pla : 0); })); const r2 = (x) => Math.round(x * 100) / 100; const out = []; if (m.totalDebit != null && Math.abs(m.totalDebit - D) > 0.01) out.push({ k: "TotalDebit", h: r2(m.totalDebit), c: r2(D), diff: r2(m.totalDebit - D) }); if (m.totalCredit != null && Math.abs(m.totalCredit - C) > 0.01) out.push({ k: "TotalCredit", h: r2(m.totalCredit), c: r2(C), diff: r2(m.totalCredit - C) }); if (m.numberOfEntries != null && m.numberOfEntries !== (d.payments || []).length) out.push({ k: "NumberOfEntries", h: m.numberOfEntries, c: (d.payments || []).length, diff: m.numberOfEntries - (d.payments || []).length }); return out; } },
+  { id: "SAFT_DET_006", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI", refType: "Invoices", requires: "any",
+    title: "S\u0105skait\u0173 registr\u0173 antra\u0161t\u0117s kontroliniai skai\u010diai",
+    titleEn: "Invoice register header control totals",
+    description: "Pardavimo ir pirkimo registr\u0173 NumberOfEntries lyginamas su s\u0105skait\u0173 skai\u010diumi; TotalDebit/TotalCredit \u2014 su eilu\u010di\u0173 sumomis TIK kai eilut\u0117se i\u0161 viso pildomi DebitAmount/CreditAmount (oficialiame pavyzdyje \u0161ie laukai eilut\u0117se nepildomi, tod\u0117l sum\u0173 dalis netaikoma). (Dengia VMI DVT kontrolini\u0173 \u012fra\u0161\u0173 dal\u012f.)",
+    legalReq: "SAF-T technin\u0117 specifikacija (VA-49)",
+    failTpl: "Register = @reg | Check = @k | Header = @h | Computed = @c",
+    fixEn: "Reconcile the invoice register header with its contents.",
+    fixLt: "Suderinkite registro antra\u0161t\u0119.",
+    evaluate: (d) => { const out = []; const scan = (reg, name) => { if (!reg || !reg.meta) return; const m = reg.meta, items = reg.items || []; if (m.numberOfEntries != null && m.numberOfEntries !== items.length) out.push({ reg: name, k: "NumberOfEntries", h: m.numberOfEntries, c: items.length }); let D = 0, C = 0, any = false; items.forEach((inv) => (inv.lines || []).forEach((l) => { if (l.debitAmount != null || l.creditAmount != null) any = true; D += l.debitAmount || 0; C += l.creditAmount || 0; })); if (any) { const r2 = (x) => Math.round(x * 100) / 100; if (m.totalDebit != null && Math.abs(m.totalDebit - D) > 0.01) out.push({ reg: name, k: "TotalDebit", h: r2(m.totalDebit), c: r2(D) }); if (m.totalCredit != null && Math.abs(m.totalCredit - C) > 0.01) out.push({ reg: name, k: "TotalCredit", h: r2(m.totalCredit), c: r2(C) }); } }; scan(d.sales, "Sales"); scan(d.purchases, "Purchases"); return out; } },
+  { id: "SAFT_DVT_022", family: "SCHEMA", category: "Tax / VAT", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
+    title: "PVM aritmetika eilut\u0117se: baz\u0117 \u00d7 tarifas = PVM suma",
+    titleEn: "Line VAT arithmetic: base \u00d7 rate must equal the VAT amount",
+    description: "Kai eilut\u0117je nurodyti baz\u0117, tarifas (>0) ir PVM suma, tikrinama |baz\u0117\u00d7tarifas/100 \u2212 suma| \u2264 0,02 EUR (apvalinimo tolerancija). Validuota: oficialiame pavyzdyje 1 729/1 731 eilu\u010di\u0173 atitinka; 2 eilut\u0117s (s\u0105sk. 2214287976) turi 21 proc. tarif\u0105 ir 0,00 PVM \u2014 dokumentuotas radinys. Anuliuotos (AN) praleid\u017eiamos. (Dengia VMI DVT aritmetikos dal\u012f.)",
+    legalReq: "PVM\u012e 14, 15 str.; aritmetinis nuoseklumas",
+    failTpl: "InvoiceNo = @no | Base = @base | Rate = @rate% | Stated = @amt | Expected = @exp",
+    fixEn: "Correct the VAT amount or the rate/base on this line.",
+    fixLt: "Pataisykite PVM sum\u0105 arba tarif\u0105/baz\u0119.",
+    evaluate: (d) => { const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const t = l.tax; if (!t) return; const b = t.taxableAmount, r = t.taxPercentage, a = t.taxAmount; if (b == null || r == null || a == null || !(r > 0)) return; const exp = b * r / 100; if (Math.abs(exp - a) > 0.02) out.push({ no: inv.invoiceNo || "\u2014", base: b, rate: r, amt: a, exp: Math.round(exp * 100) / 100 }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+  { id: "SAFT_DVT_023", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "EUR valiutos \u012fra\u0161ai: CurrencyAmount turi sutapti su Amount",
+    titleEn: "EUR-currency entries: CurrencyAmount must equal Amount",
+    description: "Kai DK eilut\u0117s valiuta \u2014 EUR, valiutin\u0117 suma privalo sutapti su baz\u0117s suma. Validuota: oficialiame pavyzdyje visi 14 346 EUR \u012fra\u0161ai sutampa. (Dengia VMI DVT valiutini\u0173 sum\u0173 EUR dal\u012f; kit\u0173 valiut\u0173 perskai\u010diavimui reikia kurs\u0173 \u0161altinio.)",
+    legalReq: "SAF-T AmountStructure; buhalterin\u0117 logika",
+    failTpl: "TransactionID = @tx | Side = @side | Amount = @a | CurrencyAmount = @ca",
+    fixEn: "Fix the currency fields; EUR entries cannot differ from the base amount.",
+    fixLt: "Pataisykite valiutos laukus.",
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.debitCurrencyCode === "EUR" && l.debitAmount != null && l.debitCurrencyAmount != null && Math.abs(l.debitCurrencyAmount - l.debitAmount) > 0.005) out.push({ tx: t.transactionID || "\u2014", side: "D", a: l.debitAmount, ca: l.debitCurrencyAmount }); if (l.creditCurrencyCode === "EUR" && l.creditAmount != null && l.creditCurrencyAmount != null && Math.abs(l.creditCurrencyAmount - l.creditAmount) > 0.005) out.push({ tx: t.transactionID || "\u2014", side: "C", a: l.creditAmount, ca: l.creditCurrencyAmount }); })); return out.slice(0, 200); } },
+  { id: "SAFT_DVT_024", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; MF", refType: "OpenInvoice", requires: "any",
+    title: "Atvir\u0173 s\u0105skait\u0173 neapmok\u0117ta suma negali vir\u0161yti dokumento sumos",
+    titleEn: "Open-invoice unpaid amount cannot exceed the document amount",
+    description: "Pirk\u0117j\u0173/tiek\u0117j\u0173 kortel\u0117se nurodyt\u0173 atvir\u0173 s\u0105skait\u0173 UnpaidAmount lyginamas su Amount. Taikoma, kai abu laukai pateikti. (Dengia VMI DVT neapmok\u0117t\u0173 sum\u0173 dal\u012f.)",
+    legalReq: "Apskaitos logika; SAF-T MasterFiles",
+    failTpl: "Side = @side | Party = @party | InvoiceNo = @no | Amount = @a | Unpaid = @u",
+    fixEn: "Correct the open-items export; unpaid cannot exceed the invoice amount.",
+    fixLt: "Pataisykite atvir\u0173 s\u0105skait\u0173 eksport\u0105.",
+    evaluate: (d) => { const out = []; const scan = (arr, side, idk) => (arr || []).forEach((m) => { const inv = m.openInvoices || m.openSalesInvoices || m.openPurchaseInvoices || m.openInv || []; (inv || []).forEach((o) => { const a = o.amount, u = o.unpaidAmount; if (a == null || u == null) return; if (Math.abs(u) - Math.abs(a) > 0.011) out.push({ side, party: m[idk] || "\u2014", no: o.invoiceNo || "\u2014", a, u }); }); }); scan(d.customers, "S", "customerID"); scan(d.suppliers, "P", "supplierID"); return out.slice(0, 200); } },
+  { id: "SAFT_AET_002", family: "SCHEMA", category: "GL Accounts", severity: "Low", dataTypes: "F-Full; MF", refType: "Account", requires: "accounts",
+    title: "Pilnoji fundamentin\u0117 lygyb\u0117 su pelno (nuostoli\u0173) klas\u0117mis (5-6 kl.)",
+    titleEn: "Full fundamental identity including P&L classes (5-6)",
+    description: "Vis\u0173 1-6 klasi\u0173 pasira\u0161yt\u0173 likučių suma turi b\u016bti 0 tiek laikotarpio prad\u017eioje, tiek pabaigoje (turtas = nuosavyb\u0117 + \u012fsipareigojimai + einam\u0173j\u0173 met\u0173 rezultatas). Validuota: oficialiame pavyzdyje abi sumos 0,00. (Dengia VMI ACCOUNTING_AET_001/002; pelno nesiekian\u010diems subjektams (AET_003/004) ta pati lygyb\u0117 su fond\u0173 s\u0105skaitomis 3 kl.)",
+    legalReq: "BA\u012e 12 str.; dvejybinis \u012fra\u0161as",
+    failTpl: "Moment = @when | \u03a3(1..6) signed = @sum | Largest class gap = @cls",
+    fixEn: "The chart does not satisfy the accounting identity; investigate missing balances.",
+    fixLt: "S\u0105skait\u0173 planas netenkina lygyb\u0117s \u2014 tirkite tr\u016bkstamus likučius.",
+    evaluate: (d) => { const acc = d.accounts || []; if (acc.length < 5) return []; let inCls = 0; const o = {}, c = {}; acc.forEach((a) => { const k = String(a.accountID || "").charAt(0); if ("123456".indexOf(k) >= 0) inCls++; o[k] = (o[k] || 0) + (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0); c[k] = (c[k] || 0) + (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0); }); if (inCls < 0.7 * acc.length) return []; const tot = (m) => ["1","2","3","4","5","6"].reduce((s, k) => s + (m[k] || 0), 0); const out = []; const r2 = (x) => Math.round(x * 100) / 100; const so = tot(o), sc = tot(c); if (Math.abs(so) > 0.02) out.push({ when: "open", sum: r2(so), cls: "\u2014" }); if (Math.abs(sc) > 0.02) out.push({ when: "close", sum: r2(sc), cls: "\u2014" }); return out; } },
+  { id: "SAFT_AAT_005", family: "SCHEMA", category: "Inventory", severity: "Low", dataTypes: "F-Full; MF; PS", refType: "PhysicalStock", requires: "accounts",
+    title: "Atsarg\u0173 registro vert\u0117 vs DK 20x s\u0105skaitos (sintetika/analitika, per\u017ei\u016bra)",
+    titleEn: "Stock register value vs GL 20x accounts (synthetic vs analytic, review)",
+    description: "PhysicalStock registro verčių sumos lyginamos su DK 2 klas\u0117s 20x (atsarg\u0173) s\u0105skait\u0173 likučiais laikotarpio prad\u017eiai ir pabaigai. SVARBU: registras gali apr\u0117pti tik dal\u012f atsarg\u0173 (pvz., tik perparduodamas prekes) \u2014 skirtumas yra PER\u017dI\u016aROS indikatorius, ne klaida. Oficialiame pavyzdyje: registras 147 412,49 / 108 513,56 vs DK 229 087,97 / 142 032,42 \u2014 registras apima dal\u012f DK atsarg\u0173. (Dengia VMI ACCOUNTING_AAT_005/006.)",
+    legalReq: "BA\u012e; atsarg\u0173 apskaitos nuoseklumas",
+    failTpl: "Moment = @when | Stock register = @reg | GL 20x = @gl | Diff = @diff",
+    fixEn: "Verify the stock register scope vs GL inventory accounts; reconcile or document the difference.",
+    fixLt: "Patikrinkite registro apr\u0117pt\u012f ir suderinkite su DK.",
+    evaluate: (d) => { const ps = d.physicalStock || []; if (!ps.length) return []; let ro = 0, rc = 0; ps.forEach((e) => { ro += e.openingStockValue || 0; rc += e.closingStockValue || 0; }); let go = 0, gc = 0; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); if (id.slice(0, 2) !== "20") return; go += (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0); gc += (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0); }); const r2 = (x) => Math.round(x * 100) / 100; const out = []; if (Math.abs(ro - go) > 0.01) out.push({ when: "open", reg: r2(ro), gl: r2(go), diff: r2(ro - go) }); if (Math.abs(rc - gc) > 0.01) out.push({ when: "close", reg: r2(rc), gl: r2(gc), diff: r2(rc - gc) }); return out; } },
+  { id: "SAFT_PDT_AP", family: "SCHEMA", category: "Tax / CIT", severity: "Low", dataTypes: "F-Full; GL", refType: "Analysis", requires: "transactions",
+    title: "\u201ePelnas\u201c analitikos (APA) numeriai \u2014 atitiktis oficialiam klasifikatoriui",
+    titleEn: "Profit-analysis (APA) IDs must match the official classifier",
+    description: "Kai \u012fmon\u0117 DK eilut\u0117se naudoja pelno mokes\u010dio analitik\u0105 (AnalysisType = AP/APA arba STIAnalysisID), reik\u0161m\u0117s tikrinamos pagal oficial\u0173 VMI klasifikatori\u0173 (APA, APA-1 \u2026). Taikoma TIK kai analitika naudojama. (Dengia VMI TAX_PDT_013-019/042/043 s\u0105lygin\u0119 dal\u012f.)",
+    legalReq: "VMI Pelno mokes\u010dio analitikos klasifikatorius; PM\u012e",
+    failTpl: "TransactionID = @tx | AnalysisID = @id | Not in official APA classifier",
+    fixEn: "Use official APA classifier values for profit-tax analytics.",
+    fixLt: "Naudokite oficialias APA reik\u0161mes.",
+    evaluate: (d) => { const APA = new Set(["APA", "APA-1", "APA-2", "APA-3", "APA-4", "APA-5", "APA-6", "APA-7", "APA-8", "APA-9", "APA-10", "APA-11", "APA-12", "APA-13", "APA-14", "APA-15", "APA-16", "APA-17", "APA-18", "APA-100"]); const out = []; let used = false; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { (l.analyses || l.analysis || []).forEach((an) => { const ty = String(an.analysisType || "").toUpperCase(); const id = String(an.analysisID || an.stiAnalysisID || "").trim(); if (ty.indexOf("AP") === 0 || /^APA/i.test(id)) { used = true; if (id && !APA.has(id)) out.push({ tx: t.transactionID || "\u2014", id }); } }); })); return used ? out.slice(0, 200) : []; } },
+  { id: "SAFT_PDT_ADDBACK", family: "SCHEMA", category: "Tax / CIT", severity: "Low", dataTypes: "F-Full; MF; GL", refType: "Account", requires: "transactions",
+    title: "Ribojam\u0173/neleid\u017eiam\u0173 atskaitym\u0173 kategorij\u0173 s\u0105naudos \u2014 PLN204 per\u017ei\u016bra",
+    titleEn: "Limited/non-deductible expense categories \u2014 PLN204 review",
+    description: "I\u0161 6 klas\u0117s pavadinim\u0173 atpa\u017e\u012fstamos PM\u012e ribojam\u0173 kategorij\u0173 s\u0105naudos: atid\u0117jiniai (PM\u012e 17 str.), vert\u0117s suma\u017e\u0117jimas/nuvert\u0117jimas (31 str.), bevilti\u0161kos skolos (25 str.), neatskaitomas PVM (24 str.), nari\u0173 mokes\u010diai/\u012fna\u0161ai (26-31 str.), i\u0161laidos darbuotoj\u0173 naudai (26 str.), gamybos nuostoliai (17 str.), pelno mokes\u010dio s\u0105naudos (31 str. 1 d. 2 p.). Gryni debetiniai jud\u0117jimai \u2014 per\u017ei\u016bros indikatorius PLN204 deklaracijai. Validuota: oficialiame pavyzdyje 1 radinys (6212 Neatskaitomo PVM s\u0105naudos, 62,98 EUR). (Dengia VMI TAX_PDT_021/022/023/024/027/030/031/032/033 ir ACCOUNTING_BAT_025/026 per\u017ei\u016bros dal\u012f.)",
+    legalReq: "PM\u012e 17, 24, 25, 26, 31 str.",
+    failTpl: "Account = @acct (@name) | Category = @cat | Net expense = @net EUR | Review PLN204",
+    fixEn: "Verify the PLN204 treatment of these expense categories (add-back or limited deduction).",
+    fixLt: "Patikrinkite \u0161i\u0173 kategorij\u0173 traktavim\u0105 PLN204.",
+    evaluate: (d) => { const cats = [ { rx: /atid\u0117jin/i, cat: "Atid\u0117jiniai (PM\u012e 17 str.)" }, { rx: /nuvert\u0117j|vert\u0117s suma\u017e\u0117jim/i, cat: "Vert\u0117s suma\u017e\u0117jimas (PM\u012e 31 str.)" }, { rx: /bevilti\u0161k/i, cat: "Bevilti\u0161kos skolos (PM\u012e 25 str.)" }, { rx: /neatskaitom/i, cat: "Neatskaitomas PVM (PM\u012e 24 str.)" }, { rx: /nari\u0173 mokes\u010d|\u012fna\u0161/i, cat: "Nari\u0173 mokes\u010diai/\u012fna\u0161ai" }, { rx: /darbuotoj[\s\S]{0,12}naud/i, cat: "I\u0161laidos darbuotoj\u0173 naudai (PM\u012e 26 str.)" }, { rx: /gamybos nuostol/i, cat: "Gamybos nuostoliai (PM\u012e 17 str.)" }, { rx: /pelno mokes\u010d/i, cat: "Pelno mokes\u010dio s\u0105naudos (PM\u012e 31 str.)" } ]; const targets = {}; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); if (id.charAt(0) !== "6") return; const nm = String(a.accountDescription || ""); if (/baud|delspinig/i.test(nm)) return; for (const cdef of cats) { if (cdef.rx.test(nm)) { targets[id] = { name: nm, cat: cdef.cat }; break; } } }); if (!Object.keys(targets).length) return []; const net = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!(id in targets)) return; net[id] = (net[id] || 0) + ((l.debitAmount || 0) - (l.creditAmount || 0)); })); const out = []; Object.keys(net).forEach((id) => { if (net[id] > 0.005) out.push({ acct: id, name: targets[id].name.slice(0, 40), cat: targets[id].cat, net: Math.round(net[id] * 100) / 100 }); }); return out.slice(0, 200); } },
+
+  { id: "SAFT_INT_044", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; MF", refType: "AssetTransaction", requires: "any",
+    title: "Turto operacij\u0173 AssetID turi b\u016bti pagrindin\u0117je turto byloje",
+    titleEn: "Asset-transaction AssetID must exist in the asset master file",
+    description: "Turto operacij\u0173 (AssetTransaction) nuorodos \u012f AssetID tikrinamos pagal pagrindin\u0119 turto byl\u0105. Taikoma, kai pateikti abu registrai. Validuota: oficialiame pavyzdyje visos nuorodos rastos. (Dengia VMI SCHEMA_INT_007.)",
+    legalReq: "SAF-T technin\u0117 specifikacija (VA-49); referencinis vientisumas",
+    failTpl: "AssetTransactionID = @tx | AssetID = @aid | Not found in master",
+    fixEn: "Export the referenced assets in MasterFiles or fix the AssetID.",
+    fixLt: "Pateikite turt\u0105 pagrindin\u0117je byloje arba pataisykite AssetID.",
+    evaluate: (d) => { const assets = d.assets || []; const txs = d.assetTransactions || []; if (!assets.length || !txs.length) return []; const m = new Set(assets.map((a) => String(a.assetID || "").trim()).filter(Boolean)); const out = []; txs.forEach((t) => { const aid = String(t.assetID || "").trim(); if (aid && !m.has(aid)) out.push({ tx: t.assetTransactionID || t.transactionID || "\u2014", aid }); }); return out.slice(0, 200); } },
+
+  { id: "SAFT_VAT_001", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; MF", refType: "Customer/Supplier", requires: "any",
+    title: "PVM mok\u0117tojo kodo (LT) formato ir kontrolin\u0117s sumos patikra",
+    titleEn: "Lithuanian VAT payer code: format and check-digit validation",
+    description: "Lietuvi\u0161ki PVM mok\u0117toj\u0173 kodai korteli\u0173 lauke TaxRegistrationNumber (su LT prefiksu) privalo tur\u0117ti 9 arba 12 skaitmen\u0173, 8-as (atitinkamai 11-as) skaitmuo \u2014 1, o paskutinis skaitmuo turi atitikti mod 11 kontrolin\u0119 sum\u0105 (dviguba svori\u0173 schema 1-9 / 3-9,1-2). Neteisingas kodas blokuoja i.SAF/FR0564 pateikim\u0105 ir PVM atskaitos pagrindim\u0105.",
+    legalReq: "PVM\u012e 71\u201372 str.; VMI i.SAF reikalavimai; Tarybos reglamentas (ES) 904/2010",
+    failTpl: "Party = @side @id (@name) | VAT = @vat | Problema = @why",
+    fixEn: "Correct the counterparty's Lithuanian VAT payer code in the master record (verify via VIES).",
+    fixLt: "Pataisykite kontrahento PVM mok\u0117tojo kod\u0105 kortel\u0117je (patikrinkite per VIES).",
+    evaluate: (d) => { const ok = (digits) => { if (!/^\d{9}$/.test(digits) && !/^\d{12}$/.test(digits)) return false; if (digits.length === 9 && digits.charAt(7) !== "1") return false; if (digits.length === 12 && digits.charAt(10) !== "1") return false; const body = digits.slice(0, -1); const chk = +digits.charAt(digits.length - 1); let s = 0; for (let i = 0; i < body.length; i++) s += ((i % 9) + 1) * (+body.charAt(i)); let c = s % 11; if (c === 10) { s = 0; for (let i = 0; i < body.length; i++) s += (((i + 2) % 9) + 1) * (+body.charAt(i)); c = s % 11; } return (c % 10) === chk; }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); if (!/^LT/.test(v)) return; const digits = v.slice(2); let why = ""; if (!/^\d{9}$/.test(digits) && !/^\d{12}$/.test(digits)) why = "formatas (LT + 9 arba 12 skaitmen\u0173)"; else if (!ok(digits)) why = "kontrolin\u0117 suma (mod 11)"; if (why) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, why }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out.slice(0, 200); } },
+  { id: "SAFT_VAT_002", family: "SCHEMA", category: "Tax / Classifiers", severity: "Medium", dataTypes: "F-Full; MF", refType: "Customer/Supplier", requires: "any",
+    title: "ES PVM kod\u0173 strukt\u016bra (ne LT): \u0161alies formato patikra",
+    titleEn: "EU VAT number structure (non-LT): per-country format validation",
+    description: "U\u017esienio ES kontrahent\u0173 PVM kodai tikrinami pagal kiekvienos valstyb\u0117s nar\u0117s oficiali\u0105 strukt\u016br\u0105 (prefiksas + skaitmen\u0173/raid\u017ei\u0173 \u0161ablonas). Netinkamos strukt\u016bros kodas nepraeis VIES patikros ir FR0564 kry\u017emini\u0173 sutikrinim\u0173. GB (po Brexit) netikrinamas; XI (\u0160iaur\u0117s Airija) tikrinamas.",
+    legalReq: "Tarybos reglamentas (ES) 904/2010; PVM\u012e 49 str.; FR0564 taisykl\u0117s",
+    failTpl: "Party = @side @id (@name) | VAT = @vat | Laukiama = @pattern",
+    fixEn: "Correct the EU counterparty's VAT number to the country's official structure (verify via VIES).",
+    fixLt: "Pataisykite ES kontrahento PVM kod\u0105 pagal \u0161alies strukt\u016br\u0105 (patikrinkite per VIES).",
+    evaluate: (d) => { const RX = { AT: ["^ATU\\d{8}$", "ATU+8 sk."], BE: ["^BE[01]\\d{9}$", "BE+10 sk."], BG: ["^BG\\d{9,10}$", "BG+9-10 sk."], CY: ["^CY\\d{8}[A-Z]$", "CY+8 sk.+raid\u0117"], CZ: ["^CZ\\d{8,10}$", "CZ+8-10 sk."], DE: ["^DE\\d{9}$", "DE+9 sk."], DK: ["^DK\\d{8}$", "DK+8 sk."], EE: ["^EE\\d{9}$", "EE+9 sk."], EL: ["^EL\\d{9}$", "EL+9 sk."], ES: ["^ES[A-Z0-9]\\d{7}[A-Z0-9]$", "ES+9 \u017eenkl."], FI: ["^FI\\d{8}$", "FI+8 sk."], FR: ["^FR[A-Z0-9]{2}\\d{9}$", "FR+2 \u017eenkl.+9 sk."], HR: ["^HR\\d{11}$", "HR+11 sk."], HU: ["^HU\\d{8}$", "HU+8 sk."], IE: ["^IE(\\d{7}[A-Z]{1,2}|\\d[A-Z+*]\\d{5}[A-Z])$", "IE formatas"], IT: ["^IT\\d{11}$", "IT+11 sk."], LU: ["^LU\\d{8}$", "LU+8 sk."], LV: ["^LV\\d{11}$", "LV+11 sk."], MT: ["^MT\\d{8}$", "MT+8 sk."], NL: ["^NL\\d{9}B\\d{2}$", "NL+9 sk.+B+2 sk."], PL: ["^PL\\d{10}$", "PL+10 sk."], PT: ["^PT\\d{9}$", "PT+9 sk."], RO: ["^RO\\d{2,10}$", "RO+2-10 sk."], SE: ["^SE\\d{12}$", "SE+12 sk."], SI: ["^SI\\d{8}$", "SI+8 sk."], SK: ["^SK\\d{10}$", "SK+10 sk."], XI: ["^XI(\\d{9}|\\d{12}|(GD|HA)\\d{3})$", "XI formatas"] }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); const m = v.match(/^([A-Z]{2})/); if (!m || m[1] === "LT") return; const e = RX[m[1]]; if (!e) return; if (!new RegExp(e[0]).test(v)) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, pattern: e[1] }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out.slice(0, 200); } },
+
 ];
 
 // Run all structural rules against parsed data + context.
@@ -2888,6 +3025,7 @@ function runAllRules(data, opts = {}) {
         evidenceRow: h.row || null,   // structured @field values
       });
     });
+
   });
   // ── Structural / schema rules (SCHEMA family) — whole-file integrity ──
   const ctx = buildContext(data);
@@ -5204,11 +5342,12 @@ function parseISAF(xmlStr, DOMParserImpl) {
       // VAT detail lines: sum TaxableValue / TaxAmount; collect VAT codes
       let taxable = 0, vat = 0;
       const vatCodes = [];
-      const details = el.getElementsByTagName("VATDetail");
+      let details = el.getElementsByTagName("VATDetail");
+      if (!details.length) details = el.getElementsByTagName("DocumentTotal"); // official iSAF 1.2 structure
       if (details.length) {
         for (let i = 0; i < details.length; i++) {
           taxable += _num(txt(details[i], "TaxableValue", "TaxableAmount", "NetAmount"));
-          vat += _num(txt(details[i], "TaxAmount", "VATAmount"));
+          vat += _num(txt(details[i], "TaxAmount", "VATAmount", "Amount"));
           const code = txt(details[i], "VATCode", "TaxCode");
           if (code) vatCodes.push(code);
         }
@@ -5271,10 +5410,23 @@ function reconcileISAF(isaf, saft, opts = {}) {
 
   const norm = (s) => String(s || "").trim().toUpperCase();
 
-  const saftSales = (saft?.sales?.items || []).filter((x) => x.invoiceNo);
-  const saftPurch = (saft?.purchases?.items || []).filter((x) => x.invoiceNo);
+  // Scope the SAF-T side to the i.SAF period (by month): a monthly register must not be
+  // compared against the whole fiscal year, or every other month becomes a false "missing".
+  const monthsBetween = (a, b) => { const out = []; a = String(a || "").slice(0, 7); b = String(b || "").slice(0, 7); if (!/^\d{4}-\d{2}$/.test(a) || !/^\d{4}-\d{2}$/.test(b)) return out; let y = +a.slice(0, 4), m = +a.slice(5, 7); const ey = +b.slice(0, 4), em = +b.slice(5, 7); let g = 0; while ((y < ey || (y === ey && m <= em)) && g++ < 60) { out.push(y + "-" + String(m).padStart(2, "0")); m++; if (m > 12) { m = 1; y++; } } return out; };
+  let scopeFrom = isaf?.header?.periodFrom, scopeTo = isaf?.header?.periodTo;
+  if (!scopeFrom || !scopeTo) { const ds = [...(isaf.sales || []), ...(isaf.purchases || [])].map((x) => String(x.invoiceDate || "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}/.test(d)).sort(); if (ds.length) { scopeFrom = scopeFrom || ds[0]; scopeTo = scopeTo || ds[ds.length - 1]; } }
+  const scopeMonths = new Set(monthsBetween(scopeFrom, scopeTo));
+  const inScope = (x) => !scopeMonths.size || scopeMonths.has(String(x.invoiceDate || "").slice(0, 7));
+  const notAnnulled = (x) => String(x.invoiceType || "").toUpperCase() !== "AN";
+
+  const saftSales = (saft?.sales?.items || []).filter((x) => x.invoiceNo && inScope(x) && notAnnulled(x));
+  const saftPurch = (saft?.purchases?.items || []).filter((x) => x.invoiceNo && inScope(x) && notAnnulled(x));
   const saftSalesMap = new Map(saftSales.map((x) => [norm(x.invoiceNo), x]));
   const saftPurchMap = new Map(saftPurch.map((x) => [norm(x.invoiceNo), x]));
+  const _normVat = (s) => String(s || "").toUpperCase().replace(/\s/g, "");
+  const _coreVat = (s) => _normVat(s).replace(/^LT/, "");
+  const _custVat = new Map((saft?.customers || []).map((c) => [String(c.customerID || ""), c.taxRegistrationNumber || ""]));
+  const _supVat = new Map((saft?.suppliers || []).map((s) => [String(s.supplierID || ""), s.taxRegistrationNumber || ""]));
 
   // duplicate invoice numbers within i.SAF
   const dupCheck = (arr, side) => {
@@ -5293,8 +5445,8 @@ function reconcileISAF(isaf, saft, opts = {}) {
   // per-side line reconciliation
   const reconcileSide = (isafArr, saftMap, side) => {
     const S = side === "sales" ? "S" : "P";
-    let matched = 0, vatMismatch = 0, netMismatch = 0, missingInLedger = 0;
-    const missInLedgerEv = [], vatEv = [], netEv = [];
+    let matched = 0, vatMismatch = 0, netMismatch = 0, missingInLedger = 0, partyVatMismatch = 0;
+    const missInLedgerEv = [], vatEv = [], netEv = [], partyVatEv = [];
 
     for (const inv of isafArr) {
       const k = norm(inv.invoiceNo);
@@ -5319,6 +5471,9 @@ function reconcileISAF(isaf, saft, opts = {}) {
         add(`ISAF-${S}-CANC`, side, "Warn", `Cancelled invoice still carries amounts (${side})`,
           `Invoice ${inv.invoiceNo} is marked cancelled but reports non-zero VAT/taxable.`, [`${inv.invoiceNo}: net €${inv.taxable}, VAT €${inv.vat}`]);
       }
+      const _lvRaw = (side === "sales" ? _custVat.get(String(booked.customerID || "")) : _supVat.get(String(booked.supplierID || ""))) || "";
+      const _dv = _normVat(inv.counterpartyVat), _lv = _normVat(_lvRaw);
+      if (_dv && _lv && _dv !== _lv && _coreVat(_dv) !== _coreVat(_lv)) { partyVatMismatch++; partyVatEv.push(`${inv.invoiceNo}: i.SAF ${_dv} vs ledger ${_lv}`); }
       if (!inv.counterpartyVat && !inv.counterpartyReg) {
         add(`ISAF-${S}-PARTY`, side, "Warn", `Missing counterparty identifier (${side})`,
           `Invoice ${inv.invoiceNo} has neither a VAT number nor a registration code for the counterparty.`, [`${inv.invoiceNo}`]);
@@ -5350,6 +5505,8 @@ function reconcileISAF(isaf, saft, opts = {}) {
       `${vatMismatch} matched invoice(s) have a VAT amount in i.SAF that differs from the ledger beyond tolerance.`, vatEv.slice(0, 10));
     if (netMismatch > 0) add(`ISAF-${S}-NET`, side, "Warn", `Taxable-amount mismatches (${side})`,
       `${netMismatch} matched invoice(s) have a taxable amount in i.SAF that differs from the ledger beyond tolerance.`, netEv.slice(0, 10));
+    if (partyVatMismatch > 0) add(`ISAF-${S}-PARTYVAT`, side, "Warn", `Counterparty VAT number differs from the ledger (${side})`,
+      `${partyVatMismatch} matched invoice(s) carry a counterparty VAT number in i.SAF that differs from the SAF-T master.`, partyVatEv.slice(0, 10));
 
     return { isafCount: isafArr.length, saftCount: saftMap.size, matched, vatMismatch, netMismatch,
       missingInLedger, missingInRegister: missingInRegister.length };
@@ -5357,6 +5514,9 @@ function reconcileISAF(isaf, saft, opts = {}) {
 
   const salesSummary = reconcileSide(isaf.sales || [], saftSalesMap, "sales");
   const purchSummary = reconcileSide(isaf.purchases || [], saftPurchMap, "purchases");
+  const _saftReg = String(saft?.header?.registrationNumber || "").trim();
+  const _isafReg = String((isaf && (isaf.registrationNumber || (isaf.header && isaf.header.registrationNumber))) || "").trim();
+  if (_saftReg && _isafReg && _saftReg !== _isafReg) add("ISAF-ENTITY", "header", "Warn", "Registration number differs between i.SAF and SAF-T", `i.SAF ${_isafReg} vs SAF-T ${_saftReg}.`, null);
 
   // aggregate VAT position comparison
   const sum = (arr, f) => _r2((arr || []).reduce((s, x) => s + (f(x) || 0), 0));
@@ -5382,7 +5542,7 @@ function reconcileISAF(isaf, saft, opts = {}) {
   return {
     findings,
     bySeverity,
-    summary: { sales: salesSummary, purchases: purchSummary, vat },
+    summary: { sales: salesSummary, purchases: purchSummary, vat, scope: { from: scopeFrom || "", to: scopeTo || "", months: Array.from(scopeMonths) } },
     period: isaf.header || {},
   };
 }
@@ -6200,6 +6360,207 @@ function computeFr0600(parsed) {
   ["28","35","36"].forEach((b) => rows.push({ box: b, label: b === "28" ? "PVM atskaitos procentas" : b === "35" ? "Atskaitomas PVM" : "Mok\u0117tinas (gr\u0105\u017eintinas) PVM", value: null, codes: "\u2014", note: "nenustatoma i\u0161 SAF-T (priklauso nuo atskaitos teis\u0117s)" }));
   return { rows, lines, noTV };
 }
+function Fr0600Compare({ parsed, lang }) {
+  const [open, setOpen] = useState(false);
+  const [filed, setFiled] = useState({});
+  const res = useMemo(() => (parsed ? computeFr0600(parsed) : null), [parsed]);
+  if (!parsed || !res) return null;
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const rows = (res.rows || []).filter((r) => r.value != null);
+  let fld = 0, mism = 0;
+  const data = rows.map((r) => {
+    const raw = String(filed[r.box] ?? "").replace(",", ".").trim();
+    const f = raw === "" ? null : parseFloat(raw);
+    const ok = f != null && isFinite(f);
+    const d = ok ? Math.round((f - r.value) * 100) / 100 : null;
+    if (ok) { fld++; if (Math.abs(d) > 0.01) mism++; }
+    return { box: r.box, label: r.label, value: r.value, f, d };
+  });
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("Palyginti su pateikta deklaracija", "Compare with the filed return")}>{"\u21c4"} {L("FR0600 vs deklaruota", "FR0600 vs filed")}</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 780, maxWidth: "94vw", maxHeight: "84vh", overflow: "auto", color: "inherit" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("FR0600 palyginimas: apskai\u010diuota i\u0161 SAF-T vs deklaruota", "FR0600 comparison: computed from SAF-T vs filed")}</strong>
+          <button data-frclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ fontSize: 12, opacity: .8, marginBottom: 12 }}>{L("\u012eveskite pateiktos FR0600 reik\u0161mes \u2014 skirtumai skai\u010diuojami deterministi\u0161kai (tolerancija 0,01 EUR). Laukeliai 28/35/36 nenustatomi i\u0161 SAF-T.", "Enter the filed FR0600 values \u2014 differences are computed deterministically (0.01 EUR tolerance). Boxes 28/35/36 are not derivable from SAF-T.")}</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr>
+            <th style={{ textAlign: "left", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Laukelis", "Box")}</th>
+            <th style={{ textAlign: "left", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Apra\u0161ymas", "Label")}</th>
+            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("I\u0161 SAF-T", "From SAF-T")}</th>
+            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Deklaruota", "Filed")}</th>
+            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{"\u0394"}</th>
+          </tr></thead>
+          <tbody>
+            {data.map((r) => <tr key={r.box}>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}` }}>{r.box}</td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, opacity: .85 }}>{String(r.label || "").slice(0, 52)}</td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right" }}>{r.value.toFixed(2)}</td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right" }}>
+                <input data-box={r.box} value={filed[r.box] ?? ""} onChange={(e) => setFiled({ ...filed, [r.box]: e.target.value })} placeholder={"\u2014"} style={{ width: 110, background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "3px 6px", textAlign: "right", fontFamily: "inherit" }} />
+              </td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right", color: r.d == null ? "inherit" : (Math.abs(r.d) > 0.01 ? "#ff6b6b" : "#7bd88f") }}>{r.d == null ? "\u2014" : r.d.toFixed(2)}</td>
+            </tr>)}
+          </tbody>
+        </table>
+        <div style={{ marginTop: 10, fontSize: 12 }}>
+          {L("U\u017epildyta", "Filled")}: {fld} {" \u00b7 "} {L("Neatitikim\u0173", "Mismatches")}: <strong style={{ color: mism ? "#ff6b6b" : "#7bd88f" }}>{mism}</strong>
+        </div>
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
+function PriorPeriodCompare({ parsed, lang }) {
+  const [open, setOpen] = useState(false);
+  const [prior, setPrior] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [fname, setFname] = useState("");
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const nextDay = (s) => { if (!/^\d{4}-\d{2}-\d{2}/.test(s || "")) return ""; const d = new Date(Date.UTC(+s.slice(0,4), +s.slice(5,7)-1, +s.slice(8,10)) + 86400000); return d.toISOString().slice(0,10); };
+  const cmp = useMemo(() => {
+    if (!parsed || !prior) return null;
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const out = { header: [], gl: [], parties: [], stock: [], mism: 0 };
+    const ch = parsed.header || {}, ph = prior.header || {};
+    if (String(ch.registrationNumber || "") !== String(ph.registrationNumber || "")) { out.header.push({ k: L("\u012emon\u0117s kodas", "Registration no."), pri: ph.registrationNumber || "\u2014", cur: ch.registrationNumber || "\u2014", bad: true }); out.mism++; }
+    const pe = String(ph.fiscalYearTo || ph.periodEnd || "").slice(0,10), cs = String(ch.fiscalYearFrom || ch.periodStart || "").slice(0,10);
+    if (pe && cs && nextDay(pe) !== cs) { out.header.push({ k: L("Laikotarpi\u0173 sand\u016bra", "Period adjacency"), pri: pe, cur: cs, bad: true }); out.mism++; }
+    else if (pe && cs) out.header.push({ k: L("Laikotarpi\u0173 sand\u016bra", "Period adjacency"), pri: pe, cur: cs, bad: false });
+    const pacc = new Map(); (prior.accounts || []).forEach((a) => pacc.set(String(a.accountID || ""), a));
+    const seen = new Set();
+    (parsed.accounts || []).forEach((a) => {
+      const id = String(a.accountID || ""); if (!id) return; seen.add(id);
+      const od = a.openingDebitBalance || 0, oc = a.openingCreditBalance || 0;
+      const p = pacc.get(id); const cd = p ? (p.closingDebitBalance || 0) : null, cc = p ? (p.closingCreditBalance || 0) : null;
+      if (!p) { if (Math.abs(od) > 0.005 || Math.abs(oc) > 0.005) { out.gl.push({ id, name: a.accountDescription || "", kind: "missP", od: r2(od), oc: r2(oc) }); out.mism++; } return; }
+      if (Math.abs(od - cd) > 0.01 || Math.abs(oc - cc) > 0.01) { out.gl.push({ id, name: a.accountDescription || "", kind: "diff", od: r2(od), cd: r2(cd), oc: r2(oc), cc: r2(cc), dD: r2(od - cd), dC: r2(oc - cc) }); out.mism++; }
+    });
+    (prior.accounts || []).forEach((p) => { const id = String(p.accountID || ""); if (!id || seen.has(id)) return; const cd = p.closingDebitBalance || 0, cc = p.closingCreditBalance || 0; if (Math.abs(cd) > 0.005 || Math.abs(cc) > 0.005) { out.gl.push({ id, name: p.accountDescription || "", kind: "missC", cd: r2(cd), cc: r2(cc) }); out.mism++; } });
+    const partyScan = (curArr, priArr, idk, side) => {
+      const pm = new Map(); (priArr || []).forEach((m) => { let s = 0; (m.accounts || []).forEach((ac) => { s += (ac.cd || 0) - (ac.cc || 0); }); pm.set(String(m[idk] || ""), s); });
+      (curArr || []).forEach((m) => { const id = String(m[idk] || ""); if (!id || !pm.has(id)) return; let o = 0; (m.accounts || []).forEach((ac) => { o += (ac.od || 0) - (ac.oc || 0); }); const pc = pm.get(id); if (Math.abs(o - pc) > 0.01) { out.parties.push({ side, id, name: (m.name || "").slice(0, 30), open: r2(o), close: r2(pc), d: r2(o - pc) }); out.mism++; } });
+    };
+    partyScan(parsed.customers, prior.customers, "customerID", "C");
+    partyScan(parsed.suppliers, prior.suppliers, "supplierID", "S");
+    const pst = new Map(); (prior.physicalStock || []).forEach((e) => pst.set(String(e.productCode || ""), e));
+    (parsed.physicalStock || []).forEach((e) => { const id = String(e.productCode || ""); const p = pst.get(id); if (!p) return; const oq = e.openingStockQuantity || 0, cq = p.closingStockQuantity || 0; const ov = e.openingStockValue, cv = p.closingStockValue; let bad = Math.abs(oq - cq) > 0.0001; if (ov != null && cv != null && Math.abs(ov - cv) > 0.01) bad = true; if (bad) { out.stock.push({ id, oq: r2(oq), cq: r2(cq), ov: ov == null ? null : r2(ov), cv: cv == null ? null : r2(cv) }); out.mism++; } });
+    return out;
+  }, [parsed, prior, lang]);
+  if (!parsed) return null;
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  const td = { padding: 5, borderBottom: `1px solid ${LINE}` };
+  const onFile = (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    setErr(""); setBusy(true); setFname(f.name);
+    const rd = new FileReader();
+    rd.onload = () => { setTimeout(() => { try { const p = parseSAFTFull(String(rd.result || "")); if (p && p._parseError) { setErr(p._parseError); setPrior(null); } else setPrior(p); } catch (ex) { setErr(String(ex).slice(0, 160)); setPrior(null); } setBusy(false); }, 30); };
+    rd.onerror = () => { setErr("read error"); setBusy(false); };
+    rd.readAsText(f);
+  };
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("T\u0119stinumo patikra su ankstesnio laikotarpio SAF-T", "Continuity check against the prior-period SAF-T")}>{"\u21bb"} {L("Ankstesnis laikotarpis", "Prior period")}</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 880, maxWidth: "95vw", maxHeight: "86vh", overflow: "auto", color: "inherit", fontSize: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("T\u0119stinumo patikra: ankstesnio laikotarpio SAF-T", "Continuity check: prior-period SAF-T")}</strong>
+          <button data-ppclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ opacity: .8, marginBottom: 10 }}>{L("\u012ekelkite ankstesnio laikotarpio SAF-T \u2014 uždarymo likučiai lyginami su einamojo laikotarpio atidarymo likučiais (DK, pirk\u0117jai/tiek\u0117jai, atsargos; tolerancija 0,01 EUR). Turtas \u2014 v\u0117lesn\u0117je versijoje.", "Upload the prior-period SAF-T \u2014 its closing balances are compared with the current opening balances (GL, customers/suppliers, stock; 0.01 EUR tolerance). Assets \u2014 in a later version.")}</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <label style={{ ...btn, display: "inline-block" }}>
+            {L("Pasirinkti fail\u0105", "Choose file")}
+            <input data-prior-input type="file" accept=".xml" onChange={onFile} style={{ display: "none" }} />
+          </label>
+          <span style={{ opacity: .8 }}>{busy ? L("Skaitoma\u2026", "Reading\u2026") : (fname || "\u2014")}</span>
+          {prior ? <button onClick={() => { setPrior(null); setFname(""); }} style={btn}>{L("I\u0161valyti", "Clear")}</button> : null}
+          {err ? <span style={{ color: "#ff6b6b" }}>{err}</span> : null}
+        </div>
+        {cmp ? <>
+          <div style={{ marginBottom: 10 }}>{L("T\u0119stinumo neatitikim\u0173", "Continuity mismatches")}: <strong style={{ color: cmp.mism ? "#ff6b6b" : "#7bd88f" }}>{cmp.mism}</strong></div>
+          {cmp.header.map((h, i) => <div key={i} style={{ color: h.bad ? "#ff6b6b" : "#7bd88f", marginBottom: 4 }}>{h.k}: {h.pri} {"\u2192"} {h.cur}</div>)}
+          {cmp.gl.length ? <>
+            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("DK s\u0105skaitos (atidarymas vs ankstesnis u\u017edarymas)", "GL accounts (opening vs prior closing)")} \u2014 {cmp.gl.length}</div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th style={{...td,textAlign:"left"}}>ID</th><th style={{...td,textAlign:"left"}}>{L("Pavadinimas","Name")}</th><th style={{...td,textAlign:"right"}}>D: {L("dab.","cur")}/{L("ankst.","prior")}</th><th style={{...td,textAlign:"right"}}>{"\u0394"}D</th><th style={{...td,textAlign:"right"}}>K: {L("dab.","cur")}/{L("ankst.","prior")}</th><th style={{...td,textAlign:"right"}}>{"\u0394"}K</th></tr></thead><tbody>
+              {cmp.gl.slice(0, 50).map((g, i) => <tr key={i}>
+                <td style={td}>{g.id}</td><td style={{...td,opacity:.85}}>{String(g.name).slice(0,26)}{g.kind==="missP"?L(" (n\u0117ra ankstesniame)"," (missing in prior)"):g.kind==="missC"?L(" (n\u0117ra einamajame)"," (missing in current)"):""}</td>
+                <td style={{...td,textAlign:"right"}}>{g.od != null ? g.od.toFixed(2) : "\u2014"} / {g.cd != null ? g.cd.toFixed(2) : "\u2014"}</td>
+                <td style={{...td,textAlign:"right",color:"#ff6b6b"}}>{g.dD != null ? g.dD.toFixed(2) : "\u2014"}</td>
+                <td style={{...td,textAlign:"right"}}>{g.oc != null ? g.oc.toFixed(2) : "\u2014"} / {g.cc != null ? g.cc.toFixed(2) : "\u2014"}</td>
+                <td style={{...td,textAlign:"right",color:"#ff6b6b"}}>{g.dC != null ? g.dC.toFixed(2) : "\u2014"}</td>
+              </tr>)}
+            </tbody></table>
+          </> : null}
+          {cmp.parties.length ? <>
+            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("Pirk\u0117jai / tiek\u0117jai", "Customers / suppliers")} \u2014 {cmp.parties.length}</div>
+            {cmp.parties.slice(0, 30).map((p, i) => <div key={i}>{p.side === "C" ? L("Pirk.", "Cust.") : L("Tiek.", "Supp.")} {p.id} {p.name}: {p.open.toFixed(2)} vs {p.close.toFixed(2)} ({"\u0394"} <span style={{ color: "#ff6b6b" }}>{p.d.toFixed(2)}</span>)</div>)}
+          </> : null}
+          {cmp.stock.length ? <>
+            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("Atsargos", "Stock")} \u2014 {cmp.stock.length}</div>
+            {cmp.stock.slice(0, 30).map((s, i) => <div key={i}>{s.id}: {L("kiekis", "qty")} {s.oq} vs {s.cq}{s.ov != null && s.cv != null ? `; ${L("vert\u0117", "value")} ${s.ov.toFixed(2)} vs ${s.cv.toFixed(2)}` : ""}</div>)}
+          </> : null}
+        </> : (busy ? null : <div style={{ opacity: .6 }}>{L("Failas ne\u012fkeltas.", "No file loaded.")}</div>)}
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
+function VIESCheck({ lang }) {
+  const [open, setOpen] = useState(false);
+  const [num, setNum] = useState("");
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  const check = async () => {
+    const v = num.toUpperCase().replace(/\s/g, "");
+    const m = v.match(/^([A-Z]{2})([A-Z0-9+*]{2,14})$/);
+    if (!m) { setErr(L("\u012eveskite kod\u0105 su \u0161alies prefiksu, pvz., LT123456715", "Enter a code with a country prefix, e.g., LT123456715")); setRes(null); return; }
+    setBusy(true); setErr(""); setRes(null);
+    try {
+      const r = await fetch(`/api/vies?country=${m[1]}&number=${encodeURIComponent(m[2])}`);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      if (j && j.error) throw new Error(j.error);
+      setRes(j);
+    } catch (ex) {
+      setErr(L("VIES tarpin\u0117 tarnyba nepasiekiama \u2014 \u012fdiekite api/vies.js \u0161alia api/ai.js ir perdiekite.", "VIES proxy unreachable \u2014 deploy api/vies.js next to api/ai.js and redeploy."));
+    }
+    setBusy(false);
+  };
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("PVM kodo patikra ES VIES registre (per js tarpin\u0119 tarnyb\u0105)", "Check a VAT number in the EU VIES registry (via the api proxy)")}>{"\u2713"} {L("VIES patikra", "VIES check")}</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 480, maxWidth: "92vw", color: "inherit", fontSize: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("VIES patikra", "VIES check")}</strong>
+          <button data-viesclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ opacity: .8, marginBottom: 10 }}>{L("Tikrinama Europos Komisijos VIES sistemoje per j\u016bs\u0173 diegimo /api/vies tarpin\u0119 tarnyb\u0105 (realiu laiku, neka\u0161uojama \u012f fail\u0105).", "Validated against the European Commission VIES system through your deployment's /api/vies proxy (real-time).")}</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <input data-vies-input value={num} onChange={(e) => setNum(e.target.value)} placeholder="LT123456715" style={{ flex: 1, background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 8px", fontFamily: "inherit", fontSize: 12 }} />
+          <button data-vies-check onClick={check} style={btn}>{busy ? L("Tikrinama\u2026", "Checking\u2026") : L("Tikrinti", "Check")}</button>
+        </div>
+        {err ? <div style={{ color: "#ff6b6b" }}>{err}</div> : null}
+        {res ? <div>
+          <div style={{ color: res.valid ? "#7bd88f" : "#ff6b6b", fontWeight: 600 }}>{res.valid ? L("Galioja \u2713", "Valid \u2713") : L("Negalioja \u2715", "Not valid \u2715")}</div>
+          {res.name ? <div style={{ marginTop: 4 }}>{res.name}</div> : null}
+          {res.address ? <div style={{ opacity: .8 }}>{res.address}</div> : null}
+          {res.requestDate ? <div style={{ opacity: .6, marginTop: 4 }}>{L("U\u017eklausos data", "Request date")}: {String(res.requestDate).slice(0, 10)}</div> : null}
+        </div> : null}
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
 function exportFr0600CSV(parsed, fileName, srcName) {
   const res = computeFr0600(parsed);
   if (!res) return;
@@ -7779,7 +8140,7 @@ function TAXAI({ onExit, initialView } = {}) {
               period={fileData?.parsed?.header ? `${fileData.parsed.header.fiscalYearFrom?.slice(0,10)} — ${fileData.parsed.header.fiscalYearTo?.slice(0,10)}` : ""}
             />}
             {!selectedFinding && <>
-            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} patikrinimai: ${XSD_RULES.length} XSD atitikties (pagal oficialų VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} struktūros/vientisumo + ${DUPLICATE_RULES.length} pasikartojančių įrašų (6 lentelė) + ${CLASSIFIER_RULES.length} klasifikatorių (VA-49 2 priedas) + ${AUDIT_RULES.length} PVM audito taisyklės + pilna XSD schemos validacija (visa rinkmena pagal XSD v2.01) — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} checks: ${XSD_RULES.length} XSD-conformance (per the official VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} structure/integrity + ${DUPLICATE_RULES.length} duplicate-record (Table 6) + ${CLASSIFIER_RULES.length} classifier (VA-49 Annex 2) + ${AUDIT_RULES.length} VAT audit rules + full XSD schema validation (entire file vs. XSD v2.01) — executed on upload, with cited evidence for every finding.`} right={runResult ? <div style={{ display: "flex", gap: 8 }}>{findings.length > 0 && <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button>}<button onClick={() => { exportExecutionSummaryCSV(runResult, fileData?.parsed?.schemaValidation, `taxai-${fileName}-execution-summary.csv`, fileName); audit.log("EXPORT", "Execution summary"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Vykdymo suvestinė" : "Execution summary"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "headers", `taxai-${fileName}-headers.csv`, fileName); audit.log("EXPORT", "Section headers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Antraštė" : "Header"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "customers", `taxai-${fileName}-customers.csv`, fileName); audit.log("EXPORT", "Section customers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Pirkėjai" : "Customers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "suppliers", `taxai-${fileName}-suppliers.csv`, fileName); audit.log("EXPORT", "Section suppliers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Tiekėjai" : "Suppliers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "stock", `taxai-${fileName}-stock.csv`, fileName); audit.log("EXPORT", "Section stock"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Judėjimai" : "Stock"}</button><button onClick={() => { exportFr0600CSV(fileData?.parsed, `taxai-${fileName}-fr0600.csv`, fileName); audit.log("EXPORT", "FR0600"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ FR0600</button></div> : null} />
+            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} patikrinimai: ${XSD_RULES.length} XSD atitikties (pagal oficialų VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} struktūros/vientisumo + ${DUPLICATE_RULES.length} pasikartojančių įrašų (6 lentelė) + ${CLASSIFIER_RULES.length} klasifikatorių (VA-49 2 priedas) + ${AUDIT_RULES.length} PVM audito taisyklės + pilna XSD schemos validacija (visa rinkmena pagal XSD v2.01) — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} checks: ${XSD_RULES.length} XSD-conformance (per the official VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} structure/integrity + ${DUPLICATE_RULES.length} duplicate-record (Table 6) + ${CLASSIFIER_RULES.length} classifier (VA-49 Annex 2) + ${AUDIT_RULES.length} VAT audit rules + full XSD schema validation (entire file vs. XSD v2.01) — executed on upload, with cited evidence for every finding.`} right={runResult ? <div style={{ display: "flex", gap: 8 }}>{findings.length > 0 && <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button>}<button onClick={() => { exportExecutionSummaryCSV(runResult, fileData?.parsed?.schemaValidation, `taxai-${fileName}-execution-summary.csv`, fileName); audit.log("EXPORT", "Execution summary"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Vykdymo suvestinė" : "Execution summary"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "headers", `taxai-${fileName}-headers.csv`, fileName); audit.log("EXPORT", "Section headers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Antraštė" : "Header"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "customers", `taxai-${fileName}-customers.csv`, fileName); audit.log("EXPORT", "Section customers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Pirkėjai" : "Customers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "suppliers", `taxai-${fileName}-suppliers.csv`, fileName); audit.log("EXPORT", "Section suppliers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Tiekėjai" : "Suppliers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "stock", `taxai-${fileName}-stock.csv`, fileName); audit.log("EXPORT", "Section stock"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Judėjimai" : "Stock"}</button><button onClick={() => { exportFr0600CSV(fileData?.parsed, `taxai-${fileName}-fr0600.csv`, fileName); audit.log("EXPORT", "FR0600"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ FR0600</button><Fr0600Compare parsed={fileData?.parsed} lang={lang} /><PriorPeriodCompare parsed={fileData?.parsed} lang={lang} /><VIESCheck lang={lang} /></div> : null} />
 
             <div style={{ border: `1px dashed ${fileData ? "#fff" : PL_LINE}`, padding: 28, textAlign: "center", cursor: "pointer", marginBottom: 16, background: "var(--bg2)", transition: "border-color .2s" }} onClick={() => fileRef.current?.click()}>
               <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 8 }}>{fileData ? "File loaded" : (lang === "lt" ? "Vilkite failą čia arba spustelėkite" : "Drag a file here or click")}</div>
@@ -8223,7 +8584,7 @@ function TAXAI({ onExit, initialView } = {}) {
                       <div style={{ fontSize: 15, color: "#fff", fontFamily: "var(--f)", marginBottom: 16 }}>{lang === "lt" ? "Sutikrinsime jį su jau įkeltu SAF-T" : "We'll reconcile it against the SAF-T already loaded"}</div>
                       <button onClick={() => isafFileRef.current?.click()} style={bP}>{lang === "lt" ? "Pasirinkti i.SAF failą" : "Choose i.SAF file"} →</button>
                     </div>}
-                    <input ref={isafFileRef} type="file" accept=".xml" onChange={uploadISAF} style={{ display: "none" }} />
+                    <input ref={isafFileRef} data-isaf-main type="file" accept=".xml" onChange={uploadISAF} style={{ display: "none" }} />
 
                     {r && <>
                       {/* VAT position */}
