@@ -2582,36 +2582,6 @@ function snapshotReadiness(snap, now) {
   return { status, staleDays, stale: staleDays > 35,
     label: { ready: ["AUDIT-READY", "PARUOŠTA AUDITUI"], warnings: ["READY · WARNINGS", "PARUOŠTA · PERSPĖJIMAI"], blocked: ["NOT SUBMITTABLE", "NETEIKTINA"] }[status] };
 }
-function buildPortfolioCSV(rows) {
-  const esc = (v) => { const s = String(v == null ? "" : v); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  const head = ["company", "reg", "period_start", "period_end", "last_run", "gate", "risk_score", "band", "critical", "high", "medium", "low", "total_findings", "new_vs_prev", "resolved_vs_prev", "engine"];
-  const lines = [head.join(",")];
-  (rows || []).forEach((r) => lines.push([r.name, r.reg, r.periodStart, r.periodEnd, new Date(r.ts).toISOString().slice(0, 10), r.gateVerdict, r.risk, r.band,
-    r.sev.Critical, r.sev.High, r.sev.Medium, r.sev.Low, r.total, r.delta ? r.delta.addedCount : "", r.delta ? r.delta.resolvedCount : "", r.engineVersion].map(esc).join(",")));
-  return lines.join("\n");
-}
-function buildPortfolioReportHTML(rows, lang, brandName, now) {
-  const lt = lang === "lt";
-  const T = (en, l2) => (lt ? l2 : en);
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const GC = { rejected: "#c92a2a", warnings: "#b08900", clean: "#2b8a3e" };
-  const stats = { ready: 0, warnings: 0, blocked: 0, stale: 0 };
-  const body = (rows || []).map((r) => {
-    const rd = snapshotReadiness(r, now);
-    stats[rd.status]++; if (rd.stale) stats.stale++;
-    return "<tr><td>" + esc(r.name || "—") + "</td><td class='m'>" + esc(r.reg) + "</td><td class='m'>" + esc(r.periodStart) + " – " + esc(r.periodEnd) + "</td>" +
-      "<td class='m'>" + new Date(r.ts).toISOString().slice(0, 10) + (rd.stale ? " ⚠" : "") + "</td>" +
-      "<td style='color:" + GC[r.gateVerdict] + ";font-weight:700'>" + esc(lt ? rd.label[1] : rd.label[0]) + "</td>" +
-      "<td class='n'>" + r.risk + "</td><td class='n'>" + r.sev.Critical + "/" + r.sev.High + "/" + r.sev.Medium + "/" + r.sev.Low + "</td>" +
-      "<td class='n'>" + (r.delta ? "+" + r.delta.addedCount + " / −" + r.delta.resolvedCount : "—") + "</td></tr>";
-  }).join("");
-  return "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + esc(brandName) + " — " + T("Portfolio readiness", "Portfelio parengtis") + "</title><style>@page{size:A4 landscape;margin:14mm}body{font:12px/1.5 'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:26px}h1{font-weight:300;font-size:21px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:14px}td,th{border:1px solid #e3e3e3;padding:6px 8px;text-align:left;font-size:11.5px}.n{text-align:right}.m{font-family:Consolas,monospace;font-size:10.5px}.sub{color:#666;font-size:11px}</style></head><body>" +
-    "<h1>" + esc(brandName) + " · " + T("SAF-T portfolio readiness", "SAF-T portfelio parengtis") + "</h1>" +
-    "<div class='sub'>" + (rows || []).length + " " + T("companies", "įmonės(-ių)") + " · " + T("ready", "paruošta") + " " + stats.ready + " · " + T("warnings", "su perspėjimais") + " " + stats.warnings + " · " + T("blocked", "neteiktina") + " " + stats.blocked + " · " + T("stale (>35 d.)", "pasenę (>35 d.)") + " " + stats.stale + " · " + new Date(now != null ? now : Date.now()).toISOString().slice(0, 10) + " · engine v" + esc(ENGINE_VERSION) + "</div>" +
-    "<table><tr><th>" + T("Company", "Įmonė") + "</th><th>" + T("Reg.", "Į. k.") + "</th><th>" + T("Period", "Laikotarpis") + "</th><th>" + T("Last run", "Pask. patikra") + "</th><th>" + T("Status", "Būsena") + "</th><th class='n'>" + T("Risk", "Rizika") + "</th><th class='n'>C/H/M/L</th><th class='n'>Δ</th></tr>" + (body || "<tr><td colspan='8'>—</td></tr>") + "</table></body></html>";
-}
-
-// White-label: window.TAXAI_BRAND (vendor embed) and localStorage override.
 function taxaiBrand() {
   const def = { name: "TaxAI", accent: "#7cc4ff", footer: "" };
   try {
@@ -13227,8 +13197,6 @@ function TAXAI({ onExit, initialView } = {}) {
   const [nlPreview, setNlPreview] = useState(null); // {error} | {spec, interpretation, hits, sample}
   const [snapshots, setSnapshots] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_snapshots") || "[]"); } catch { return []; } });
   const pushSnapshot = useCallback((snap) => { setSnapshots((prev) => { const next = saveAuditSnapshot(prev, snap); try { localStorage.setItem("taxai_snapshots", JSON.stringify(next)); } catch (e) { /* private mode */ } return next; }); }, []);
-  const [batchProg, setBatchProg] = useState(null);   // {i,n,name,pct}
-  const [batchLog, setBatchLog] = useState([]);       // per-file batch results
   const [brandCfg, setBrandCfg] = useState(() => taxaiBrand());
   const portRef = useRef(null);
   const [eaResult, setEaResult] = useState(null);    // E-Audit (TAS) engine output
@@ -13470,31 +13438,7 @@ function TAXAI({ onExit, initialView } = {}) {
   // Bureau batch: every file is a separate engagement — full 482-rule pipeline
   // each, snapshot saved, results land on the portfolio board. Files never
   // leave the machine; large ones stream through the worker.
-  const batchUpload = useCallback(async (fileList) => {
-    const files = Array.from(fileList || []).filter((f) => /\.xml$/i.test(f.name));
-    if (!files.length) return;
-    setBatchLog([]);
-    audit.log("BATCH_AUDIT_START", files.length + " files");
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      setBatchProg({ i: i + 1, n: files.length, name: f.name, pct: 0 });
-      try {
-        const r = await parseSaftSmart(f, (p) => setBatchProg({ i: i + 1, n: files.length, name: f.name, pct: p.pct }));
-        if (r.parsed && r.parsed._parseError) throw new Error(r.parsed._parseError);
-        const rr = runAllRules(r.parsed);
-        const fsn = (rr.findings || []).map((x) => ({ ...x, severity: x.severityUi || x.severity }));
-        const snap = makeSnapshot(r.parsed, fsn, { fileName: f.name });
-        pushSnapshot(snap);
-        setBatchLog((l) => [...l, { name: f.name, ok: true, company: snap.name || snap.reg, verdict: snap.gateVerdict, risk: snap.risk, total: snap.total }]);
-        audit.log("BATCH_AUDIT_FILE", f.name + " → " + snap.gateVerdict + " · risk " + snap.risk);
-      } catch (ex) {
-        setBatchLog((l) => [...l, { name: f.name, ok: false, err: String(ex && ex.message || ex).slice(0, 120) }]);
-      }
-    }
-    setBatchProg(null);
-  }, [audit, pushSnapshot]);
-
-  // Upload a monthly i.SAF (VAT invoice register) and reconcile it vs the loaded SAF-T ledger.
+    // Upload a monthly i.SAF (VAT invoice register) and reconcile it vs the loaded SAF-T ledger.
   const uploadISAF = useCallback((e) => {
     const file = e.target?.files?.[0]; if (!file) return;
     if (!fileData?.parsed) { setToast(lang === "lt" ? "Pirma įkelkite SAF-T failą" : "Load a SAF-T file first"); return; }
@@ -13726,12 +13670,10 @@ function TAXAI({ onExit, initialView } = {}) {
     { id: "home", l: t.home, ic: "◆" },
     { id: "chat", l: t.chat, ic: "◈" },
     { id: "saftview", l: t.saft, ic: "◫" },
-    { id: "portfolio", l: lang === "lt" ? "Portfelis" : "Portfolio", ic: "▦" },
     { id: "kpis", l: lang === "lt" ? "KPI" : "KPIs", ic: "▱" },
     { id: "intel", l: lang === "lt" ? "Žvalgyba" : "Intelligence", ic: "✦" },
     { id: "integrations", l: lang === "lt" ? "Integracijos" : "Integrations", ic: "⇄" },
     { id: "einvoicing", l: lang === "lt" ? "E. sąskaitos" : "E-Invoicing", ic: "✉" },
-    { id: "arch", l: t.arch, ic: "⌬" },
     { id: "eauditor", l: lang === "lt" ? "E-Auditorius" : "E-Auditor", ic: "◉" },
     { id: "agents", l: `${t.agents} (${AGENTS.length})`, ic: "◎" },
     { id: "logs", l: t.auditLog, ic: "◑" },
@@ -13947,25 +13889,72 @@ function TAXAI({ onExit, initialView } = {}) {
               </div>
             </div>
 
-            {/* how it works — animated pipeline */}
-            <div style={{ padding: "20px 56px 72px" }}>
-              <SEC n="02" en="How it works" lt="Kaip tai veikia" />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
-                {[
-                  ["01", lang === "lt" ? "Įkelkite SAF-T" : "Upload SAF-T", lang === "lt" ? "XML iš jūsų ERP — apdorojama jūsų naršyklėje." : "XML from your ERP — parsed right in your browser."],
-                  ["02", lang === "lt" ? "Audito taisyklės" : "Audit rules", lang === "lt" ? "Patikrintos PVM taisyklės pažymi kiekvieną neatitikimą su įrodymais ir teisės nuoroda." : "Verified VAT rules flag every breach with evidence and a legal citation."],
-                  ["03", lang === "lt" ? "7 varikliai + AI" : "7 engines + AI", lang === "lt" ? "Forensinė analizė ir jūsų sektoriui pritaikytos taisyklės." : "Forensic analysis plus rules adapted to your sector."],
-                  ["04", lang === "lt" ? "Ataskaita" : "Report", lang === "lt" ? "Eksportuokite forensinę ataskaitą ir CSV vienu paspaudimu." : "Export a forensic report and CSV in one click."],
-                ].map(([n, title, desc], i) =>
-                  <div key={i} style={{ padding: "26px 24px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}`, transition: "background .25s" }} onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }} onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                    <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", fontWeight: 600, letterSpacing: ".14em", marginBottom: 14 }}>/ {n}</div>
-                    <div style={{ fontSize: 19, color: "#fff", fontFamily: "var(--f)", marginBottom: 8 }}>{title}</div>
-                    <div style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6 }}>{desc}</div>
-                  </div>)}
+            {/* workflow + architecture */}
+            <div style={{ padding: "20px 56px 56px" }}>
+              <SEC n="02" en="How it works · Architecture" lt="Kaip tai veikia · Architektūra" />
+              <div style={{ display: "flex", gap: 0, alignItems: "baseline", flexWrap: "wrap", marginBottom: 18 }}>
+                <div style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)" }}>{lang === "lt" ? "Deterministiniai varikliai pirmiausia — AI tik aiškina ir kiekvienas jo teiginys tikrinamas." : "Deterministic engines first — the AI only explains, and every claim it makes is verified."}</div>
+                <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#555", letterSpacing: ".06em", marginLeft: "auto" }}>{APP_BUILD}</div>
               </div>
-              <div style={{ display: "flex", gap: 14, marginTop: 34, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "stretch", flexWrap: "wrap", rowGap: 16 }}>
+                {[
+                  ["01", lang === "lt" ? "Šaltiniai" : "Sources", ["SAF-T XML (iki GB)", lang === "lt" ? "ERP eksportas (CSV)" : "ERP export (CSV)", "UBL 2.1 / Peppol"], "#74c0fc"],
+                  ["02", lang === "lt" ? "Varikliai" : "Engines", [lang === "lt" ? "482 taisyklės · XSD" : "482 rules · XSD", lang === "lt" ? "dublikatai · klasifikatoriai" : "duplicates · classifiers", "EN 16931 · TAS/ISA"], "#74c0fc"],
+                  ["03", lang === "lt" ? "Vartai & rizika" : "Gate & risk", [lang === "lt" ? "i.MAS priėmimo simuliacija" : "i.MAS acceptance simulation", lang === "lt" ? "VMI rizikos balas" : "VMI risk score", lang === "lt" ? "Peppol parengtis" : "Peppol readiness"], "#ffd43b"],
+                  ["04", lang === "lt" ? "Veiksmai" : "Actions", ["Auto-Fix", lang === "lt" ? "E. auditas (TAS) · MUS atranka" : "E-Audit (ISA) · MUS sampling", lang === "lt" ? "i.SAF sutikrinimas" : "i.SAF reconciliation"], "#69db7c"],
+                  ["05", lang === "lt" ? "Rezultatai" : "Outputs", [lang === "lt" ? "Ataskaitos · VMI raštas" : "Reports · VMI letter", "Peppol XML · ZIP + SHA-256", "CSV · SDK"], "#fff"],
+                ].map(([n, title, rows, c], i, arr) => <div key={n} style={{ display: "contents" }}>
+                  <div style={{ flex: "1 1 150px", minWidth: 150, background: "var(--bg2)", border: `1px solid ${PL_LINE}`, borderTop: `2px solid ${c}`, padding: "16px 16px 14px" }}>
+                    <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88", letterSpacing: ".16em", marginBottom: 10 }}>/ {n}</div>
+                    <div style={{ fontFamily: "var(--f)", fontSize: 17, color: "#fff", marginBottom: 9 }}>{title}</div>
+                    {rows.map((r, k) => <div key={k} style={{ fontFamily: "var(--m)", fontSize: 10, color: "#9f9f9b", lineHeight: 1.8 }}>{r}</div>)}
+                  </div>
+                  {i < arr.length - 1 && <div style={{ width: 30, alignSelf: "center", flex: "0 0 30px" }}>
+                    <svg width="30" height="14" viewBox="0 0 30 14" style={{ display: "block" }}>
+                      <line x1="0" y1="7" x2="22" y2="7" stroke="rgba(255,255,255,0.3)" strokeWidth="1" strokeDasharray="3 3"><animate attributeName="stroke-dashoffset" from="6" to="0" dur="1s" repeatCount="indefinite" /></line>
+                      <path d="M22 3 L29 7 L22 11 Z" fill="rgba(255,255,255,0.45)" />
+                    </svg>
+                  </div>}
+                </div>)}
+              </div>
+              <div style={{ border: `1px solid ${PL_LINE}`, borderLeft: "3px solid #ffd43b", background: "var(--bg2)", padding: "12px 18px", marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "baseline" }}>
+                <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#ffd43b", letterSpacing: ".14em" }}>{lang === "lt" ? "AI SLUOKSNIS" : "AI LAYER"}</span>
+                <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#bcbcb8" }}>{lang === "lt" ? "Gemini per /api/ai · RAG iš teisės aktų bazės · kiekvienas teiginys lyginamas su variklio faktais — pagrįstumo balas ir šaltiniai kiekvienoje ataskaitoje." : "Gemini via /api/ai · RAG over the legal corpus · every claim is checked against engine facts — a grounding score and sources in every report."}</span>
+              </div>
+              <div style={{ border: `1px solid ${PL_LINE}`, borderLeft: "3px solid #74c0fc", background: "var(--bg2)", padding: "12px 18px", marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "baseline" }}>
+                <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#74c0fc", letterSpacing: ".14em" }}>{lang === "lt" ? "INTEGRACIJOS" : "INTEGRATIONS"}</span>
+                <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#bcbcb8" }}>{lang === "lt" ? "140 ERP jungčių → kanoninis modelis → SAF-T tiltas · window.TaxAI SDK ir postMessage protokolas įterpimui į ERP." : "140 ERP connectors → canonical model → SAF-T bridge · window.TaxAI SDK and a postMessage protocol for in-ERP embedding."}</span>
+              </div>
+            </div>
+
+            {/* capabilities */}
+            <div style={{ padding: "0 56px 56px" }}>
+              <SEC n="03" en="Capabilities" lt="Galimybės" />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", borderTop: `1px solid ${PL_LINE}`, borderLeft: `1px solid ${PL_LINE}` }}>
+                {[
+                  ["482", lang === "lt" ? "Taisyklių variklis" : "Rules engine", lang === "lt" ? "PVM, struktūra, XSD, dublikatai — kiekvienas radinys su įrodymais ir teisės nuoroda." : "VAT, structure, XSD, duplicates — every finding with evidence and a legal citation.", () => setView("saftview")],
+                  ["⛩", lang === "lt" ? "Vartai ir Auto-Fix" : "Gate & Auto-Fix", lang === "lt" ? "i.MAS verdiktas prieš pateikiant; saugūs taisymai su manifestu ir pakartotiniu auditu." : "The i.MAS verdict before you file; safe fixes with a manifest and re-audit.", () => setView("saftview")],
+                  ["TAS", lang === "lt" ? "E. auditorius" : "E-Auditor", lang === "lt" ? "Reikšmingumas, ŽĮ testai su Benfordu, MUS atranka, veiklos tęstinumas — pagal IFAC vadovą." : "Materiality, JE tests with Benford, MUS sampling, going concern — per the IFAC guide.", () => { const a = AGENTS.find((x) => x.id === "eauditor"); if (a) openAgent(a); else setView("agents"); }],
+                  ["⟡", lang === "lt" ? "E. sąskaitos & Peppol" : "E-Invoicing & Peppol", lang === "lt" ? "EN 16931 + BIS 3.0 validatorius ir generatorius; ERP paketai su manifestu ir ZIP." : "EN 16931 + BIS 3.0 validator and generator; ERP batches with manifest and ZIP.", () => setView("einvoicing")],
+                  ["🛡", lang === "lt" ? "Pagrįstas AI" : "Grounded AI", lang === "lt" ? "Agentai atsako su šaltiniais ir pagrįstumo balu — jokio teiginio be patikros." : "Agents answer with sources and a grounding score — no claim goes unverified.", () => setView("chat")],
+                  ["⌘K", lang === "lt" ? "Privatumas pagal dizainą" : "Private by design", lang === "lt" ? "Visi varikliai veikia naršyklėje — failai niekur nesiunčiami; audito žurnalas viduje." : "Every engine runs in the browser — files never leave it; audit log built in.", () => setView("saftview")],
+                ].map(([ic, title, desc, go], i) => <div key={i} role="button" tabIndex={0} onClick={go} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }} style={{ padding: "24px", borderRight: `1px solid ${PL_LINE}`, borderBottom: `1px solid ${PL_LINE}`, cursor: "pointer", transition: "background .25s" }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg2)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                  <div style={{ fontFamily: "var(--m)", fontSize: 13, color: "#8c8c88", marginBottom: 12, letterSpacing: ".08em" }}>{ic}</div>
+                  <div style={{ fontFamily: "var(--f)", fontSize: 19, color: "#fff", marginBottom: 8 }}>{title} <span style={{ color: "#555" }}>→</span></div>
+                  <div style={{ fontFamily: "var(--s)", fontSize: 13, color: "#bcbcb8", lineHeight: 1.6 }}>{desc}</div>
+                </div>)}
+              </div>
+            </div>
+
+            {/* standards strip + CTA */}
+            <div style={{ padding: "0 56px 72px" }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                {["VA-49", "SAF-T XSD 2.4.1", "PVMĮ IX-751", "EN 16931", "Peppol BIS 3.0", "TAS / ISA", "ViDA 2030"].map((s) => <span key={s} style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".1em", color: "#8c8c88", border: `1px solid ${PL_LINE}`, padding: "5px 10px" }}>{s}</span>)}
+                <span style={{ fontFamily: "var(--s)", fontSize: 11.5, color: "#7a7a76", marginLeft: 6 }}>{lang === "lt" ? "Kiekviena taisyklė susieta su oficialiu šaltiniu." : "Every rule is tied to an official source."}</span>
+              </div>
+              <div style={{ display: "flex", gap: 14, marginTop: 30, flexWrap: "wrap" }}>
                 <button onClick={() => setView("saftview")} style={bP} onMouseEnter={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#000"; }}>{lang === "lt" ? "Analizuoti SAF-T" : "Analyze SAF-T"} →</button>
-                <button onClick={() => setView("chat")} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>{lang === "lt" ? "Klausti agento" : "Ask an agent"}</button>
+                <button onClick={() => setView("einvoicing")} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>{lang === "lt" ? "E. sąskaitų studija" : "E-Invoice Studio"}</button>
               </div>
             </div>
           </div>
@@ -15106,80 +15095,6 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>}
 
         {/* ═══════════ AUDIT LOG ═══════════ */}
-        {view === "portfolio" && <div key="portfolio" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
-          <div style={{ maxWidth: 1180, margin: "0 auto" }}>
-            {(() => {
-              const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
-              const GC = { rejected: "#ff6b6b", warnings: "#ffd43b", clean: "#69db7c" };
-              const rows = latestSnapshots(snapshots).map((s) => { const hist = snapshotHistory(snapshots, s.key); const prev = hist.length > 1 ? hist[hist.length - 2] : null; return { ...s, hist, delta: prev ? diffSnapshots(prev, s) : null, rd: snapshotReadiness(s) }; });
-              const stats = { ready: 0, warnings: 0, blocked: 0, stale: 0 };
-              rows.forEach((r) => { stats[r.rd.status]++; if (r.rd.stale) stats.stale++; });
-              const dl = (name, content, type) => { const b = new Blob([content], { type }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
-              const spark = (hist) => { const pts = hist.slice(-12); if (pts.length < 2) return null; const max = Math.max(1, ...pts.map((p) => p.risk)); const xy = pts.map((p, i) => `${(i / (pts.length - 1)) * 72},${22 - (p.risk / max) * 20}`).join(" "); return <svg width="76" height="24" style={{ display: "block" }}><polyline points={xy} fill="none" stroke="#7cc4ff" strokeWidth="1.5" /></svg>; };
-              return <>
-                <div style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", letterSpacing: ".08em", marginBottom: 10 }}>04 — {lang === "lt" ? "BIURO REŽIMAS" : "BUREAU MODE"}</div>
-                <h2 style={{ fontSize: 30, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", margin: "0 0 6px" }}>{brandCfg.name} · {lang === "lt" ? "Portfelio parengtis" : "Portfolio readiness"}</h2>
-                <div style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 18, maxWidth: 860 }}>{lang === "lt" ? "Kiekviena patikra automatiškai įrašo momentinę būseną pagal įmonę ir laikotarpį. Lentelė rodo „paruošta auditui“ statusą, pasenusias patikras (>35 d.), riziką ir naujų / išspręstų radinių pokytį tarp patikrų. Visi failai apdorojami tik šiame kompiuteryje." : "Every audit automatically snapshots the state per company and period. The board shows audit-ready status, stale checks (>35 d.), risk, and the new/resolved delta between runs. All files are processed on this machine only."}</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
-                  {[["✓", lang === "lt" ? "Paruošta" : "Ready", stats.ready, "#69db7c"], ["⚠", lang === "lt" ? "Perspėjimai" : "Warnings", stats.warnings, "#ffd43b"], ["✕", lang === "lt" ? "Neteiktina" : "Blocked", stats.blocked, "#ff6b6b"], ["⏳", lang === "lt" ? "Pasenę" : "Stale", stats.stale, "#8c8c88"]].map(([ic, lb, n, col]) => <div key={lb} style={{ border: `1px solid ${PL_LINE}`, padding: "10px 16px", background: "var(--bg2)" }}><span style={{ color: col, fontFamily: "var(--m)", fontSize: 12, fontWeight: 700 }}>{ic} {n}</span><span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, marginLeft: 8, letterSpacing: ".06em", textTransform: "uppercase" }}>{lb}</span></div>)}
-                  <div style={{ flex: 1 }} />
-                  <button onClick={() => portRef.current?.click()} style={{ background: "#fff", color: "#000", border: "none", padding: "10px 20px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>+ {lang === "lt" ? "Paketinis auditas (N failų)" : "Batch audit (N files)"}</button>
-                  <input ref={portRef} type="file" multiple accept=".xml" style={{ display: "none" }} onChange={(e) => { batchUpload(e.target.files); try { e.target.value = ""; } catch (x) {} }} />
-                  {rows.length > 0 && <button onClick={() => { dl("taxai-portfolio.csv", buildPortfolioCSV(rows), "text/csv"); audit.log("EXPORT", "Portfolio CSV"); }} style={{ background: "transparent", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "10px 16px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ CSV</button>}
-                  {rows.length > 0 && <button onClick={() => { const html = buildPortfolioReportHTML(rows, lang, brandCfg.name); const b = new Blob([html], { type: "text/html" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "taxai-portfolio-report.html"; a.click(); window.open(u, "_blank"); setTimeout(() => URL.revokeObjectURL(u), 60000); audit.log("EXPORT", "Portfolio report"); }} style={{ background: "transparent", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "10px 16px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Ataskaita" : "Report"}</button>}
-                </div>
-                {batchProg && <div style={{ marginBottom: 14, maxWidth: 560 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88", marginBottom: 5 }}><span>⏳ {batchProg.name} ({batchProg.i}/{batchProg.n})</span><span>{batchProg.pct}%</span></div>
-                  <div style={{ height: 4, background: "rgba(255,255,255,0.08)" }}><div style={{ height: 4, width: `${batchProg.pct}%`, background: "#7cc4ff", transition: "width .2s" }} /></div>
-                </div>}
-                {batchLog.length > 0 && <div style={{ border: `1px solid ${PL_SOFT}`, background: "#000", padding: "10px 14px", marginBottom: 16, fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8", maxHeight: 130, overflow: "auto" }}>
-                  {batchLog.map((b, i) => <div key={i} style={{ padding: "2px 0" }}>{b.ok ? <>✓ <span style={{ color: "#fff" }}>{b.company}</span> <span style={{ color: "#8c8c88" }}>({b.name})</span> — <span style={{ color: GC[b.verdict] }}>{b.verdict}</span> · risk {b.risk} · {b.total} {lang === "lt" ? "rad." : "findings"}</> : <span style={{ color: "#ff8a8a" }}>✕ {b.name} — {b.err}</span>}</div>)}
-                </div>}
-                {rows.length === 0 ? <div style={{ border: `1px dashed ${PL_LINE}`, padding: 40, textAlign: "center", color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13.5, background: "var(--bg2)" }}>{lang === "lt" ? "Portfelis tuščias. Įmeskite kelis klientų SAF-T failus paketiniu auditu arba atlikite patikrą pagrindiniame SAF-T skirtuke — momentinės būsenos kaupiamos automatiškai." : "The portfolio is empty. Drop several client SAF-T files via batch audit, or run a check in the main SAF-T tab — snapshots accumulate automatically."}</div>
-                : <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 150px 105px 150px 70px 110px 90px 80px 34px", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${PL_LINE}`, fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88", letterSpacing: ".08em", textTransform: "uppercase" }}>
-                    <span>{lang === "lt" ? "Įmonė" : "Company"}</span><span>{lang === "lt" ? "Į. k." : "Reg."}</span><span>{lang === "lt" ? "Laikotarpis" : "Period"}</span><span>{lang === "lt" ? "Pask. patikra" : "Last run"}</span><span>{lang === "lt" ? "Būsena" : "Status"}</span><span style={{ textAlign: "right" }}>{lang === "lt" ? "Rizika" : "Risk"}</span><span style={{ textAlign: "right" }}>C/H/M/L</span><span style={{ textAlign: "right" }}>Δ</span><span>{lang === "lt" ? "Tendencija" : "Trend"}</span><span />
-                  </div>
-                  {rows.map((r) => <div key={r.key} style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 150px 105px 150px 70px 110px 90px 80px 34px", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${PL_SOFT}`, alignItems: "center", fontFamily: "var(--m)", fontSize: 11.5 }}>
-                    <span style={{ color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "—"}{r.fileName ? <span style={{ color: "#666", fontSize: 9.5 }}> · {r.fileName}</span> : null}</span>
-                    <span style={{ color: "#8c8c88" }}>{r.reg}</span>
-                    <span style={{ color: "#d2d2ce" }}>{r.periodStart} – {r.periodEnd}</span>
-                    <span style={{ color: r.rd.stale ? "#ffd43b" : "#8c8c88" }}>{new Date(r.ts).toISOString().slice(0, 10)}{r.rd.stale ? " ⚠" : ""}</span>
-                    <span style={{ color: GC[r.gateVerdict], fontWeight: 700 }}>{lang === "lt" ? r.rd.label[1] : r.rd.label[0]}</span>
-                    <span style={{ textAlign: "right", color: "#fff", fontWeight: 700 }}>{r.risk}</span>
-                    <span style={{ textAlign: "right", color: "#bcbcb8" }}><span style={{ color: "#ff8a8a" }}>{r.sev.Critical}</span>/<span style={{ color: "#ffa94d" }}>{r.sev.High}</span>/{r.sev.Medium}/{r.sev.Low}</span>
-                    <span style={{ textAlign: "right" }} title={r.delta ? `+${r.delta.addedCount} new · −${r.delta.resolvedCount} resolved` : ""}>{r.delta ? <><span style={{ color: r.delta.addedCount ? "#ff8a8a" : "#69db7c" }}>+{r.delta.addedCount}</span> <span style={{ color: "#69db7c" }}>−{r.delta.resolvedCount}</span></> : <span style={{ color: "#666" }}>—</span>}</span>
-                    <span>{spark(r.hist) || <span style={{ color: "#666" }}>·</span>}</span>
-                    <button onClick={() => setSnapshots((prev) => { const next = prev.filter((x) => x.key !== r.key); try { localStorage.setItem("taxai_snapshots", JSON.stringify(next)); } catch (e) {} return next; })} title={lang === "lt" ? "Šalinti istoriją" : "Remove history"} style={{ background: "none", border: `1px solid rgba(255,138,138,0.4)`, color: "#ff8a8a", fontFamily: "var(--m)", fontSize: 10, padding: "2px 7px", cursor: "pointer" }}>×</button>
-                  </div>)}
-                </div>}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 22 }}>
-                  <Section title={lang === "lt" ? "Baltoji etiketė (biurui)" : "White-label (for the firm)"}>
-                    <div style={{ fontSize: 11.5, color: "#8c8c88", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 10 }}>{lang === "lt" ? "Pavadinimas ir poraštė taikomi audito ataskaitoms, VMI laiškams ir portfelio eksportams (TaxAI branduolys nurodomas sąžiningai)." : "The name and footer are applied to audit reports, VMI letters and portfolio exports (the TaxAI core stays credited)."}</div>
-                    {[["name", lang === "lt" ? "Pavadinimas" : "Name"], ["footer", lang === "lt" ? "Poraštė" : "Footer"], ["accent", lang === "lt" ? "Akcento spalva" : "Accent color"]].map(([k, lb]) => <div key={k} style={{ marginBottom: 8 }}><div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>{lb}</div><input value={brandCfg[k] || ""} onChange={(e) => setBrandCfg({ ...brandCfg, [k]: e.target.value })} style={{ width: "100%", background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 12, padding: "8px 12px", outline: "none", boxSizing: "border-box" }} /></div>)}
-                    <button onClick={() => { try { localStorage.setItem("taxai_brand", JSON.stringify({ name: brandCfg.name || "TaxAI", footer: brandCfg.footer || "", accent: brandCfg.accent || "#7cc4ff" })); } catch (e) {} setToast(lang === "lt" ? "Etiketė išsaugota — taikoma naujiems eksportams" : "Brand saved — applied to new exports"); audit.log("BRAND_SAVED", brandCfg.name || ""); }} style={{ background: "#fff", color: "#000", border: "none", padding: "8px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>{lang === "lt" ? "Išsaugoti" : "Save"}</button>
-                  </Section>
-                  <Section title={lang === "lt" ? "Įterpiamas SDK (window.TaxAI)" : "Embeddable SDK (window.TaxAI)"}>
-                    <div style={{ fontSize: 11.5, color: "#8c8c88", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 10 }}>{lang === "lt" ? "Apskaitos programų gamintojai gali įsidiegti validatorių be jokio serverio — viskas vyksta kliento naršyklėje." : "Accounting-software vendors can embed the validator with no server — everything runs in the client's browser."}</div>
-                    <pre style={{ background: "#000", border: `1px solid ${PL_LINE}`, padding: 12, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 10, lineHeight: 1.55, overflowX: "auto", margin: 0, whiteSpace: "pre" }}>{`// same page:
-const res = await window.TaxAI.validateText(xmlString);
-//  → { gate, risk, findings[482 rules], header }
-const fix = window.TaxAI.autofixText(xmlString, { apply: true });
-//  → { manifest, fixedXml }
-
-// embedded iframe:
-iframe.contentWindow.postMessage(
-  { type: "taxai:validate", id: 1, xml: xmlString }, "*");
-window.addEventListener("message", (e) => {
-  if (e.data?.type === "taxai:result") console.log(e.data.result.gate);
-});`}</pre>
-                  </Section>
-                </div>
-              </>;
-            })()}
-          </div>
-        </div>}
-
         {view === "integrations" && <div key="integrations" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <IntegrationsTab lang={lang} t={t} audit={audit} erp={erp} setErp={setErp} demo={erpDemo} setDemo={setErpDemo} onPromote={processCanonical} setToast={setToast} hasSaft={!!fileData?.parsed} />
         </div>}
@@ -15187,30 +15102,6 @@ window.addEventListener("message", (e) => {
         {view === "einvoicing" && <div key="einvoicing" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <EInvoicingTab lang={lang} t={t} audit={audit} einv={einv} setEinv={setEinv} erp={erp} fileData={fileData} isafData={isafData} setToast={setToast} />
           <EInvoiceStudio lang={lang} fileData={fileData} setToast={setToast} audit={audit} />
-        </div>}
-
-        {view === "arch" && <div key="arch" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
-          <div style={{ maxWidth: 880 }}>
-            <div style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "var(--s)", marginBottom: 4 }}>{t.arch}</div>
-            <div style={{ fontSize: 12.5, color: "#8c8c88", fontFamily: "var(--s)", marginBottom: 22 }}>{lang === "lt" ? "Deterministiniai varikliai pirmiausia; AI tik aiškina ir yra tikrinamas." : "Deterministic engines first; the AI only explains and is verified."}</div>
-            <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#666", letterSpacing: ".05em", marginTop: -16, marginBottom: 20 }}>{APP_BUILD}</div>
-            {[
-              [lang === "lt" ? "140 ERP jungčių" : "140 ERP connectors", lang === "lt" ? "OData · SuiteQL · JSON-RPC · REST · CSV · agentas — demo arba LIVE per /api/erp relę" : "OData · SuiteQL · JSON-RPC · REST · CSV · agent — demo or LIVE via the /api/erp relay", "#74c0fc"],
-              [lang === "lt" ? "Kanoninis modelis + ribos patikra" : "Canonical model + boundary validation", "ERPB-01…12 · idempotency · cursors · conflicts", "#74c0fc"],
-              ["⇊", "", ""],
-              [lang === "lt" ? "SAF-T tiltas → 250 taisyklių · KPI · Žvalgyba" : "SAF-T bridge → 250 rules · KPIs · Intelligence", lang === "lt" ? "canonicalToSaft() — tas pats parseSAFTFull pavidalas" : "canonicalToSaft() — the exact parseSAFTFull shape", "#69db7c"],
-              [lang === "lt" ? "E. sąskaitų variklis" : "E-Invoicing engine", "EN 16931 · UBL 2.1 · Peppol BIS 3.0 · SABIS (B2G) · SHA-256 " + (lang === "lt" ? "archyvo grandinė" : "archive chain") + " · ViDA 2030", "#69db7c"],
-              ["⇊", "", ""],
-              [lang === "lt" ? "i.SAF sutikrinimas" : "i.SAF reconciliation", lang === "lt" ? "registras ⇄ apskaita (SAF-T / e. sąskaitos), KIT708" : "register ⇄ books (SAF-T / e-invoices), KIT708", "#ffd43b"],
-              ["AI — Gemini per /api/ai", lang === "lt" ? "RAG iš LEGAL_DB · groundingFacts · verifyNarrative pagrįstumo balas" : "RAG from LEGAL_DB · groundingFacts · verifyNarrative grounding score", "#ffd43b"],
-              ["UI", lang === "lt" ? "LT/EN · audito žurnalas · ⌘K" : "LT/EN · audit log · ⌘K", "#fff"],
-            ].map(([h, d, c], i) => h === "⇊" ? <div key={i} style={{ textAlign: "center", color: "#555", fontSize: 16, padding: "2px 0" }}>⇊</div> :
-              <div key={i} style={{ border: "1px solid rgba(255,255,255,0.12)", borderLeft: `3px solid ${c}`, background: "var(--bg2)", padding: "13px 18px", marginBottom: 8 }}>
-                <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 14.5, fontWeight: 700 }}>{h}</div>
-                {d && <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, marginTop: 4, letterSpacing: ".04em" }}>{d}</div>}
-              </div>)}
-          <SelfTestPanel lang={lang} />
-          </div>
         </div>}
 
         {view === "logs" && <div key="logs" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
