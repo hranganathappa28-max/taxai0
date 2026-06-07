@@ -1901,10 +1901,12 @@ function vatClassMatch(spec, line) {
 // Phase 1 analytics engine — risk score, acceptance gate, multi-part merge,
 // audit report, versioned rule packs.  (TaxAI engine v10.1.0)
 // ═════════════════════════════════════════════════════════════════════════
-const ENGINE_VERSION = "10.6.0";
+const ENGINE_VERSION = "10.7.0";
 
 // Rule-pack provenance — shown in the Rules tab and stamped into every export.
 const RULE_PACKS = [
+  { version: "2026.06-einvoice", date: "2026-06-08", title: "E-Invoicing engine — EN 16931 + Peppol BIS 3.0 validator and SAF-T→Peppol generator", titleLt: "E. sąskaitų variklis — EN 16931 + Peppol BIS 3.0 validatorius ir SAF-T→Peppol generatorius",
+    changes: ["UBL 2.1 Invoice/CreditNote parser (DOM and streaming Lite tree)", "EN 16931 rule engine: mandatory fields, BR-CO calculation rules with rounding tolerances, per-VAT-category rules (S/Z/E/AE/K/G/O)", "Peppol BIS Billing 3.0: CustomizationID/ProfileID, endpoint schemes, GLN mod-10 checksum", "Lithuanian layer: JAR and LT VAT mod-11 checksums, LT IBAN mod-97, 2026 rate coherence (21/12/5), domestic-currency note", "Triple gate: EN validity · Peppol readiness · LT cleanliness", "Generator: any SAF-T sales invoice → valid Peppol BIS 3.0 XML (buyer joined from masterfiles), self-validated round-trip"] },
   { version: "2026.06-eaudit2", date: "2026-06-08", title: "E-Audit 2 — full VMI coverage, industry packs, company rules, detailed workpaper; desk moved to the E-Auditor agent", titleLt: "E. auditas 2 — pilna VMI aprėptis, šakų paketai, įmonės taisyklės, detalus darbo dokumentas; pultas perkeltas į E. auditoriaus agentą",
     changes: ["One audit now covers ISA + the full 482-rule VMI compliance result (gate, risk, severities, top rules) inside the risk map and workpaper", "Industry packs (trade, manufacturing, services, construction, transport) with deterministic, formula-disclosed checks and automatic industry inference from the file", "The company's own natural-language rules run inside the audit and appear in the workpaper", "Workpaper upgraded: executive summary, per-test evidence rows, VMI table, industry and company-rule sections"] },
   { version: "2026.06-eaudit", date: "2026-06-08", title: "E-Audit engine — ISA (TAS) financial-audit layer on SAF-T data", titleLt: "E. audito variklis — TAS finansinio audito sluoksnis ant SAF-T duomenų",
@@ -6103,6 +6105,270 @@ function buildEAuditReportHTML(ea, lang, brandName, meta) {
   return h + "</body></html>";
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// E-INVOICING ENGINE — EN 16931 / Peppol BIS Billing 3.0 / Lithuanian layer.
+// Validator: UBL 2.1 Invoice & CreditNote, ~55 rules across three packs
+// (EN core + BR-CO calculations + VAT categories; Peppol BIS; LT checksums
+// and 2026 rates). Generator: SAF-T sales invoice → Peppol BIS 3.0 XML,
+// self-validated. Everything runs client-side; nothing leaves the machine.
+// ═════════════════════════════════════════════════════════════════════════
+const PEPPOL_CUSTOMIZATION_ID = "urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0";
+const PEPPOL_PROFILE_ID = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0";
+const EI_TOL = 0.011, EI_TOL_DOC = 0.021;
+const EI_TYPE_CODES = ["380", "381", "384", "389"];
+const eiR2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
+const eiNum = (s) => { const v = parseFloat(String(s == null ? "" : s).replace(/\s/g, "").replace(",", ".")); return isFinite(v) ? v : null; };
+
+// GS1 GLN (13 digits) mod-10 checksum — Peppol endpoint scheme 0088.
+function glnValid(s) {
+  const d = String(s || "").replace(/\D/g, "");
+  if (d.length !== 13) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += (+d[i]) * (i % 2 ? 3 : 1);
+  return (10 - (sum % 10)) % 10 === +d[12];
+}
+// Lithuanian registry-code checksum (mod 11, two-pass weights 1..9 / 3..9,1..)
+// — applies to 9-digit JAR codes and the digit body of LT VAT numbers.
+function lt11(s) {
+  const d = String(s || "").replace(/\D/g, "").split("").map(Number);
+  const n = d.length;
+  if (n !== 9 && n !== 11 && n !== 12) return false;
+  const body = d.slice(0, n - 1), chk = d[n - 1];
+  const pass = (start) => { let sum = 0; for (let i = 0; i < body.length; i++) { let w = start + i; while (w > 9) w -= 9; sum += body[i] * w; } return sum % 11; };
+  let r = pass(1);
+  if (r === 10) { r = pass(3); if (r === 10) r = 0; }
+  return r === chk;
+}
+function ltVatValid(v) {
+  const m = /^LT(\d{9}|\d{12})$/.exec(String(v || "").replace(/\s/g, "").toUpperCase());
+  return !!m && lt11(m[1]);
+}
+function ibanValid(s) {
+  const t = String(s || "").replace(/\s/g, "").toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(t)) return false;
+  if (t.slice(0, 2) === "LT" && t.length !== 20) return false;
+  const r = t.slice(4) + t.slice(0, 4);
+  let rem = 0;
+  for (const ch of r) { const v = ch >= "A" ? ch.charCodeAt(0) - 55 : +ch; rem = (rem * (v > 9 ? 100 : 10) + v) % 97; }
+  return rem === 1;
+}
+
+// namespace-tolerant readers — work on browser DOM and the hydrated Lite tree
+const eiLocal = (n) => String(n.localName || n.nodeName || "").split(":").pop();
+function eiKids(n) { const out = []; const cn = n.childNodes || []; for (let i = 0; i < cn.length; i++) if (cn[i].nodeType === 1) out.push(cn[i]); return out; }
+function eiAll(node, name, out) { out = out || []; eiKids(node).forEach((c) => { if (eiLocal(c) === name) out.push(c); eiAll(c, name, out); }); return out; }
+const eiFirst = (node, name) => eiAll(node, name)[0] || null;
+const eiText = (node, name) => { const e = eiFirst(node, name); return e ? String(e.textContent || "").trim() : ""; };
+const eiAttr = (n, a) => (n && n.getAttribute ? n.getAttribute(a) : null) || "";
+
+function eiParty(container) {
+  if (!container) return { name: "", country: "", vat: "", reg: "", endpoint: null };
+  const party = eiFirst(container, "Party") || container;
+  const legal = eiFirst(party, "PartyLegalEntity");
+  const taxScheme = eiAll(party, "PartyTaxScheme").map((x) => eiText(x, "CompanyID")).filter(Boolean);
+  const ep = eiFirst(party, "EndpointID");
+  return {
+    name: (legal && eiText(legal, "RegistrationName")) || eiText(eiFirst(party, "PartyName") || party, "Name") || "",
+    country: eiText(eiFirst(party, "PostalAddress") || party, "IdentificationCode").toUpperCase(),
+    vat: (taxScheme.find((v) => /^[A-Z]{2}/.test(v.toUpperCase())) || taxScheme[0] || "").toUpperCase().replace(/\s/g, ""),
+    reg: (legal && eiText(legal, "CompanyID")) || "",
+    endpoint: ep ? { value: String(ep.textContent || "").trim(), scheme: eiAttr(ep, "schemeID") } : null,
+  };
+}
+
+function parseUblInvoice(input) {
+  let doc = input;
+  if (typeof input === "string") {
+    if (typeof DOMParser === "undefined") return { _parseError: "No DOM parser in this environment — pass a parsed document." };
+    doc = new DOMParser().parseFromString(input, "text/xml");
+    if (doc.querySelector && doc.querySelector("parsererror")) return { _parseError: "XML parse error" };
+  }
+  const root = doc.documentElement || doc;
+  if (!root) return { _parseError: "Empty document" };
+  const rootName = eiLocal(root);
+  if (rootName !== "Invoice" && rootName !== "CreditNote") return { _parseError: "Root must be Invoice or CreditNote (UBL 2.1), got <" + rootName + ">" };
+  const isCredit = rootName === "CreditNote";
+  const lineName = isCredit ? "CreditNoteLine" : "InvoiceLine";
+  const qtyName = isCredit ? "CreditedQuantity" : "InvoicedQuantity";
+  const lines = eiAll(root, lineName).map((L, i) => {
+    const item = eiFirst(L, "Item");
+    const cat = item ? eiFirst(item, "ClassifiedTaxCategory") : null;
+    return {
+      id: eiText(L, "ID") || String(i + 1),
+      qty: eiNum(eiText(L, qtyName)),
+      net: eiNum(eiKids(L).filter((c) => eiLocal(c) === "LineExtensionAmount").map((c) => c.textContent)[0]),
+      name: item ? eiText(item, "Name") : "",
+      catId: cat ? eiText(cat, "ID").toUpperCase() : "",
+      pct: cat ? eiNum(eiText(cat, "Percent")) : null,
+      price: eiNum(eiText(eiFirst(L, "Price") || L, "PriceAmount")),
+    };
+  });
+  const lmt = eiFirst(root, "LegalMonetaryTotal");
+  const tt = eiKids(root).filter((c) => eiLocal(c) === "TaxTotal")[0] || eiFirst(root, "TaxTotal");
+  const subtotals = (tt ? eiAll(tt, "TaxSubtotal") : []).map((s) => {
+    const cat = eiFirst(s, "TaxCategory");
+    return { taxable: eiNum(eiText(s, "TaxableAmount")), tax: eiNum(eiText(s, "TaxAmount")), catId: cat ? eiText(cat, "ID").toUpperCase() : "", pct: cat ? eiNum(eiText(cat, "Percent")) : null, reason: cat ? eiText(cat, "TaxExemptionReason") : "" };
+  });
+  const g = (name) => (lmt ? eiNum(eiText(lmt, name)) : null);
+  return {
+    isCredit, id: eiText(root, "ID"), issueDate: eiText(root, "IssueDate"),
+    typeCode: eiText(root, isCredit ? "CreditNoteTypeCode" : "InvoiceTypeCode"),
+    currency: eiText(root, "DocumentCurrencyCode").toUpperCase(),
+    customizationId: eiText(root, "CustomizationID"), profileId: eiText(root, "ProfileID"),
+    supplier: eiParty(eiFirst(root, "AccountingSupplierParty")),
+    customer: eiParty(eiFirst(root, "AccountingCustomerParty")),
+    ibans: eiAll(root, "PayeeFinancialAccount").map((a) => eiText(a, "ID")).filter(Boolean),
+    paymentTerms: !!eiFirst(root, "PaymentTerms"), dueDate: eiText(root, "DueDate"),
+    lines, subtotals,
+    taxTotal: tt ? eiNum(eiKids(tt).filter((c) => eiLocal(c) === "TaxAmount").map((c) => c.textContent)[0]) : null,
+    totals: { lineExt: g("LineExtensionAmount"), allow: g("AllowanceTotalAmount") || 0, charge: g("ChargeTotalAmount") || 0, taxExcl: g("TaxExclusiveAmount"), taxIncl: g("TaxInclusiveAmount"), prepaid: g("PrepaidAmount") || 0, rounding: g("PayableRoundingAmount") || 0, payable: g("PayableAmount") },
+  };
+}
+
+function validateEInvoice(inv) {
+  const F = [];
+  const add = (id, std, sev, lt, en, detail, fix) => F.push({ rule_id: id, std, severity: sev, titleLt: lt, titleEn: en, detail: detail || "", fix: fix || "" });
+  if (inv._parseError) { add("EI-PARSE", "EN16931", "Critical", "Dokumentas nenuskaitytas", "Document not parseable", inv._parseError, "Pataisykite XML struktūrą."); return F; }
+  const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= (tol || EI_TOL);
+
+  // ── EN 16931 core (BR-…) ──
+  if (!inv.id) add("BR-02", "EN16931", "Critical", "Privalomas sąskaitos numeris", "Invoice number is mandatory", "", "Užpildykite cbc:ID.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.issueDate)) add("BR-03", "EN16931", "Critical", "Privaloma išrašymo data (YYYY-MM-DD)", "Issue date mandatory (YYYY-MM-DD)", inv.issueDate, "Užpildykite cbc:IssueDate ISO formatu.");
+  if (!EI_TYPE_CODES.includes(inv.typeCode)) add("BR-CL-01", "EN16931", "High", "Netinkamas dokumento tipo kodas", "Invalid type code (UNTDID 1001)", "TypeCode = " + (inv.typeCode || "—"), "Naudokite 380 (sąskaita) / 381 (kreditinė) / 384 / 389.");
+  if (inv.isCredit && inv.typeCode && inv.typeCode !== "381") add("BR-CL-02", "EN16931", "High", "Kreditinis dokumentas turi turėti kodą 381", "CreditNote must use type 381", "TypeCode = " + inv.typeCode, "Nustatykite 381.");
+  if (!/^[A-Z]{3}$/.test(inv.currency)) add("BR-05", "EN16931", "Critical", "Privaloma valiuta (ISO 4217)", "Currency mandatory (ISO 4217)", inv.currency, "Užpildykite cbc:DocumentCurrencyCode.");
+  if (!inv.supplier.name) add("BR-06", "EN16931", "Critical", "Privalomas pardavėjo pavadinimas", "Seller name mandatory", "", "Užpildykite PartyLegalEntity/RegistrationName.");
+  if (!/^[A-Z]{2}$/.test(inv.supplier.country)) add("BR-09", "EN16931", "Critical", "Privaloma pardavėjo šalis (ISO 3166-1)", "Seller country mandatory", inv.supplier.country, "Užpildykite PostalAddress/Country/IdentificationCode.");
+  if (!inv.customer.name) add("BR-07", "EN16931", "Critical", "Privalomas pirkėjo pavadinimas", "Buyer name mandatory", "", "Užpildykite pirkėjo RegistrationName.");
+  if (!inv.lines.length) add("BR-16", "EN16931", "Critical", "Sąskaitoje privaloma bent viena eilutė", "At least one invoice line required", "", "Pridėkite InvoiceLine.");
+  inv.lines.forEach((l) => {
+    if (l.net == null) add("BR-24", "EN16931", "Critical", "Eilutės grynoji suma privaloma", "Line net amount mandatory", "Linija " + l.id, "Užpildykite LineExtensionAmount.");
+    if (!l.name) add("BR-25", "EN16931", "High", "Eilutės prekės/paslaugos pavadinimas privalomas", "Item name mandatory", "Linija " + l.id, "Užpildykite Item/Name.");
+    if (l.qty == null) add("BR-22", "EN16931", "High", "Eilutės kiekis privalomas", "Invoiced quantity mandatory", "Linija " + l.id, "Užpildykite InvoicedQuantity.");
+    if (l.price != null && l.price < 0) add("BR-27", "EN16931", "High", "Kaina negali būti neigiama", "Item price must not be negative", "Linija " + l.id + ": " + l.price, "Neigiamoms korekcijoms naudokite kreditinę sąskaitą.");
+    if (!l.catId) add("BR-CO-04", "EN16931", "Critical", "Eilutei privaloma PVM kategorija", "Line VAT category mandatory", "Linija " + l.id, "Užpildykite ClassifiedTaxCategory/ID.");
+  });
+
+  // ── BR-CO calculation rules ──
+  const T = inv.totals, lineSum = eiR2(inv.lines.reduce((s, l) => s + (l.net || 0), 0));
+  if (T.lineExt != null && !near(T.lineExt, lineSum, EI_TOL_DOC)) add("BR-CO-10", "EN16931", "Critical", "Eilučių suma nesutampa", "Sum of line amounts mismatch", `LineExtensionAmount ${T.lineExt} ≠ Σ eilučių ${lineSum}`, "Perskaičiuokite LineExtensionAmount.");
+  if (T.taxExcl != null && T.lineExt != null && !near(T.taxExcl, eiR2(T.lineExt - T.allow + T.charge), EI_TOL_DOC)) add("BR-CO-13", "EN16931", "Critical", "Suma be PVM nesutampa", "Tax-exclusive amount mismatch", `${T.taxExcl} ≠ ${T.lineExt} − ${T.allow} + ${T.charge}`, "TaxExclusive = eilutės − nuolaidos + priemokos.");
+  const subTaxSum = eiR2(inv.subtotals.reduce((s, x) => s + (x.tax || 0), 0));
+  if (inv.taxTotal != null && !near(inv.taxTotal, subTaxSum, EI_TOL_DOC)) add("BR-CO-14", "EN16931", "Critical", "PVM suma nesutampa su kategorijų suma", "Tax total ≠ Σ category tax", `${inv.taxTotal} ≠ ${subTaxSum}`, "TaxTotal/TaxAmount = Σ TaxSubtotal/TaxAmount.");
+  if (T.taxIncl != null && T.taxExcl != null && inv.taxTotal != null && !near(T.taxIncl, eiR2(T.taxExcl + inv.taxTotal), EI_TOL_DOC)) add("BR-CO-15", "EN16931", "Critical", "Suma su PVM nesutampa", "Tax-inclusive amount mismatch", `${T.taxIncl} ≠ ${T.taxExcl} + ${inv.taxTotal}`, "TaxInclusive = TaxExclusive + PVM.");
+  if (T.payable != null && T.taxIncl != null && !near(T.payable, eiR2(T.taxIncl - T.prepaid + T.rounding), EI_TOL_DOC)) add("BR-CO-16", "EN16931", "Critical", "Mokėtina suma nesutampa", "Amount due mismatch", `${T.payable} ≠ ${T.taxIncl} − ${T.prepaid} + ${T.rounding}`, "Payable = TaxInclusive − Prepaid + Rounding.");
+  if (!inv.subtotals.length && inv.lines.length) add("BR-CO-18", "EN16931", "Critical", "Privaloma bent viena PVM suskirstymo grupė", "At least one VAT breakdown required", "", "Pridėkite TaxTotal/TaxSubtotal.");
+  inv.subtotals.forEach((s) => {
+    if (s.pct != null && s.taxable != null && s.tax != null && !near(s.tax, eiR2(s.taxable * s.pct / 100))) add("BR-CO-17", "EN16931", "Critical", "Kategorijos PVM ≠ bazė × tarifas", "Category VAT ≠ base × rate", `${s.catId} ${s.pct}%: ${s.tax} ≠ ${eiR2((s.taxable || 0) * s.pct / 100)}`, "Perskaičiuokite TaxSubtotal/TaxAmount.");
+  });
+  // line sums per (category, rate)
+  const grp = {};
+  inv.lines.forEach((l) => { const k = l.catId + "@" + (l.pct == null ? "" : l.pct); grp[k] = eiR2((grp[k] || 0) + (l.net || 0)); });
+  Object.entries(grp).forEach(([k, sum]) => {
+    const [cat, pct] = k.split("@");
+    const sub = inv.subtotals.find((s) => s.catId === cat && String(s.pct == null ? "" : s.pct) === pct);
+    if (!sub) add("BR-" + cat + "-08", "EN16931", "Critical", "Trūksta PVM suskirstymo kategorijai", "Missing VAT breakdown for category", `${cat} ${pct}% (eilučių suma ${sum})`, "Pridėkite atitinkamą TaxSubtotal.");
+    else if (!near(sub.taxable, sum, EI_TOL_DOC)) add("BR-" + cat + "-08", "EN16931", "Critical", "Kategorijos bazė ≠ eilučių sumai", "Category taxable ≠ line sum", `${cat} ${pct}%: ${sub.taxable} ≠ ${sum}`, "Suderinkite TaxableAmount su eilučių sumomis.");
+  });
+  // category semantics
+  const cats = [...new Set(inv.lines.map((l) => l.catId).concat(inv.subtotals.map((s) => s.catId)).filter(Boolean))];
+  inv.lines.forEach((l) => { if (l.catId === "S" && !(l.pct > 0)) add("BR-S-05", "EN16931", "Critical", "Kategorijai S tarifas turi būti > 0", "Category S requires rate > 0", "Linija " + l.id, "Nurodykite teigiamą Percent."); });
+  inv.subtotals.forEach((s) => {
+    if ((s.catId === "Z" || s.catId === "E" || s.catId === "AE" || s.catId === "K" || s.catId === "G") && !near(s.tax || 0, 0)) add("BR-" + s.catId + "-09", "EN16931", "Critical", "Šios kategorijos PVM suma turi būti 0", "Category tax amount must be 0", `${s.catId}: ${s.tax}`, "Nustatykite TaxAmount = 0.");
+    if ((s.catId === "E" || s.catId === "AE") && !s.reason) add("BR-" + s.catId + "-10", "EN16931", "High", "Privaloma neapmokestinimo priežastis", "Exemption reason required", s.catId, "Užpildykite TaxExemptionReason.");
+  });
+  if (cats.includes("AE") && (!inv.supplier.vat || !inv.customer.vat)) add("BR-AE-02", "EN16931", "Critical", "Atvirkštiniam apmokestinimui būtini abiejų šalių PVM kodai", "Reverse charge requires both VAT IDs", "", "Užpildykite pardavėjo ir pirkėjo PVM kodus.");
+  if (cats.includes("K")) {
+    if (!inv.supplier.vat || !inv.customer.vat) add("BR-K-02", "EN16931", "Critical", "ES tiekimui būtini abiejų šalių PVM kodai", "Intra-EU supply requires both VAT IDs", "", "Užpildykite abu PVM kodus.");
+    else if (inv.customer.vat.slice(0, 2) === inv.supplier.vat.slice(0, 2)) add("BR-K-03", "EN16931", "High", "ES tiekimas tos pačios šalies pirkėjui", "Intra-EU category with same-country buyer", inv.customer.vat, "Patikrinkite kategoriją (K skirta kitos ES šalies pirkėjui).");
+  }
+  if (cats.includes("O") && cats.length > 1) add("BR-O-11", "EN16931", "Critical", "Kategorija O nemaišoma su kitomis", "Category O cannot be mixed", cats.join(", "), "Išskaidykite į atskirus dokumentus.");
+  if (T.payable != null && T.payable > 0 && !inv.dueDate && !inv.paymentTerms) add("BR-CO-25", "EN16931", "High", "Reikalinga mokėjimo data arba sąlygos", "Due date or payment terms required", "", "Pridėkite DueDate arba PaymentTerms.");
+
+  // ── Peppol BIS 3.0 ──
+  if (inv.customizationId !== PEPPOL_CUSTOMIZATION_ID) add("PEPPOL-EN16931-R004", "PEPPOL", "Critical", "Neteisingas CustomizationID (BIS Billing 3.0)", "Wrong CustomizationID for BIS Billing 3.0", inv.customizationId || "—", "Nustatykite: " + PEPPOL_CUSTOMIZATION_ID);
+  if (inv.profileId !== PEPPOL_PROFILE_ID) add("PEPPOL-EN16931-R007", "PEPPOL", "High", "Neteisingas ProfileID", "Wrong ProfileID", inv.profileId || "—", "Nustatykite: " + PEPPOL_PROFILE_ID);
+  [["supplier", inv.supplier], ["customer", inv.customer]].forEach(([who, p]) => {
+    if (!p.endpoint || !p.endpoint.value) add("PEPPOL-R020", "PEPPOL", "High", "Trūksta " + (who === "supplier" ? "pardavėjo" : "pirkėjo") + " Peppol adreso (EndpointID)", "Missing " + who + " EndpointID", "", "Užpildykite EndpointID su schemeID (pvz., 0200 — LT JAR).");
+    else if (!p.endpoint.scheme) add("PEPPOL-R021", "PEPPOL", "High", "EndpointID be schemeID", "EndpointID without schemeID", p.endpoint.value, "Pridėkite schemeID iš EAS sąrašo.");
+    else if (p.endpoint.scheme === "0088" && !glnValid(p.endpoint.value)) add("PEPPOL-COMMON-R040", "PEPPOL", "High", "Neteisinga GLN kontrolinė suma", "Invalid GLN check digit", p.endpoint.value, "Patikrinkite 13 skaitmenų GLN (mod 10).");
+    else if (p.endpoint.scheme === "0200" && !lt11(p.endpoint.value)) add("PEPPOL-LT-0200", "PEPPOL", "High", "Neteisinga JAR kodo kontrolinė suma (schema 0200)", "Invalid LT registry code checksum (scheme 0200)", p.endpoint.value, "Patikrinkite 9 skaitmenų JAR kodą.");
+  });
+
+  // ── Lithuanian layer ──
+  [["S", inv.supplier], ["B", inv.customer]].forEach(([who, p]) => {
+    if (p.vat && p.vat.slice(0, 2) === "LT" && !ltVatValid(p.vat)) add("LT-EI-VAT-" + who, "LT", "High", "Neteisingas LT PVM kodas (mod 11)", "Invalid LT VAT number (mod 11)", p.vat, "Patikrinkite PVM mokėtojo kodą (LT + 9 arba 12 skaitmenų).");
+    if (p.reg && /^\d{9}$/.test(p.reg) && !lt11(p.reg)) add("LT-EI-JAR-" + who, "LT", "Medium", "Neteisinga įmonės kodo kontrolinė suma", "Invalid LT company-code checksum", p.reg, "Patikrinkite 9 skaitmenų JAR kodą.");
+  });
+  inv.ibans.forEach((ib) => { if (!ibanValid(ib)) add("LT-EI-IBAN", "LT", "High", "Neteisingas IBAN (mod 97)", "Invalid IBAN (mod 97)", ib, "Patikrinkite sąskaitos numerį; LT IBAN — 20 ženklų."); });
+  const post26 = inv.issueDate >= "2026-01-01";
+  const allowed = post26 ? [21, 12, 5, 0] : [21, 12, 9, 5, 0];
+  [...new Set(inv.lines.map((l) => l.pct).concat(inv.subtotals.map((s) => s.pct)))].forEach((r) => {
+    if (r == null) return;
+    if (!allowed.includes(r)) {
+      const transitional = post26 && r === 9;
+      add(transitional ? "LT-EI-RATE-9" : "LT-EI-RATE", "LT", transitional ? "High" : "Critical",
+        transitional ? "9% tarifas po 2026-01-01 (reforma: 9% → 12%)" : "Neegzistuojantis LT PVM tarifas",
+        transitional ? "9% rate after 2026-01-01 (reform: 9% → 12%)" : "Non-existent LT VAT rate",
+        r + "% · data " + inv.issueDate, transitional ? "Patikrinkite, ar sandoriui netaikoma pereinamoji nuostata; standartiškai — 12%." : "LT tarifai: " + allowed.join("/") + "%.");
+    }
+  });
+  if (inv.supplier.country === "LT" && inv.customer.country === "LT" && inv.currency && inv.currency !== "EUR") add("LT-EI-CUR", "LT", "Medium", "Vidaus sandoris ne eurais", "Domestic transaction not in EUR", inv.currency, "Vidaus B2B/B2G sąskaitoms naudokite EUR.");
+  return F;
+}
+
+function computeEInvoiceGate(findings) {
+  const errs = (std) => findings.filter((f) => f.std === std && (f.severity === "Critical" || f.severity === "High"));
+  const en = errs("EN16931"), pep = errs("PEPPOL"), lt = errs("LT");
+  const enOk = en.length === 0, pepOk = enOk && pep.length === 0, ltOk = lt.length === 0;
+  return {
+    en: { ok: enOk, errors: en.length }, peppol: { ok: pepOk, errors: pep.length }, lt: { ok: ltOk, errors: lt.length },
+    label: [enOk ? (pepOk ? "EN 16931 VALID · PEPPOL-READY" : "EN 16931 VALID · NOT PEPPOL-READY") : "NOT EN 16931 VALID",
+            enOk ? (pepOk ? "ATITINKA EN 16931 · PARUOŠTA PEPPOL" : "ATITINKA EN 16931 · NEPARUOŠTA PEPPOL") : "NEATITINKA EN 16931"],
+  };
+}
+
+// ── Generator: SAF-T sales invoice → Peppol BIS Billing 3.0 UBL ──
+function buildPeppolInvoice(saftInv, parsed, opts) {
+  const o = opts || {};
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+  const h = (parsed && parsed.header) || {}, co = h.company || {};
+  const cust = ((parsed && parsed.customers) || []).find((c) => c.customerID === saftInv.customerID) || {};
+  const net = eiR2((saftInv.documentTotals && (saftInv.documentTotals.netTotal != null ? saftInv.documentTotals.netTotal : 0)) || 0);
+  const gross = saftInv.documentTotals && saftInv.documentTotals.grossTotal;
+  let rate = o.rate;
+  if (rate == null && gross != null && net > 0) { const implied = ((gross - net) / net) * 100; rate = [21, 12, 9, 5, 0].reduce((b, r) => Math.abs(r - implied) < Math.abs(b - implied) ? r : b, 21); }
+  if (rate == null) rate = 21;
+  const buyerCountry = (cust.country || cust.addressCountry || "LT").toUpperCase();
+  const cat = rate > 0 ? "S" : (buyerCountry !== "LT" ? "K" : "Z");
+  const reason = cat === "K" ? "Intra-Community supply, Art. 138 of Directive 2006/112/EC" : "";
+  const tax = eiR2(net * rate / 100), incl = eiR2(net + tax);
+  const issue = saftInv.invoiceDate || new Date().toISOString().slice(0, 10);
+  const sellerVat = (o.sellerVat || co.taxRegistrationNumber || co.vatNumber || "").toUpperCase().replace(/\s/g, "");
+  const sellerReg = String(co.registrationNumber || h.registrationNumber || "");
+  const buyerVat = String(cust.taxRegistrationNumber || "").toUpperCase().replace(/\s/g, "");
+  const buyerReg = /^\d{9}$/.test(String(cust.taxRegistrationNumber || "")) ? String(cust.taxRegistrationNumber) : "";
+  const ep = (reg) => /^\d{9}$/.test(reg) && lt11(reg) ? `<cbc:EndpointID schemeID="0200">${esc(reg)}</cbc:EndpointID>` : "";
+  const vatBlock = (vat) => /^[A-Z]{2}/.test(vat) ? `<cac:PartyTaxScheme><cbc:CompanyID>${esc(vat)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>` : "";
+  const party = (name, country, vat, reg) => `<cac:Party>${ep(reg)}<cac:PartyName><cbc:Name>${esc(name)}</cbc:Name></cac:PartyName><cac:PostalAddress><cac:Country><cbc:IdentificationCode>${esc(country)}</cbc:IdentificationCode></cac:Country></cac:PostalAddress>${vatBlock(vat)}<cac:PartyLegalEntity><cbc:RegistrationName>${esc(name)}</cbc:RegistrationName>${reg ? `<cbc:CompanyID>${esc(reg)}</cbc:CompanyID>` : ""}</cac:PartyLegalEntity></cac:Party>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+<cbc:CustomizationID>${PEPPOL_CUSTOMIZATION_ID}</cbc:CustomizationID>
+<cbc:ProfileID>${PEPPOL_PROFILE_ID}</cbc:ProfileID>
+<cbc:ID>${esc(saftInv.invoiceNo || "INV-1")}</cbc:ID>
+<cbc:IssueDate>${esc(issue)}</cbc:IssueDate>
+<cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+<cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
+<cac:AccountingSupplierParty>${party(co.name || "—", "LT", sellerVat, sellerReg)}</cac:AccountingSupplierParty>
+<cac:AccountingCustomerParty>${party(cust.name || saftInv.customerID || "—", buyerCountry, buyerVat, buyerReg)}</cac:AccountingCustomerParty>
+<cac:PaymentTerms><cbc:Note>14 d. / 14 days</cbc:Note></cac:PaymentTerms>
+<cac:TaxTotal><cbc:TaxAmount currencyID="EUR">${tax.toFixed(2)}</cbc:TaxAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="EUR">${net.toFixed(2)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="EUR">${tax.toFixed(2)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>${cat}</cbc:ID><cbc:Percent>${rate}</cbc:Percent>${reason ? `<cbc:TaxExemptionReason>${esc(reason)}</cbc:TaxExemptionReason>` : ""}<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal>
+<cac:LegalMonetaryTotal><cbc:LineExtensionAmount currencyID="EUR">${net.toFixed(2)}</cbc:LineExtensionAmount><cbc:TaxExclusiveAmount currencyID="EUR">${net.toFixed(2)}</cbc:TaxExclusiveAmount><cbc:TaxInclusiveAmount currencyID="EUR">${incl.toFixed(2)}</cbc:TaxInclusiveAmount><cbc:PayableAmount currencyID="EUR">${incl.toFixed(2)}</cbc:PayableAmount></cac:LegalMonetaryTotal>
+<cac:InvoiceLine><cbc:ID>1</cbc:ID><cbc:InvoicedQuantity unitCode="C62">1</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="EUR">${net.toFixed(2)}</cbc:LineExtensionAmount><cac:Item><cbc:Name>${esc(o.itemName || ("Pardavimas pagal sąskaitą " + (saftInv.invoiceNo || "")))}</cbc:Name><cac:ClassifiedTaxCategory><cbc:ID>${cat}</cbc:ID><cbc:Percent>${rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item><cac:Price><cbc:PriceAmount currencyID="EUR">${net.toFixed(2)}</cbc:PriceAmount></cac:Price></cac:InvoiceLine>
+</Invoice>`;
+  return { xml, meta: { rate, cat, net, tax, payable: incl, buyer: cust.name || saftInv.customerID || "—", peppolEndpoints: !!(ep(sellerReg) && ep(buyerReg)) } };
+}
+
 const OFFICIAL_SOURCES = [
   { id: "VA-49", lt: "VMI prie FM viršininko 2015-07-21 įsakymas Nr. VA-49 „Dėl Standartinės apskaitos duomenų rinkmenos techninės specifikacijos ir techninių reikalavimų aprašo patvirtinimo“ (suvestinė redakcija)", en: "Order No. VA-49 of the Head of the STI under the MoF (21 Jul 2015) approving the SAF-T technical specification and technical requirements (consolidated)", url: "https://www.vmi.lt/evmi/saf-t" },
   { id: "SAFT-XSD", lt: "VMI — SAF-T techninė dokumentacija ir XML schema (XSD) v2.01", en: "STI — SAF-T technical documentation and XML schema (XSD) v2.01", url: "https://www.vmi.lt/evmi/saf-t" },
@@ -6114,6 +6380,11 @@ const OFFICIAL_SOURCES = [
   { id: "VADOVAS-2", lt: "IFAC MVĮ komitetas, tas pats vadovas, 3 leidimas, II tomas — praktinės gairės (liet. vertimas — Lietuvos auditorių rūmai)", en: "IFAC SMP Committee, the same guide, 3rd ed., Vol. II — Practical Guidance (Lithuanian translation by the Lithuanian Chamber of Auditors)", url: "https://www.ifac.org" },
   { id: "TAS", lt: "Tarptautiniai audito standartai (TAS/ISA), IAASB — taikomi pagal LR audito įstatymą", en: "International Standards on Auditing (ISA), IAASB — applied per the Lithuanian Law on Audit", url: "https://www.iaasb.org" },
   { id: "AUDITO-IST", lt: "Lietuvos Respublikos finansinių ataskaitų audito įstatymas (aktuali redakcija)", en: "Law on the Audit of Financial Statements of the Republic of Lithuania (current version)", url: "https://e-seimas.lrs.lt" },
+  { id: "EN16931", lt: "EN 16931 — Europos elektroninės sąskaitos faktūros semantinis standartas (CEN/TC 434)", en: "EN 16931 — European e-invoice semantic standard (CEN/TC 434)", url: "https://www.cen.eu" },
+  { id: "PEPPOL-BIS", lt: "Peppol BIS Billing 3.0 specifikacija (OpenPeppol)", en: "Peppol BIS Billing 3.0 specification (OpenPeppol)", url: "https://docs.peppol.eu" },
+  { id: "DIR-2014-55", lt: "Direktyva 2014/55/ES dėl elektroninių sąskaitų faktūrų viešuosiuose pirkimuose", en: "Directive 2014/55/EU on electronic invoicing in public procurement", url: "https://eur-lex.europa.eu" },
+  { id: "ESASKAITA", lt: "„E. sąskaita“ — valstybės e. sąskaitų faktūrų platforma (Registrų centras)", en: "“E. saskaita” — the state e-invoicing platform (Registru centras)", url: "https://www.esaskaita.eu" },
+  { id: "VIDA", lt: "ES „PVM skaitmeniniame amžiuje“ (ViDA) paketas, priimtas 2025 m. — skaitmeninis ataskaitų teikimas ir struktūrinės e. sąskaitos ES B2B nuo 2030 m.", en: "EU “VAT in the Digital Age” (ViDA) package, adopted 2025 — digital reporting and structured e-invoices for intra-EU B2B from 2030", url: "https://eur-lex.europa.eu" },
 ];
 
 // Deterministic fact sheet: everything the model is allowed to assert
@@ -11410,6 +11681,65 @@ function findingKey(f) {
 // that persists and can be re-edited — mirroring an auditor working paper.
 // ── Overflow menu for action bars: native <details> keeps it stateless and
 //    keyboard-accessible; clicking any item inside closes the panel. ──
+// ── E-Invoice Studio: EN 16931 + Peppol BIS 3.0 validator & SAF-T→Peppol generator ──
+function EInvoiceStudio({ lang, fileData, setToast, audit }) {
+  const [xmlIn, setXmlIn] = useState("");
+  const [valRes, setValRes] = useState(null);
+  const [genSel, setGenSel] = useState("");
+  const [genRes, setGenRes] = useState(null);
+  const LINE = "rgba(255,255,255,0.12)";
+  const SC2 = { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" };
+  const sales = (fileData && fileData.parsed && fileData.parsed.sales && fileData.parsed.sales.items) || [];
+  const runVal = (txt) => { try { const inv = parseUblInvoice(txt); const findings = validateEInvoice(inv); setValRes({ inv, findings, gate: computeEInvoiceGate(findings) }); audit && audit.log("EINV_VALIDATE", (inv.id || "?") + " · " + findings.length + " findings"); } catch (e) { setToast && setToast("Validator: " + String(e && e.message || e).slice(0, 120)); } };
+  const onFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = (ev) => { const t = String(ev.target.result || ""); setXmlIn(t); runVal(t); }; r.readAsText(f); e.target.value = ""; };
+  const dl = (name, content) => { const b = new Blob([content], { type: "application/xml" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
+  const Gate = ({ g }) => <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
+    {[["EN 16931", g.en], ["Peppol BIS 3.0", g.peppol], ["LT", g.lt]].map(([lb, x]) => <span key={lb} style={{ fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", padding: "6px 12px", border: `1px solid ${x.ok ? "#69db7c" : "#ff6b6b"}`, color: x.ok ? "#69db7c" : "#ff6b6b" }}>{x.ok ? "✓" : "✕"} {lb}{x.errors ? ` · ${x.errors}` : ""}</span>)}
+  </div>;
+  const Findings = ({ fs }) => fs.length === 0 ? <div style={{ color: "#69db7c", fontFamily: "var(--m)", fontSize: 12 }}>✓ {lang === "lt" ? "Pažeidimų nerasta — dokumentas atitinka visus tris paketus." : "No violations — the document passes all three packs."}</div>
+    : <div>{fs.map((f, i) => <div key={i} style={{ padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 9.5, padding: "2px 8px", border: `1px solid ${SC2[f.severity]}`, color: SC2[f.severity], fontFamily: "var(--m)", fontWeight: 700 }}>{f.severity}</span>
+        <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#7cc4ff" }}>{f.rule_id}</span>
+        <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666" }}>{f.std}</span>
+        <span style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? f.titleLt : f.titleEn}</span>
+      </div>
+      {f.detail && <div style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#9f9f9b", padding: "2px 0 0 4px" }}>{f.detail}</div>}
+      {f.fix && <div style={{ fontFamily: "var(--s)", fontSize: 11.5, color: "#8c8c88", padding: "1px 0 0 4px" }}>🔧 {f.fix}</div>}
+    </div>)}</div>;
+  return <div style={{ maxWidth: 1100, margin: "26px auto 0" }}>
+    <div style={{ background: "var(--bg2)", border: `1px solid ${LINE}`, padding: 24, marginBottom: 20 }}>
+      <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".18em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "E. SĄSKAITŲ STUDIJA — EN 16931 · PEPPOL BIS 3.0 · LT" : "E-INVOICE STUDIO — EN 16931 · PEPPOL BIS 3.0 · LT"}</div>
+      <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6, margin: "0 0 14px", maxWidth: 880 }}>{lang === "lt" ? "Validatorius tikrina UBL 2.1 sąskaitas trimis paketais: EN 16931 (privalomi laukai, BR-CO skaičiavimai, PVM kategorijos S/Z/E/AE/K/G/O), Peppol BIS 3.0 (CustomizationID/ProfileID, Peppol adresai, GLN kontrolinės sumos) ir LT sluoksnis (JAR bei PVM kodų mod-11, IBAN mod-97, 2026 m. tarifai 21/12/5). Viskas vykdoma šioje naršyklėje — dokumentai niekur nesiunčiami." : "The validator checks UBL 2.1 invoices with three packs: EN 16931 (mandatory fields, BR-CO calculations, VAT categories S/Z/E/AE/K/G/O), Peppol BIS 3.0 (CustomizationID/ProfileID, endpoints, GLN check digits) and the LT layer (JAR & VAT mod-11, IBAN mod-97, 2026 rates 21/12/5). Everything runs in this browser — documents never leave it."}</p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px", border: `1px solid ${LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↑ {lang === "lt" ? "Įkelti UBL XML" : "Upload UBL XML"}<input type="file" accept=".xml" onChange={onFile} style={{ display: "none" }} /></label>
+        <button onClick={() => runVal(xmlIn)} disabled={!xmlIn.trim()} style={{ padding: "9px 16px", background: "#fff", color: "#000", border: "none", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", opacity: xmlIn.trim() ? 1 : 0.4 }}>{lang === "lt" ? "Tikrinti →" : "Validate →"}</button>
+      </div>
+      <textarea value={xmlIn} onChange={(e) => setXmlIn(e.target.value)} placeholder={lang === "lt" ? "Įklijuokite UBL 2.1 Invoice / CreditNote XML…" : "Paste UBL 2.1 Invoice / CreditNote XML…"} spellCheck={false} style={{ width: "100%", minHeight: 110, background: "#000", border: `1px solid ${LINE}`, color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 10.5, padding: 12, boxSizing: "border-box", outline: "none", resize: "vertical" }} />
+      {valRes && <><Gate g={valRes.gate} /><Findings fs={valRes.findings} /></>}
+    </div>
+    <div style={{ background: "var(--bg2)", border: `1px solid ${LINE}`, padding: 24 }}>
+      <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".18em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "GENERATORIUS — SAF-T → PEPPOL BIS 3.0" : "GENERATOR — SAF-T → PEPPOL BIS 3.0"}</div>
+      {sales.length === 0 ? <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? "Įkelkite SAF-T failą skiltyje „SAF-T“ — generatorius siūlys jūsų pardavimo sąskaitas, o pirkėją prijungs iš kontrahentų registro." : "Load a SAF-T file in the SAF-T section — the generator will offer your sales invoices, joining the buyer from the masterfiles."}</div>
+        : <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <select value={genSel} onChange={(e) => { setGenSel(e.target.value); setGenRes(null); }} style={{ background: "#000", border: `1px solid ${LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 11.5, padding: "8px 10px", minWidth: 280 }}>
+              <option value="">{lang === "lt" ? "— pasirinkite sąskaitą —" : "— choose an invoice —"}</option>
+              {sales.slice(0, 400).map((i, k) => <option key={k} value={String(k)}>{(i.invoiceNo || ("#" + (k + 1))) + " · " + (i.invoiceDate || "—") + " · " + ((i.documentTotals && i.documentTotals.netTotal) != null ? i.documentTotals.netTotal : "—") + " EUR"}</option>)}
+            </select>
+            <button onClick={() => { try { const inv = sales[+genSel]; const out = buildPeppolInvoice(inv, fileData.parsed, {}); const pInv = parseUblInvoice(out.xml); const findings = validateEInvoice(pInv); setGenRes({ ...out, findings, gate: computeEInvoiceGate(findings) }); audit && audit.log("EINV_GENERATE", inv.invoiceNo || ""); } catch (e) { setToast && setToast("Generator: " + String(e && e.message || e).slice(0, 120)); } }} disabled={genSel === ""} style={{ padding: "9px 16px", background: "#fff", color: "#000", border: "none", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", opacity: genSel === "" ? 0.4 : 1 }}>{lang === "lt" ? "Generuoti →" : "Generate →"}</button>
+            {genRes && <button onClick={() => dl("peppol-" + ((sales[+genSel] && sales[+genSel].invoiceNo) || "invoice") + ".xml", genRes.xml)} style={{ padding: "9px 16px", background: "transparent", color: "#fff", border: `1px solid ${LINE}`, fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ XML</button>}
+          </div>
+          {genRes && <>
+            <div style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#bcbcb8", marginBottom: 4 }}>{lang === "lt" ? "Pirkėjas" : "Buyer"}: <span style={{ color: "#fff" }}>{genRes.meta.buyer}</span> · {lang === "lt" ? "kategorija" : "category"} <b>{genRes.meta.cat}</b> {genRes.meta.rate}% · {lang === "lt" ? "mokėtina" : "payable"} <b>{genRes.meta.payable}</b> EUR{!genRes.meta.peppolEndpoints && <span style={{ color: "#ffd43b" }}> · {lang === "lt" ? "Peppol adresui trūksta galiojančio pirkėjo JAR kodo" : "a valid buyer JAR code is missing for the Peppol endpoint"}</span>}</div>
+            <Gate g={genRes.gate} />
+            <Findings fs={genRes.findings} />
+          </>}
+        </>}
+    </div>
+  </div>;
+}
+
 function MenuGroup({ label, children }) {
   return <details style={{ position: "relative" }}>
     <summary style={{ listStyle: "none", display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", border: "1px solid rgba(255,255,255,0.18)", color: "#fff", background: "transparent", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>{label}<span style={{ fontSize: 8, opacity: .7 }}>▼</span></summary>
@@ -14631,6 +14961,7 @@ window.addEventListener("message", (e) => {
 
         {view === "einvoicing" && <div key="einvoicing" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <EInvoicingTab lang={lang} t={t} audit={audit} einv={einv} setEinv={setEinv} erp={erp} fileData={fileData} isafData={isafData} setToast={setToast} />
+          <EInvoiceStudio lang={lang} fileData={fileData} setToast={setToast} audit={audit} />
         </div>}
 
         {view === "arch" && <div key="arch" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
