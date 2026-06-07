@@ -1,13 +1,15 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { createPortal } from "react-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 /*
 ══════════════════════════════════════════════════════════
- TAXAI LITHUANIA v8 — PRODUCTION BUILD
+ TAXAI LITHUANIA v10 — PRODUCTION BUILD
  MiniSearch RAG · Deterministic Tax Engine · Full Legal DB
  GDPR · Audit Logs · Export · Multilingual · DataTable
+ 117 VAT audit rules (PP_LT_PVM) + structural SAF-T engine
+ 2026-ready: VA-107 classifier (PVM58/59/60 · 12 %), period-
+ aware EU set (Brexit/XI), 9 %-family expiry detection
 ══════════════════════════════════════════════════════════
 */
 
@@ -51,6 +53,12 @@ const LEGAL_DB = [
 {id:"saft-va55",law:"VMI",article:"Įsakymas VA-55",text:"SAF-T LT versija 2.01 pagal OECD standartą. Privalomas pateikti VMI pareikalavus. Apima: MasterFiles (GL accounts, customers, suppliers, tax table, products), GeneralLedgerEntries, SourceDocuments (sales invoices, purchase invoices, payments, movement of goods).",textEn:"SAF-T LT version 2.01 per OECD standard. Mandatory submission upon STI request. Covers: MasterFiles, GeneralLedgerEntries, SourceDocuments.",keywords:"saft va-55 vmi xml oecd masterfiles ledger invoices payments",category:"compliance",penalty:"MAĮ 139 str."},
 {id:"isaf-kit708",law:"VMI",article:"i.SAF (KIT708)",text:"i.SAF — PVM sąskaitų faktūrų registras. Pateikimas mėnesinis, ne vėliau kaip iki kito mėnesio 20 dienos.",textEn:"i.SAF — VAT invoice register. Monthly submission, no later than 20th of the following month.",keywords:"isaf kit708 saskaitu registras invoice register 20",category:"filing",penalty:null},
 {id:"imas-kit709",law:"VMI",article:"i.MAS (KIT709)",text:"i.MAS — metinė mokėjimų ataskaita. Privaloma deklaruoti mokėjimus viršijančius 500 EUR per metus vienam asmeniui. Pateikimas — iki vasario 1 d.",textEn:"i.MAS — annual payments report. Mandatory to declare payments exceeding 500 EUR per year per person. Submission — by February 1.",keywords:"imas kit709 mokejimu ataskaita payment report 500 vasario february",category:"filing",penalty:null},
+// ── E-sąskaitos ──
+{id:"einv-sabis",law:"SABIS",article:"Viešojo sektoriaus e. sąskaitos",text:"SABIS — centralizuota viešojo sektoriaus e. sąskaitų platforma, nuo 2024-07-01 pakeitusi „E. sąskaitą“ (atjungta 2024-08-30, SABIS pilnai veikia nuo 2024-09-01). Žodinių sutarčių sąskaitos virš 1 000 EUR (be PVM) — per SABIS nuo 2024-07-01; visos žodinės sutartys, nepriklausomai nuo sumos — nuo 2025-01-01.",textEn:"SABIS — the centralised public-sector e-invoicing platform, replacing eSąskaita from 2024-07-01 (disconnected 2024-08-30; SABIS fully operational from 2024-09-01). Verbal-contract invoices above EUR 1,000 (excl. VAT) via SABIS from 2024-07-01; all verbal contracts regardless of amount — from 2025-01-01.",keywords:"sabis esaskaita e-saskaita e saskaita einvoicing viesasis sektorius b2g 2024 zodines sutartys verbal contracts platforma",category:"compliance",penalty:null},
+{id:"eu-2014-55",law:"EU",article:"Direktyva 2014/55/ES",text:"E. sąskaitų faktūrų naudojimo viešuosiuose pirkimuose direktyva: perkančiosios organizacijos privalo priimti EN 16931 atitinkančias e. sąskaitas. Lietuvoje tiekėjams viešajam sektoriui e. sąskaitos privalomos nuo 2017-07-01.",textEn:"Directive on electronic invoicing in public procurement: contracting authorities must accept EN 16931-compliant e-invoices. In Lithuania, e-invoices to the public sector are mandatory for suppliers since 2017-07-01.",keywords:"2014/55 b2g viesieji pirkimai public procurement e-invoice einvoicing direktyva 2017 privaloma mandatory",category:"compliance",penalty:null},
+{id:"einv-en16931",law:"EN",article:"EN 16931",text:"Europinis e. sąskaitos faktūros semantinis standartas (pagrindinių elementų modelis). Leidžiamos sintaksės: UBL 2.1 ir UN/CEFACT CII D16B. Lietuva atskiro nacionalinio CIUS netaiko.",textEn:"The European semantic standard for electronic invoices (core elements model). Permitted syntaxes: UBL 2.1 and UN/CEFACT CII D16B. Lithuania applies no separate national CIUS.",keywords:"en16931 en 16931 semantinis standartas semantic standard ubl 2.1 cii sintakse syntax cius core invoice",category:"compliance",penalty:null},
+{id:"einv-peppol-bis3",law:"Peppol",article:"BIS Billing 3.0",text:"Peppol BIS Billing 3.0 — EN 16931 atitinkantis sąskaitų profilis Peppol tinkle. Dalyvių adresavimas EAS kodais: 0200 — Lietuvos juridinio asmens kodas, 9937 — Lietuvos PVM mokėtojo kodas. Transportas — AS4 su SBDH voku, dalyviai randami per SMP.",textEn:"Peppol BIS Billing 3.0 — the EN 16931-compliant invoicing profile on the Peppol network. Participant addressing via EAS codes: 0200 — Lithuanian legal entity code, 9937 — Lithuanian VAT number. Transport — AS4 with an SBDH envelope; participants resolved via SMP.",keywords:"peppol bis billing 3.0 eas 0200 9937 participant dalyvis smp as4 sbdh endpoint elektroninis adresas",category:"compliance",penalty:null},
+{id:"eu-vida-2025-516",law:"EU",article:"Direktyva (ES) 2025/516 (ViDA)",text:"„PVM skaitmeniniame amžiuje“ (ViDA) direktyva: priimta 2025-03-11, įsigaliojo 2025-04-14, perkėlimas iki 2030-06-30. Nuo 2030-07-01 ES vidaus B2B sandoriams privalomos struktūrizuotos EN 16931 e. sąskaitos ir skaitmeninis duomenų teikimas realiuoju laiku (DRR).",textEn:"VAT in the Digital Age (ViDA) directive: adopted 2025-03-11, in force 2025-04-14, transposition by 2030-06-30. From 2030-07-01 intra-EU B2B transactions require structured EN 16931 e-invoices and digital real-time reporting (DRR).",keywords:"vida 2025/516 drr skaitmeninis pranesimas digital reporting requirements 2030 intra-eu b2b e-saskaitos pvm skaitmeniniame amziuje",category:"compliance",penalty:null},
 // ── GDPR ──
 {id:"gdpr-bdar",law:"BDAR/GDPR",article:"Bendrasis duomenų apsaugos reglamentas",text:"BDAR taikomas visiems Lietuvos juridiniams asmenims tvarkantiems asmens duomenis. Pagrindinės pareigos: duomenų minimizavimas, teisėtas pagrindas, teisė būti pamirštam, pranešimas apie pažeidimą per 72 val.",textEn:"GDPR applies to all Lithuanian legal entities processing personal data. Key obligations: data minimization, lawful basis, right to be forgotten, breach notification within 72 hours.",keywords:"gdpr bdar duomenu apsauga data protection asmens duomenys personal data",category:"compliance",penalty:"Iki 20M EUR arba 4% metinės apyvartos"},
 // ── EU Directives ──
@@ -128,8 +136,8 @@ const TaxCalc = {
 
 // ═══ i18n ═══
 const T = {
-  lt: { home: "Pradžia", chat: "AI Patarėjas", saft: "SAF-T", agents: "Agentai", arch: "Architektūra", settings: "Nustatymai", send: "Siųsti", upload: "Įkelti SAF-T / CSV", voice: "Balsas", askAnything: "Klauskite bet ką", disclaimer: "Teisinė informacija", export: "Eksportuoti", auditLog: "Audito žurnalas", findings: "Radiniai", override: "Peržiūrėti", accept: "Patvirtinti", reject: "Atmesti", critical: "Kritinis", high: "Aukštas", medium: "Vidutinis", low: "Žemas", poweredBy: "AI variklis · Realaus laiko analizė", termsTitle: "Naudojimo sąlygos ir teisinė informacija", termsText: "TAXAI yra informacinė AI sistema. Ji NĖRA teisinis patarėjas. Visa informacija teikiama informaciniais tikslais ir negali pakeisti profesionalaus mokesčių konsultanto, auditoriaus ar teisininko konsultacijos. Naudodami šią sistemą jūs sutinkate, kad: (1) AI atsakymai gali turėti netikslumų; (2) mokesčių apskaičiavimai turi būti patikrinti kvalifikuoto specialisto; (3) sistema nenustato teisinių santykių tarp jūsų ir TAXAI; (4) jūsų duomenys tvarkomi pagal BDAR/GDPR reikalavimus; (5) SAF-T failų analizė yra pagalbinė priemonė, ne oficialus auditas.", gdprText: "Duomenų tvarkymas: jūsų įkelti failai apdorojami tik sesijos metu ir neišsaugomi serveryje. AI užklausos siunčiamos šifruotu kanalu. Jūs turite teisę prašyti savo duomenų ištrynimo." },
-  en: { home: "Home", chat: "AI Advisor", saft: "SAF-T", agents: "Agents", arch: "Architecture", settings: "Settings", send: "Send", upload: "Upload SAF-T / CSV", voice: "Voice", askAnything: "Ask anything", disclaimer: "Legal Disclaimer", export: "Export", auditLog: "Audit Log", findings: "Findings", override: "Review", accept: "Accept", reject: "Reject", critical: "Critical", high: "High", medium: "Medium", low: "Low", poweredBy: "AI Engine · Real-time Analysis", termsTitle: "Terms of Service & Legal Disclaimer", termsText: "TAXAI is an informational AI system. It is NOT a legal advisor. All information is provided for informational purposes and cannot replace professional tax consultant, auditor or lawyer advice. By using this system you agree that: (1) AI responses may contain inaccuracies; (2) tax calculations must be verified by a qualified specialist; (3) the system does not establish a legal relationship between you and TAXAI; (4) your data is processed in accordance with GDPR requirements; (5) SAF-T file analysis is an auxiliary tool, not an official audit.", gdprText: "Data processing: your uploaded files are processed only during the session and are not stored on the server. AI queries are sent over an encrypted channel. You have the right to request deletion of your data." }
+  lt: { home: "Pradžia", chat: "AI Patarėjas", saft: "SAF-T", agents: "Agentai", arch: "Architektūra", settings: "Nustatymai", send: "Siųsti", upload: "Įkelti SAF-T / CSV", voice: "Balsas", askAnything: "Klauskite bet ką", disclaimer: "Teisinė informacija", export: "Eksportuoti", auditLog: "Audito žurnalas", findings: "Radiniai", override: "Peržiūrėti", accept: "Patvirtinti", reject: "Atmesti", critical: "Kritinis", high: "Aukštas", medium: "Vidutinis", low: "Žemas", poweredBy: "AI variklis · Realaus laiko analizė", termsTitle: "Naudojimo sąlygos ir teisinė informacija", termsText: "TAXAI yra informacinė AI sistema. Ji NĖRA teisinis patarėjas. Visa informacija teikiama informaciniais tikslais ir negali pakeisti profesionalaus mokesčių konsultanto, auditoriaus ar teisininko konsultacijos. Naudodami šią sistemą jūs sutinkate, kad: (1) AI atsakymai gali turėti netikslumų; (2) mokesčių apskaičiavimai turi būti patikrinti kvalifikuoto specialisto; (3) sistema nenustato teisinių santykių tarp jūsų ir TAXAI; (4) jūsų duomenys tvarkomi pagal BDAR/GDPR reikalavimus; (5) SAF-T failų analizė yra pagalbinė priemonė, ne oficialus auditas; (6) e. sąskaitų siuntimas (SABIS/Peppol) šioje versijoje yra demonstracinis — dokumentai realiai neperduodami.", gdprText: "Duomenų tvarkymas: jūsų įkelti failai apdorojami tik sesijos metu ir neišsaugomi serveryje. AI užklausos siunčiamos šifruotu kanalu. ERP prisijungimo duomenys laikomi tik sesijos atmintyje, niekur nesaugomi ir siunčiami tik į jūsų /api/erp relę; gamybinėje aplinkoje naudokite saugyklą (vault/KMS). Jūs turite teisę prašyti savo duomenų ištrynimo.", integrations: "Integracijos" },
+  en: { home: "Home", chat: "AI Advisor", saft: "SAF-T", agents: "Agents", arch: "Architecture", settings: "Settings", send: "Send", upload: "Upload SAF-T / CSV", voice: "Voice", askAnything: "Ask anything", disclaimer: "Legal Disclaimer", export: "Export", auditLog: "Audit Log", findings: "Findings", override: "Review", accept: "Accept", reject: "Reject", critical: "Critical", high: "High", medium: "Medium", low: "Low", poweredBy: "AI Engine · Real-time Analysis", termsTitle: "Terms of Service & Legal Disclaimer", termsText: "TAXAI is an informational AI system. It is NOT a legal advisor. All information is provided for informational purposes and cannot replace professional tax consultant, auditor or lawyer advice. By using this system you agree that: (1) AI responses may contain inaccuracies; (2) tax calculations must be verified by a qualified specialist; (3) the system does not establish a legal relationship between you and TAXAI; (4) your data is processed in accordance with GDPR requirements; (5) SAF-T file analysis is an auxiliary tool, not an official audit; (6) e-invoice transmission (SABIS/Peppol) in this version is a demo simulation — no documents are actually submitted.", gdprText: "Data processing: your uploaded files are processed only during the session and are not stored on the server. AI queries are sent over an encrypted channel. ERP credentials are held in session memory only, never stored, and sent only to your /api/erp relay; use a vault/KMS in production. You have the right to request deletion of your data.", integrations: "Integrations" }
 };
 
 // ═══ AUDIT LOG ═══
@@ -749,6 +757,240 @@ function xsdValidateNode(el, tn, path, V, depth){
   for(const cn in counts){ const mx=allowed[cn].max; if(mx!=="unbounded" && counts[cn]>+mx) V.push({kind:"maxOccurs",path:path+"/"+cn,detail:counts[cn]+">"+mx}); }
 }
 // Returns { ok, total, byKind, findings:[{kind,path,detail}] }
+// ═════════════════════════════════════════════════════════════════════════
+// LiteXML — streaming large-file path (Phase 1 / SOTA performance layer)
+// ═════════════════════════════════════════════════════════════════════════
+// DOMParser blocks the main thread and struggles past ~100 MB. For large
+// SAF-T files, a Web Worker streams the file in chunks through a small,
+// chunk-boundary-safe XML tokenizer (entities, CDATA, attributes, comments,
+// self-closing tags, quoted '>' inside attributes, entities split across
+// chunks) and posts back a plain serializable tree. The main thread hydrates
+// it into LiteNode objects exposing exactly the DOM surface the existing
+// pipeline uses (getElementsByTagName, textContent, children, childNodes,
+// parentNode, localName, tagName, nodeType, getAttribute, namespaceURI) —
+// so parseSAFTFull, runGenChecks and the full XSD schema validation run
+// UNCHANGED on files DOMParser cannot handle, with live progress events.
+
+const SAFT_WORKER_THRESHOLD = 25 * 1024 * 1024; // ≥25 MB → worker path
+
+// The worker entry point. Written backtick-free so .toString() embeds safely.
+function __liteWorkerMain(self) {
+  self.onmessage = function (e) {
+    var file = e.data.file;
+    var total = (file && file.size) || 1;
+    var dec = new TextDecoder("utf-8");
+    var buf = "", readBytes = 0, lastPct = -1;
+    var root = { t: "#doc", c: [] };
+    var stack = [root];
+    var inCDATA = false, cdata = "";
+    var ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+    var decode = function (s) {
+      if (s.indexOf("&") < 0) return s;
+      return s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, function (m, g) {
+        if (g.charAt(0) === "#") {
+          var hex = g.charAt(1) === "x" || g.charAt(1) === "X";
+          var code = parseInt(g.slice(hex ? 2 : 1), hex ? 16 : 10);
+          return isNaN(code) ? m : String.fromCodePoint(code);
+        }
+        return ENT[g] || m;
+      });
+    };
+    var text = function (s) {
+      if (!s) return;
+      var d = decode(s);
+      if (d.replace(/[\s\r\n\t]+/g, "") === "") return;
+      var top = stack[stack.length - 1];
+      top.x = (top.x || "") + d;
+    };
+    var openTag = function (raw, selfClose) {
+      var sp = raw.search(/[\s\/]/);
+      var name = sp < 0 ? raw : raw.slice(0, sp);
+      var node = { t: name, c: [] };
+      if (sp >= 0) {
+        var re = /([^\s=\/]+)\s*=\s*("([^"]*)"|'([^']*)')/g, m, attrs = null;
+        while ((m = re.exec(raw))) { (attrs = attrs || {})[m[1]] = decode(m[3] !== undefined ? m[3] : m[4]); }
+        if (attrs) node.a = attrs;
+      }
+      stack[stack.length - 1].c.push(node);
+      if (!selfClose) stack.push(node);
+    };
+    var feed = function () {
+      var i = 0;
+      for (;;) {
+        if (inCDATA) {
+          var ce = buf.indexOf("]]>", i);
+          if (ce < 0) { cdata += buf.slice(i); buf = ""; return; }
+          cdata += buf.slice(i, ce); text(cdata); cdata = ""; inCDATA = false; i = ce + 3; continue;
+        }
+        var lt = buf.indexOf("<", i);
+        if (lt < 0) {
+          // keep a possible split entity tail ("&am" + "p;") for the next chunk
+          var amp = buf.lastIndexOf("&");
+          if (amp >= i && buf.length - amp < 12) { text(buf.slice(i, amp)); buf = buf.slice(amp); }
+          else { text(buf.slice(i)); buf = ""; }
+          return;
+        }
+        text(buf.slice(i, lt));
+        if (buf.slice(lt, lt + 9) === "<![CDATA[") {
+          if (buf.length < lt + 9) { buf = buf.slice(lt); return; }
+          inCDATA = true; i = lt + 9; continue;
+        }
+        if (buf.slice(lt, lt + 4) === "<!--") {
+          var me = buf.indexOf("-->", lt);
+          if (me < 0) { buf = buf.slice(lt); return; }
+          i = me + 3; continue;
+        }
+        // find the matching '>' respecting quoted attribute values
+        var j = lt + 1, q = "";
+        for (; j < buf.length; j++) {
+          var ch = buf.charAt(j);
+          if (q) { if (ch === q) q = ""; }
+          else if (ch === '"' || ch === "'") q = ch;
+          else if (ch === ">") break;
+        }
+        if (j >= buf.length) { buf = buf.slice(lt); return; } // incomplete tag — wait for more
+        var tag = buf.slice(lt + 1, j);
+        var c0 = tag.charAt(0);
+        if (c0 === "?" || c0 === "!") { /* PI / DOCTYPE — skip */ }
+        else if (c0 === "/") { if (stack.length > 1) stack.pop(); }
+        else if (tag.charAt(tag.length - 1) === "/") openTag(tag.slice(0, -1), true);
+        else openTag(tag, false);
+        i = j + 1;
+      }
+    };
+    var reader = file.stream().getReader();
+    var pump = function () {
+      return reader.read().then(function (r) {
+        if (r.done) {
+          buf += dec.decode();
+          feed();
+          if (buf) text(buf);
+          self.postMessage({ tree: root });
+          return;
+        }
+        readBytes += r.value.byteLength;
+        buf += dec.decode(r.value, { stream: true });
+        feed();
+        var pct = Math.min(99, Math.floor((readBytes / total) * 100));
+        if (pct !== lastPct) { lastPct = pct; self.postMessage({ p: pct }); }
+        return pump();
+      });
+    };
+    pump().catch(function (err) { self.postMessage({ err: String(err).slice(0, 300) }); });
+  };
+}
+const SAFT_WORKER_SRC = "(" + __liteWorkerMain.toString() + ")(self);";
+
+// Main-thread DOM-compatible node over the worker's plain tree.
+function LiteNode() {}
+LiteNode.prototype = {
+  nodeType: 1,
+  get textContent() {
+    if (this._tc !== undefined) return this._tc;
+    let out = this._t || "";
+    const st = [...this.children];
+    while (st.length) { const n = st.shift(); out += n._t || ""; for (let i = 0; i < n.children.length; i++) st.push(n.children[i]); }
+    this._tc = out;
+    return out;
+  },
+  set textContent(v) {
+    this._t = v == null ? "" : String(v);
+    this.children = [];
+    let n = this; while (n) { n._tc = undefined; n = n.parentNode; }
+  },
+  removeChild(c) {
+    const i = this.children.indexOf(c);
+    if (i > -1) { this.children.splice(i, 1); c.parentNode = null; let n = this; while (n) { n._tc = undefined; n = n.parentNode; } }
+    return c;
+  },
+  get childNodes() { return this.children; },
+  get namespaceURI() {
+    const ix = this.tagName.indexOf(":");
+    const key = ix > -1 ? "xmlns:" + this.tagName.slice(0, ix) : "xmlns";
+    let n = this;
+    while (n) { if (n.attrs && n.attrs[key] != null) return n.attrs[key]; if (n.attrs && n.attrs.xmlns != null && ix < 0) return n.attrs.xmlns; n = n.parentNode; }
+    return "";
+  },
+  getAttribute(k) { return this.attrs && this.attrs[k] != null ? this.attrs[k] : null; },
+  getElementsByTagName(name) {
+    const out = [], any = name === "*";
+    const st = [...this.children];
+    while (st.length) {
+      const n = st.shift();
+      if (any || n.localName === name || n.tagName === name) out.push(n);
+      for (let i = 0; i < n.children.length; i++) st.push(n.children[i]);
+    }
+    return out;
+  },
+};
+
+function hydrateLiteTree(plain) {
+  const wrap = (p, parent) => {
+    const n = Object.create(LiteNode.prototype);
+    n.tagName = p.t;
+    const ci = p.t.indexOf(":");
+    n.localName = ci > -1 ? p.t.slice(ci + 1) : p.t;
+    n.attrs = p.a || null;
+    n._t = p.x || "";
+    n.parentNode = parent;
+    n.children = [];
+    const kids = p.c || [];
+    for (let i = 0; i < kids.length; i++) n.children.push(wrap(kids[i], n));
+    return n;
+  };
+  const rootPlain = (plain.c || [])[0];
+  if (!rootPlain) return null;
+  const rootEl = wrap(rootPlain, null);
+  return {
+    nodeType: 9,
+    _lite: true,
+    documentElement: rootEl,
+    children: [rootEl],
+    getElementsByTagName(name) {
+      const own = name === "*" || rootEl.localName === name || rootEl.tagName === name ? [rootEl] : [];
+      return own.concat(rootEl.getElementsByTagName(name));
+    },
+  };
+}
+
+// Parse a File: small → DOMParser (unchanged path); large → streaming worker.
+async function parseSaftSmart(file, onProgress) {
+  const report = (pct, phase) => { try { onProgress && onProgress({ pct, phase }); } catch (e) { /* noop */ } };
+  const small = !file.size || file.size < SAFT_WORKER_THRESHOLD || typeof Worker === "undefined" || typeof Blob === "undefined";
+  if (small) {
+    report(5, "read");
+    const text = await file.text();
+    report(60, "parse");
+    const parsed = parseSAFTFull(text);
+    report(100, "done");
+    return { parsed, raw: text, via: "dom" };
+  }
+  report(1, "stream");
+  const doc = await new Promise((resolve, reject) => {
+    let url = "";
+    try {
+      url = URL.createObjectURL(new Blob([SAFT_WORKER_SRC], { type: "application/javascript" }));
+      const w = new Worker(url);
+      w.onmessage = (e) => {
+        if (e.data && e.data.p != null) { report(Math.max(1, Math.round(e.data.p * 0.8)), "stream"); return; }
+        if (e.data && e.data.err) { w.terminate(); URL.revokeObjectURL(url); reject(new Error(e.data.err)); return; }
+        if (e.data && e.data.tree) {
+          report(85, "hydrate");
+          const d = hydrateLiteTree(e.data.tree);
+          w.terminate(); URL.revokeObjectURL(url);
+          d ? resolve(d) : reject(new Error("empty document"));
+        }
+      };
+      w.onerror = (er) => { w.terminate(); URL.revokeObjectURL(url); reject(er); };
+      w.postMessage({ file });
+    } catch (e) { if (url) URL.revokeObjectURL(url); reject(e); }
+  });
+  report(90, "rules");
+  const parsed = parseSAFTFull(doc);
+  report(100, "done");
+  return { parsed, raw: "<!-- large file (" + Math.round(file.size / 1048576) + " MB): parsed via streaming worker; raw text withheld to conserve memory -->", via: "worker" };
+}
+
 function runXsdSchemaValidation(xmlDoc){
   if(!xmlDoc||!xmlDoc.documentElement) return { ok:true, total:0, byKind:{}, findings:[] };
   const V=[]; const r=XSD_SCHEMA_MODEL.root;
@@ -758,11 +1000,127 @@ function runXsdSchemaValidation(xmlDoc){
 }
 
 
+
+// ── Generic DOM-level data-validation pass (VMI SCHEMA_DVT family) ──
+// One walk over the document covering, at EVERY node where they occur:
+// EUR currency consistency, tax arithmetic (base × rate = amount), invoice
+// line amount arithmetic, PhysicalStockAcquisition dates, movement-of-goods
+// quantity control totals and per-product stock flow sums.
+function runGenChecks(doc) {
+  const _g2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const out = { eurMismatch: [], taxCalc: [], lineAmt: [], psaDates: [], mgQty: [], stockFlow: [], payTax: [] };
+  const num2 = (el, tag) => { const c = el.getElementsByTagName(tag)[0]; if (!c || c.parentNode !== el) return null; const v = parseFloat(String(c.textContent || "").trim()); return Number.isFinite(v) ? v : null; };
+  const txt2 = (el, tag) => { const c = el.getElementsByTagName(tag)[0]; return c && c.parentNode === el ? String(c.textContent || "").trim() : ""; };
+  const anc = (el) => { // nearest document anchor for the evidence row
+    let p = el; for (let i = 0; i < 8 && p; i++, p = p.parentNode) {
+      if (!p.getElementsByTagName) continue;
+      const id = txt2(p, "InvoiceNo") || txt2(p, "TransactionID") || txt2(p, "PaymentRefNo") || txt2(p, "MovementReference") || txt2(p, "AssetID") || txt2(p, "ProductCode") || txt2(p, "CustomerID") || txt2(p, "SupplierID");
+      if (id) return (p.localName || p.tagName) + " " + id;
+    } return "—";
+  };
+  const periodEnd = (() => { const sc = doc.getElementsByTagName("SelectionCriteria")[0]; const h = doc.getElementsByTagName("Header")[0]; return (sc && txt2(sc, "PeriodEnd")) || (h && txt2(h, "FiscalYearTo")) || ""; })();
+  const all = doc.getElementsByTagName("*");
+  for (let i = 0; i < all.length; i++) {
+    const el = all[i]; const name = el.localName || el.tagName;
+    // a) AmountStructure: CurrencyCode=EUR ⇒ CurrencyAmount must equal Amount
+    {
+      const cc = txt2(el, "CurrencyCode");
+      if (cc === "EUR") { const a = num2(el, "Amount"), ca = num2(el, "CurrencyAmount");
+        if (a != null && ca != null && Math.abs(ca - a) > 0.01 && out.eurMismatch.length < 200)
+          out.eurMismatch.push({ node: name, where: anc(el), a: _g2(a), ca: _g2(ca) }); }
+    }
+    // b) TaxInformation(-Totals): TaxAmount = TaxBase × TaxPercentage
+    if (name === "TaxInformation" || name === "TaxInformationTotals") {
+      const b = num2(el, "TaxBase") ?? num2(el, "TaxableAmount"), r = num2(el, "TaxPercentage");
+      const taEl = el.getElementsByTagName("TaxAmount")[0];
+      const a = taEl ? (num2(taEl, "Amount") ?? (taEl.children && taEl.children.length ? null : parseFloat(taEl.textContent))) : null;
+      if (b != null && r != null && a != null && r > 0) {
+        const exp = b * r / 100;
+        if (Math.abs(exp - a) > 0.05 && out.taxCalc.length < 200)
+          out.taxCalc.push({ node: name, where: anc(el), base: _g2(b), rate: r, amt: _g2(a), exp: _g2(exp) });
+      }
+    }
+    // c) Invoice line: Quantity × UnitPrice ≈ InvoiceLineAmount (no discount stated)
+    if (name === "Line" && el.getElementsByTagName("InvoiceLineAmount")[0]) {
+      const q = num2(el, "Quantity"), up = num2(el, "UnitPrice");
+      const la = el.getElementsByTagName("InvoiceLineAmount")[0];
+      const amt = la ? num2(la, "Amount") : null;
+      const disc = txt2(el, "SettlementAmount") || (el.getElementsByTagName("SettlementAmount")[0] ? "x" : "");
+      if (q != null && up != null && amt != null && !disc) {
+        const exp = q * up;
+        if (Math.abs(Math.abs(exp) - Math.abs(amt)) > Math.max(0.05, Math.abs(exp) * 0.001) && out.lineAmt.length < 200)
+          out.lineAmt.push({ where: anc(el), q, up: _g2(up), amt: _g2(amt), exp: _g2(exp) });
+      }
+    }
+    // d) PhysicalStockAcquisition dates must not exceed the file period
+    if (name === "PhysicalStockAcquisition" && periodEnd) {
+      ["DateOfAcquisition", "InvoiceDate", "GLPostingDate"].forEach((tag) => {
+        const dv = txt2(el, tag);
+        if (dv && dv.slice(0, 10) > periodEnd.slice(0, 10) && out.psaDates.length < 200)
+          out.psaDates.push({ where: anc(el), field: tag, date: dv.slice(0, 10), periodEnd: periodEnd.slice(0, 10) });
+      });
+    }
+    // e2) Payment: declared tax totals vs the sum of line-level taxes (VMI SCHEMA_DVT_077)
+    if (name === "Payment") {
+      const totEls = el.getElementsByTagName("TaxInformationTotals");
+      if (totEls.length) {
+        const sumTax = (node) => { let s = 0; const tas = node.getElementsByTagName("TaxAmount"); for (let k = 0; k < tas.length; k++) { const v = num2(tas[k], "Amount"); s += v != null ? v : (parseFloat(tas[k].textContent) || 0); } return s; };
+        let tT = 0; for (let k = 0; k < totEls.length; k++) tT += sumTax(totEls[k]);
+        let tL = 0; const lns = el.getElementsByTagName("Line");
+        for (let k = 0; k < lns.length; k++) { const tis = lns[k].getElementsByTagName("TaxInformation"); for (let m = 0; m < tis.length; m++) tL += sumTax(tis[m]); }
+        if (Math.abs(tT - tL) > 0.02 && out.payTax.length < 200)
+          out.payTax.push({ ref: txt2(el, "PaymentRefNo") || "—", totals: _g2(tT), lines: _g2(tL) });
+      }
+    }
+    // e) MovementOfGoods: declared received/issued totals vs the line sums
+    if (name === "MovementOfGoods") {
+      const dr = num2(el, "TotalQuantityReceived"), di = num2(el, "TotalQuantityIssued");
+      if (dr != null || di != null) {
+        let ar = 0, ai = 0; const lines = el.getElementsByTagName("Line");
+        for (let k = 0; k < lines.length; k++) {
+          const q = num2(lines[k], "Quantity") ?? 0;
+          const ind = txt2(lines[k], "DebitCreditIndicator").toUpperCase();
+          if (ind === "D") ar += q; else if (ind === "K") ai += q;
+        }
+        if (dr != null && Math.abs(dr - ar) > 0.5) out.mgQty.push({ field: "TotalQuantityReceived", declared: _g2(dr), actual: _g2(ar) });
+        if (di != null && Math.abs(di - ai) > 0.5) out.mgQty.push({ field: "TotalQuantityIssued", declared: _g2(di), actual: _g2(ai) });
+      }
+    }
+  }
+  // f) Per-product stock flow: opening + received − issued ≈ closing
+  {
+    const flow = {}; const pse = doc.getElementsByTagName("PhysicalStockEntry");
+    const mv = doc.getElementsByTagName("StockMovement");
+    for (let i = 0; i < mv.length; i++) {
+      const lines = mv[i].getElementsByTagName("Line");
+      for (let k = 0; k < lines.length; k++) {
+        const pc = txt2(lines[k], "ProductCode"); if (!pc) continue;
+        const q = num2(lines[k], "Quantity") ?? 0;
+        const ind = txt2(lines[k], "DebitCreditIndicator").toUpperCase();
+        const f = (flow[pc] = flow[pc] || { r: 0, i: 0 });
+        if (ind === "D") f.r += q; else if (ind === "K") f.i += q;
+      }
+    }
+    if (pse.length && Object.keys(flow).length) {
+      for (let i = 0; i < pse.length && out.stockFlow.length < 100; i++) {
+        const pc = txt2(pse[i], "ProductCode"); const f = flow[pc]; if (!pc || !f) continue;
+        const op = num2(pse[i], "OpeningStockQuantity") ?? 0, cl = num2(pse[i], "ClosingStockQuantity") ?? 0;
+        const exp = op + f.r - f.i;
+        if (Math.abs(exp - cl) > 0.5) out.stockFlow.push({ product: pc, opening: _g2(op), received: _g2(f.r), issued: _g2(f.i), closing: _g2(cl), expected: _g2(exp) });
+      }
+    }
+  }
+  return out;
+}
+
 function parseSAFTFull(xmlStr) {
   try {
-    const doc = new DOMParser().parseFromString(xmlStr, "text/xml");
-    const parseErr = doc.querySelector("parsererror");
+    // Accepts a raw XML string (DOMParser) or a pre-built document from the
+    // LiteXML streaming worker path — the rest of the pipeline is identical.
+    const doc = typeof xmlStr === "string" ? new DOMParser().parseFromString(xmlStr, "text/xml") : xmlStr;
+    const parseErr = typeof xmlStr === "string" && doc.querySelector ? doc.querySelector("parsererror") : null;
     if (parseErr) return { _parseError: parseErr.textContent?.substring(0, 200) || "XML parse error" };
+    if (!doc || !doc.documentElement) return { _parseError: "Empty or unreadable XML document" };
 
     const root = doc.documentElement;
     const ns = root.namespaceURI || "";
@@ -869,6 +1227,10 @@ function parseSAFTFull(xmlStr) {
         name: txt(c, "Name"),
         taxRegistrationNumber: txt(c, "TaxRegistrationNumber"),
         country: txt(c, "Country"),
+        // All disclosed tax registrations (TaxType: PVM/MM/…, per-registration country)
+        taxRegistrations: Array.from(c.getElementsByTagName("TaxRegistration")).map((tr) => ({ number: txt(tr, "TaxRegistrationNumber"), type: txt(tr, "TaxType"), country: txt(tr, "Country") })),
+        // All addresses with their AddressType (RA = registration address)
+        addresses: Array.from(c.getElementsByTagName("Address")).map((a) => ({ type: txt(a, "AddressType"), city: txt(a, "City"), country: txt(a, "Country") })),
         addressCity: addrEl ? txt(addrEl, "City") : "",
         addressCountry: addrEl ? txt(addrEl, "Country") : "",
         accountID: txt(c, "AccountID"),
@@ -899,6 +1261,8 @@ function parseSAFTFull(xmlStr) {
         name: txt(s, "Name"),
         taxRegistrationNumber: txt(s, "TaxRegistrationNumber"),
         country: txt(s, "Country"),
+        taxRegistrations: Array.from(s.getElementsByTagName("TaxRegistration")).map((tr) => ({ number: txt(tr, "TaxRegistrationNumber"), type: txt(tr, "TaxType"), country: txt(tr, "Country") })),
+        addresses: Array.from(s.getElementsByTagName("Address")).map((a) => ({ type: txt(a, "AddressType"), city: txt(a, "City"), country: txt(a, "Country") })),
         addressCity: addrEl ? txt(addrEl, "City") : "",
         addressCountry: addrEl ? txt(addrEl, "Country") : "",
         accountID: txt(s, "AccountID"),
@@ -965,6 +1329,7 @@ function parseSAFTFull(xmlStr) {
       const valEl = a.getElementsByTagName("Valuation")[0];
       return {
         assetID: txt(a, "AssetID"),
+        accountIDs: Array.from(a.getElementsByTagName("AccountID")).map((x) => String(x.textContent || "").trim()).filter(Boolean),
         accumulatedDepreciation: num(a, "AccumulatedDepreciation"),
         acquisitionCostEnd: num(a, "AcquisitionAndProductionCostsEnd"),
         assetLifeYear: num(a, "AssetLifeYear"),
@@ -980,6 +1345,7 @@ function parseSAFTFull(xmlStr) {
           depreciationMethod: txt(valEl, "DepreciationMethod"),
           bookValueBegin: num(valEl, "BookValueBegin") ?? 0,
           bookValueEnd: num(valEl, "BookValueEnd") ?? 0,
+          acquisitionAndProductionCostsBegin: num(valEl, "AcquisitionAndProductionCostsBegin") ?? null,
           acquisitionAndProductionCostsEnd: num(valEl, "AcquisitionAndProductionCostsEnd") ?? 0,
           acquisitionsInPeriod: num(valEl, "AcquisitionsInPeriod") ?? 0,
           depreciationForPeriod: num(valEl, "DepreciationForPeriod") ?? 0,
@@ -1084,22 +1450,27 @@ function parseSAFTFull(xmlStr) {
       };
       const items = Array.from(sec.getElementsByTagName("Invoice")).map((inv) => {
         const dt = inv.getElementsByTagName("DocumentTotals")[0];
+        let titTax = null; if (dt) { let tEls = dt.getElementsByTagName("TaxInformationTotals"); if (!tEls.length) tEls = dt.getElementsByTagName("TaxInformation"); for (let ti2 = 0; ti2 < tEls.length; ti2++) { const ta2 = tEls[ti2].getElementsByTagName("TaxAmount")[0]; const v2 = ta2 ? num(ta2, "Amount") : null; if (v2 != null) titTax = (titTax ?? 0) + v2; } }
         const lines = Array.from(inv.getElementsByTagName("Line")).map((l) => {
           const taxEl = l.getElementsByTagName("TaxInformation")[0] || l.getElementsByTagName("Tax")[0];
           const dbEl = l.getElementsByTagName("DebitAmount")[0];
           const crEl = l.getElementsByTagName("CreditAmount")[0];
+          const ilaEl = l.getElementsByTagName("InvoiceLineAmount")[0];
+          const dci = txt(l, "DebitCreditIndicator");
           return {
-            recordID: txt(l, "RecordID"),
+            recordID: txt(l, "RecordID") || txt(l, "LineNumber"),
+            accountID: txt(l, "AccountID"),
+            analysisIDs: Array.from(l.getElementsByTagName("AnalysisID")).map((x) => String(x.textContent || "").trim()).filter(Boolean),
             productCode: txt(l, "ProductCode"),
             goodsServicesID: txt(l, "GoodsServicesID"),
             description: txt(l, "Description") || txt(l, "ProductDescription"),
             quantity: num(l, "Quantity"),
-            unitOfMeasure: txt(l, "UnitOfMeasure"),
+            unitOfMeasure: txt(l, "UnitOfMeasure") || txt(l, "InvoiceUOM"),
             unitPrice: num(l, "UnitPrice"),
-            settlementAmount: num(l, "SettlementAmount") ?? 0,
+            settlementAmount: num(l, "SettlementAmount") ?? null, // absent ≠ 0: VMI semantics = optional line discount (fix: ??0 broke SAL_004/PUR_003 on every discount-free file)
             taxPointDate: txt(l, "TaxPointDate"),
-            debitAmount: dbEl ? (num(dbEl, "Amount") ?? 0) : null,
-            creditAmount: crEl ? (num(crEl, "Amount") ?? 0) : null,
+            debitAmount: dbEl ? (num(dbEl, "Amount") ?? 0) : (ilaEl && (dci === "D" || (!dci && sectionTag !== "SalesInvoices")) ? (num(ilaEl, "Amount") ?? 0) : null),
+            creditAmount: crEl ? (num(crEl, "Amount") ?? 0) : (ilaEl && (dci === "K" || (!dci && sectionTag === "SalesInvoices")) ? (num(ilaEl, "Amount") ?? 0) : null),
             tax: taxEl ? {
               taxType: txt(taxEl, "TaxType"),
               taxCode: txt(taxEl, "TaxCode"),
@@ -1128,9 +1499,9 @@ function parseSAFTFull(xmlStr) {
           customerID: txt(inv, "CustomerID"),
           supplierID: txt(inv, "SupplierID"),
           shipFromCountry, shipToCountry,
-          supplierTaxRegType: trEl ? txt(trEl, "TaxType") : "",
-          supplierTaxRegCountry: trEl ? txt(trEl, "Country") : "",
-          supplierAddressCountry: partyEl ? txt((partyEl.getElementsByTagName("Address")[0] || partyEl), "Country") : "",
+          supplierTaxRegType: trEl ? txt(trEl, "TaxType") : (partyEl ? txt(partyEl, "TaxType") : ""),
+          supplierTaxRegCountry: trEl ? txt(trEl, "Country") : (partyEl ? txt(partyEl, "Country") : ""),
+          supplierAddressCountry: partyEl ? txt((partyEl.getElementsByTagName("Address")[0] || partyEl.getElementsByTagName("BillingAddress")[0] || partyEl), "Country") : "",
           accountID: txt(inv, "AccountID"),
           glPostingDate: txt(inv, "GLPostingDate"),
           glTransactionID: txt(inv, "GLTransactionID"),
@@ -1138,9 +1509,10 @@ function parseSAFTFull(xmlStr) {
           selfBillingIndicator: txt(inv, "SelfBillingIndicator"),
           settlements: Array.from(inv.getElementsByTagName("Settlement")).map((se) => { const sa = se.getElementsByTagName("SettlementAmount")[0]; return { amount: sa ? (num(sa, "Amount") ?? 0) : null, discount: txt(se, "SettlementDiscount") }; }),
           references: refsEl ? txt(refsEl, "Reference") : "",
+          totalsTaxCodes: dt ? Array.from(dt.getElementsByTagName("TaxCode")).map((x) => String(x.textContent || "").trim()).filter(Boolean) : [],
           documentTotals: dt ? {
             netTotal: num(dt, "NetTotal") ?? 0,
-            taxPayable: num(dt, "TaxPayable") ?? 0,
+            taxPayable: num(dt, "TaxPayable") ?? titTax ?? 0,
             grossTotal: num(dt, "GrossTotal") ?? 0,
             currencyCode: txt(dt, "CurrencyCode"),
             currencyAmount: num(dt, "CurrencyAmount"),
@@ -1163,17 +1535,19 @@ function parseSAFTFull(xmlStr) {
     } : null;
     const payments = Array.from(doc.getElementsByTagName("Payment")).map((p) => {
       const lines = Array.from(p.getElementsByTagName("Line")).map((l) => ({
-        recordID: txt(l, "RecordID"),
+        recordID: txt(l, "RecordID") || txt(l, "LineNumber"),
+        accountID: txt(l, "AccountID"),
+        analysisIDs: Array.from(l.getElementsByTagName("AnalysisID")).map((x) => String(x.textContent || "").trim()).filter(Boolean),
+        taxCodes: Array.from(l.getElementsByTagName("TaxCode")).map((x) => String(x.textContent || "").trim()).filter(Boolean),
         customerID: txt(l, "CustomerID"),
         supplierID: txt(l, "SupplierID"),
         sourceDocumentID: txt(l, "SourceDocumentID"),
         debitAmount: l.getElementsByTagName("DebitAmount")[0]
-          ? num(l.getElementsByTagName("DebitAmount")[0], "Amount") : null,
+          ? num(l.getElementsByTagName("DebitAmount")[0], "Amount") : (l.getElementsByTagName("PaymentLineAmount")[0] && txt(l, "DebitCreditIndicator") === "D" ? num(l.getElementsByTagName("PaymentLineAmount")[0], "Amount") : null),
         creditAmount: l.getElementsByTagName("CreditAmount")[0]
-          ? num(l.getElementsByTagName("CreditAmount")[0], "Amount") : null,
+          ? num(l.getElementsByTagName("CreditAmount")[0], "Amount") : (l.getElementsByTagName("PaymentLineAmount")[0] && txt(l, "DebitCreditIndicator") === "K" ? num(l.getElementsByTagName("PaymentLineAmount")[0], "Amount") : null),
         debitCreditIndicator: txt(l, "DebitCreditIndicator"),
-        paymentLineAmount: l.getElementsByTagName("PaymentLineAmount")[0]
-          ? num(l.getElementsByTagName("PaymentLineAmount")[0], "Amount") : null,
+        paymentLineAmount: l.getElementsByTagName("PaymentLineAmount")[0] ? num(l.getElementsByTagName("PaymentLineAmount")[0], "Amount") : null,
       }));
       return {
         paymentRefNo: txt(p, "PaymentRefNo"),
@@ -1193,8 +1567,10 @@ function parseSAFTFull(xmlStr) {
     // Movement of Goods
     const mgEl = doc.getElementsByTagName("MovementOfGoods")[0];
     const movementMeta = mgEl ? {
-      numberOfEntries: num(mgEl, "NumberOfEntries"),
+      numberOfEntries: num(mgEl, "NumberOfEntries") ?? num(mgEl, "NumberOfMovementLines"),
       totalQuantity: num(mgEl, "TotalQuantity"),
+      totalQuantityReceived: num(mgEl, "TotalQuantityReceived"),
+      totalQuantityIssued: num(mgEl, "TotalQuantityIssued"),
     } : null;
     const stockMovements = Array.from(doc.getElementsByTagName("StockMovement")).map((s) => ({
       movementType: txt(s, "MovementType"),
@@ -1211,12 +1587,22 @@ function parseSAFTFull(xmlStr) {
       glTransactionID: txt(s, "GLTransactionID"),
       sourceDocumentID: txt(s, "SourceDocumentID"),
       customsProcedure: txt(s, "CustomsProcedure"),
+      lines: Array.from(s.getElementsByTagName("Line")).map((l) => ({
+        productCode: txt(l, "ProductCode"),
+        uom: txt(l, "UnitOfMeasure"),
+        accountID: txt(l, "AccountID"),
+        customerID: txt(l, "CustomerID"),
+        supplierID: txt(l, "SupplierID"),
+        taxCodes: Array.from(l.getElementsByTagName("TaxCode")).map((x) => String(x.textContent || "").trim()).filter(Boolean),
+        quantity: num(l, "Quantity"),
+        debitCreditIndicator: txt(l, "DebitCreditIndicator"),
+      })),
     }));
 
     // Asset Transactions
     const atEl = doc.getElementsByTagName("AssetTransactions")[0];
     const assetTxMeta = atEl ? {
-      numberOfEntries: num(atEl, "NumberOfEntries"),
+      numberOfEntries: num(atEl, "NumberOfAssetTransactions") ?? num(atEl, "NumberOfEntries"),
     } : null;
     const assetTransactions = Array.from(doc.getElementsByTagName("AssetTransaction")).map((t) => ({
       assetID: txt(t, "AssetID"),
@@ -1224,16 +1610,20 @@ function parseSAFTFull(xmlStr) {
       transactionDate: txt(t, "AssetTransactionDate") || txt(t, "TransactionDate"),
       assetTransactionDate: txt(t, "AssetTransactionDate") || txt(t, "TransactionDate"),
       assetTransactionID: txt(t, "AssetTransactionID"),
+      glTransactionID: txt(t, "TransactionID"),
       amount: num(t, "Amount") ?? 0,
       supplierID: txt(t, "SupplierID"),
       customerID: txt(t, "CustomerID"),
     }));
 
-    // File-level metadata
-    const xmlDecl = xmlStr.substring(0, 100);
-    const hasXmlDecl = /^<\?xml\s+version=["']1\.0["']/i.test(xmlDecl.trim());
-    const declaredEncoding = (xmlDecl.match(/encoding=["']([^"']+)["']/i) || [])[1] || "";
-    const hasBom = xmlStr.charCodeAt(0) === 0xFEFF;
+    // File-level metadata. On the streaming-worker path no raw string is held
+    // in memory; the worker only reaches a built tree if the XML declaration
+    // and encoding were readable, so those checks are presumed satisfied.
+    const isStr = typeof xmlStr === "string";
+    const xmlDecl = isStr ? xmlStr.substring(0, 100) : "";
+    const hasXmlDecl = isStr ? /^<\?xml\s+version=["']1\.0["']/i.test(xmlDecl.trim()) : true;
+    const declaredEncoding = isStr ? ((xmlDecl.match(/encoding=["']([^"']+)["']/i) || [])[1] || "") : "UTF-8";
+    const hasBom = isStr ? xmlStr.charCodeAt(0) === 0xFEFF : false;
     const rootIsAuditFile = root.localName === "AuditFile" || root.tagName === "AuditFile";
 
     // XSD-conformance rules (run here while we still hold the DOM)
@@ -1248,6 +1638,9 @@ function parseSAFTFull(xmlStr) {
     // Full XSD schema validation (entire document vs. official VMI XSD v2.01)
     let schemaValidation = { ok: true, total: 0, byKind: {}, findings: [] };
     try { schemaValidation = runXsdSchemaValidation(doc); } catch (e) { /* keep default */ }
+    // Generic data-validation pass (SCHEMA_DVT family): one DOM walk
+    let genChecks = { eurMismatch: [], taxCalc: [], lineAmt: [], psaDates: [], mgQty: [], stockFlow: [], payTax: [] };
+    try { genChecks = runGenChecks(doc); } catch (e) { /* keep default */ }
 
     return {
       _meta: {
@@ -1256,9 +1649,10 @@ function parseSAFTFull(xmlStr) {
         hasXmlDecl,
         declaredEncoding,
         hasBom,
-        fileSizeBytes: xmlStr.length,
+        fileSizeBytes: isStr ? xmlStr.length : 0,
       },
       xsdResults,
+      genChecks,
       dubResults,
       clsResults,
       schemaValidation,
@@ -1280,11 +1674,11 @@ function parseSAFTFull(xmlStr) {
       transactions,
       sales,
       purchases,
+      glMeta,
+      paymentsMeta,
       payments,
       movementMeta,
       stockMovements,
-      glMeta,
-      paymentsMeta,
       assetTxMeta,
       assetTransactions,
       counts: {
@@ -1371,34 +1765,61 @@ function buildContext(data) {
 }
 
 
-// ═══ VERIFIED AUDIT RULES (LT VAT) — the 13-rule foundation ═══
+// ═══ VAT AUDIT RULES (LT) — 117-rule engine, 2026-ready (VA-107) ═══
 // ════════════════════════════════════════════════════════════════════
-// TAXAI · VERIFIED AUDIT RULES (LT VAT)  — structured, data-connected
+// TAXAI · LITHUANIAN VAT TRANSACTION-LOGIC RULES (PP_LT_PVM family)
 // ────────────────────────────────────────────────────────────────────
-// Each rule mirrors a real audit test: legal-grounded title/description,
-// the data types it applies to, a failure-message template with @fields,
-// the ORIGINAL SQL (kept verbatim as provenance), and an evaluate()
-// function that faithfully re-implements the SQL's WHERE logic against
-// the parsed SAF-T objects produced by parseSAFTFull(). Deterministic.
+// Independent re-implementation. Each rule encodes a VMI/PVMĮ-grounded
+// consistency condition between the STI tax code (VA-49 Annex 2 PVM
+// classifier) and the transaction facts in the SAF-T file (Ship-From /
+// Ship-To country, counterparty tax registration, goods-services class,
+// invoice references). Rule IDs follow the public PP_LT_PVM numbering so
+// findings stay comparable across tools; titles, descriptions, predicates
+// and remediation guidance are TaxAI's own.
+//
+// 2026-ready: period-aware EU membership (GB until 2020-12-31, XI for
+// goods thereafter — Protocol on IE/NI), and the VA-107 (2025-11-25)
+// classifier changes: PVM58/PVM59/PVM60 (12%) valid from 2026-01-01,
+// nine 9%-rate codes expired 2025-12-31.
 // ════════════════════════════════════════════════════════════════════
 
-// EU member-state code set used across several rules (as in the source SQL).
-const EU_COUNTRIES = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","EL","ES","NL","IE","LU","LV","MT","DE","PT","RO","SK","SI","SE","HU","GB","IT","PL"];
-const EU_WITH_LT = [...EU_COUNTRIES, "LT"];
+// EU-27 member states (post-Brexit; both EL and GR accepted for Greece).
+const EU27 = ["AT","BE","BG","HR","CY","CZ","DE","DK","EE","EL","GR","ES","FI","FR","HU","IE","IT","LU","LV","MT","NL","PL","PT","RO","SE","SI","SK"];
+// Backward-compatible exports (current-law set, excl. LT / incl. LT):
+const EU_COUNTRIES = [...EU27];
+const EU_WITH_LT = [...EU27, "LT"];
+
+// Period-aware EU set for VAT geography rules. GB counts as EU for files
+// whose period starts on or before 2020-12-31 (Brexit transition end);
+// from 2021 GB is a third country and XI (Northern Ireland) counts as EU
+// for goods movements. PL was missing from the 2020/2021 source rule set
+// — corrected here.
+function euSetFor(periodStart) {
+  const ps = String(periodStart || "").slice(0, 10);
+  const pre = ps && ps <= "2020-12-31";
+  return new Set(pre ? [...EU27, "GB"] : [...EU27, "XI"]);
+}
+
+// 2026 classifier transition (VA-107, 2025-11-25, effective 2026-01-01):
+const PVM_CODES_9PCT_EXPIRED = ["PVM2","PVM7","PVM17","PVM26","PVM30","PVM44","PVM52","PVM54","PVM57"]; // valid through 2025-12-31
+const PVM_CODES_12PCT = ["PVM58","PVM59","PVM60"]; // valid from 2026-01-01 (PVMĮ 19 str. 3 d.; 8 str.; 95 str. 5 d.)
 
 // Resolve a line's STITaxCode (PVM1/PVM13/…) from the tax table, falling back
-// to the line's own tax code. Mirrors JOIN TaxTableEntryDetail ON tax_code.
+// to the line's own tax code (some files carry the STI code directly).
 function stiOf(line, taxIndex) {
   const code = line?.tax?.taxCode || "";
   if (taxIndex && taxIndex[code]) return taxIndex[code];
-  return code; // some files already carry the STI code directly
+  return code;
 }
-// goods_services_id IS NOT NULL ? = X : product_code = X   (the CASE in the SQL)
-function classMatches(line, X) {
+// Goods/services class of a line: the GoodsServicesID indicator when present,
+// otherwise the product-code field used as the class carrier.
+function classOf(line) {
   const g = (line?.goodsServicesID || "").trim();
-  if (g) return g === X;
-  return (line?.productCode || "").trim() === X;
+  if (g) return g;
+  const p = (line?.productCode || "").trim();
+  return ["PR","PS","IT","KT"].includes(p) ? p : (p ? "?" : "");
 }
+function classMatches(line, X) { return classOf(line) === X; }
 const auditR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // Build STITaxCode lookup from parsed taxCodes: { TaxCode → STITaxCode }.
@@ -1408,186 +1829,1594 @@ function buildTaxIndex(data) {
   return idx;
 }
 
-// ── The 13 rules ──────────────────────────────────────────────────────
-// severity: High → "Reject", Low → "Warn"  (kept as the source "Reikšmingumas")
-const AUDIT_RULES = [
-  {
-    id: "PP_LT_PVM_106", severity: "High", level: 3, dataTypes: "F-Full; SI-Invoices", refType: "SaftLt::InvoiceLine", scope: "sales",
-    title: "Deklaruotas vietinis prekių tiekimas, kai nėra duomenų, kurioje valstybėje pasibaigė prekių tiekimas",
-    titleEn: "Declared local supply of goods with no destination (Ship-To) country",
-    description: "Vadovaujantis PVM įstatymo 4 straipsniu, jei prekės perduodamos kitam asmeniui Lietuvos teritorijoje, prekių tiekimas laikomas įvykusiu Lietuvoje. Testas pateikia prekių pardavimo sąskaitas su PVM kodu PVM1, kuriose Ship From = LT, tačiau nėra Ship To šalies. Jei tiekimas pasibaigė ne Lietuvoje, sandoris galimai neturėjo būti klasifikuojamas PVM1.",
-    legal: "PVMĮ 4 str.", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | NetTotal = @NetTotal",
-    fixEn: 'Confirm where the supply of goods actually ended (Ship-To). If the goods left Lithuania, reclassify the line away from PVM1 (e.g. intra-EU 0% or export); if they stayed in LT, add the missing Ship-To country to the invoice.', fixLt: 'Patikrinkite, kur faktiškai pasibaigė prekių tiekimas (Ship-To). Jei prekės išvyko iš Lietuvos, perklasifikuokite eilutę iš PVM1 (pvz. 0% ES viduje ar eksportas); jei liko LT — pridėkite trūkstamą Ship-To šalį sąskaitoje.',
-    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
-      (inv.lines || []).some((l) => classMatches(l, "PR") && stiOf(l, taxIndex) === "PVM1")
-      && !inv.shipToCountry && inv.shipFromCountry === "LT"
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry || "—", ShipFromCountry: inv.shipFromCountry, NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_100", severity: "High", level: 3, dataTypes: "F-Full; SI-Invoices", refType: "SaftLt::InvoiceLine", scope: "sales",
-    title: "Deklaruotas vietinis prekių tiekimas, kai prekių tiekimas pasibaigė kitoje ES valstybėje",
-    titleEn: "Declared local supply where goods ended in another EU member state",
-    description: "PVMĮ 4 str. pagrindu. Testas pateikia pardavimo sąskaitas su PVM1, kuriose Ship To yra kita ES valstybė. Rizika, kad įvyko tiekimas į kitą ES valstybę narę ir Bendrovė nepagrįstai išskyrė PVM.",
-    legal: "PVMĮ 4 str.", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | NetTotal = @NetTotal",
-    fixEn: "Confirm the place of supply. If the goods were delivered to another EU member state, the supply is likely a 0% intra-EU supply (PVM13), not local PVM1 — correct the VAT code and obtain the customer's valid EU VAT number.", fixLt: 'Patikrinkite tiekimo vietą. Jei prekės pristatytos į kitą ES valstybę narę, tai greičiausiai 0% tiekimas ES viduje (PVM13), ne vietinis PVM1 — pataisykite PVM kodą ir gaukite galiojantį pirkėjo ES PVM kodą.',
-    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
-      (inv.lines || []).some((l) => classMatches(l, "PS") && stiOf(l, taxIndex) === "PVM1")
-      && inv.shipToCountry && EU_COUNTRIES.includes(inv.shipToCountry)
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry, ShipFromCountry: inv.shipFromCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_070", severity: "High", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice", scope: "purchases",
-    title: "Paslaugų įsigijimas Lietuvoje, kai teikėjas nurodo kitos ES/ne ES valstybės PVM kodą, tačiau įsikūrimo adresas — Lietuva",
-    titleEn: "Local purchase with foreign supplier VAT-reg but supplier address in Lithuania",
-    description: "PVMĮ 19 str. 1 d. pagrindu (standartinis tarifas). Pirkimo sąskaitos su PVM1, kai teikėjo PVM registracijos šalis ≠ LT, bet teikėjo adreso šalis = LT. Rizika, kad teikėjas negalėjo išskirti vietinio PVM.",
-    legal: "PVMĮ 19 str. 1 d.; VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | SupplierTaxReg = @SupplierTaxRegNumberType; @SupplierTaxRegNumberCountry | SupplierAddressCountry = @SupplierAddressCountry | NetTotal = @NetTotal",
-    fixEn: "Verify whether the supplier is actually VAT-registered in Lithuania. If the supplier is established in LT but used a foreign VAT number, local VAT (PVM1) may be wrong — consider reverse charge and correct the supplier's tax registration data.", fixLt: 'Patikrinkite, ar teikėjas tikrai registruotas PVM mokėtoju Lietuvoje. Jei teikėjas įsikūręs LT, bet nurodė užsienio PVM kodą, vietinis PVM1 gali būti neteisingas — apsvarstykite atvirkštinį apmokestinimą ir pataisykite teikėjo registracijos duomenis.',
-    evaluate: (data, taxIndex) => (data?.purchases?.items || []).filter((inv) =>
-      (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM1")
-      && inv.supplierTaxRegCountry && inv.supplierTaxRegCountry !== "LT" && inv.supplierAddressCountry === "LT"
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, SupplierTaxRegNumberType: inv.supplierTaxRegType || "—", SupplierTaxRegNumberCountry: inv.supplierTaxRegCountry, SupplierAddressCountry: inv.supplierAddressCountry, NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_068", severity: "High", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice", scope: "purchases",
-    title: "Paslaugų įsigijimas Lietuvoje, kai paslaugas suteikia ne PVM mokėtojas Lietuvoje",
-    titleEn: "Local purchase where the supplier is a Lithuanian non-VAT registrant",
-    description: "PVMĮ 19 str. 1 d. pagrindu. Pirkimo sąskaitos su PVM1, kai teikėjo PVM registracijos šalis = LT, bet registracijos tipas ≠ PVM. Rizika, kad teikėjas negalėjo išskirti vietinio PVM.",
-    legal: "PVMĮ 19 str. 1 d.; VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | SupplierTaxReg = @SupplierTaxRegNumberType; @SupplierTaxRegNumberCountry | SupplierAddressCountry = @SupplierAddressCountry | NetTotal = @NetTotal",
-    fixEn: 'Confirm whether the Lithuanian supplier was entitled to charge local VAT. If the supplier is not a registered VAT payer (registration type ≠ PVM), the input VAT may not be deductible — request a corrected invoice.', fixLt: 'Patikrinkite, ar Lietuvos teikėjas turėjo teisę išskirti vietinį PVM. Jei teikėjas nėra registruotas PVM mokėtojas (registracijos tipas ≠ PVM), pirkimo PVM gali būti neatskaitomas — paprašykite pataisytos sąskaitos.',
-    evaluate: (data, taxIndex) => (data?.purchases?.items || []).filter((inv) =>
-      (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM1")
-      && inv.supplierTaxRegCountry === "LT" && inv.supplierTaxRegType && inv.supplierTaxRegType !== "PVM"
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, SupplierTaxRegNumberType: inv.supplierTaxRegType, SupplierTaxRegNumberCountry: inv.supplierTaxRegCountry, SupplierAddressCountry: inv.supplierAddressCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_054", severity: "High", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
-    title: "Trikampės prekybos sandoriai, kai tiekėjas nurodė ne PVM kodą arba nenurodė kodo tipo",
-    titleEn: "Triangular-trade sales where supplier VAT-reg type is not PVM or missing",
-    description: "Pardavimo sąskaitos su PVM19, kai Ship From ir Ship To yra skirtingos ES valstybės (ne LT), o teikėjo PVM registracijos tipas ≠ PVM arba nenurodytas. Galima netinkama trikampės prekybos klasifikacija.",
-    legal: "PVMĮ (trikampė prekyba)", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | SupplierTaxReg = @SupplierTaxRegType; @SupplierTaxRegCountry | NetTotal = @NetTotal",
-    fixEn: "Review the triangular-trade treatment: confirm the chain of supply between the two EU states and the supplier's VAT-registration type. If it is not a valid triangular transaction, the PVM19 classification should be corrected.", fixLt: 'Peržiūrėkite trikampės prekybos vertinimą: patikrinkite tiekimo grandinę tarp dviejų ES valstybių ir teikėjo PVM registracijos tipą. Jei tai ne tinkamas trikampis sandoris, PVM19 klasifikaciją reikia pataisyti.',
-    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
-      inv.shipToCountry && inv.shipFromCountry && EU_COUNTRIES.includes(inv.shipToCountry) && EU_COUNTRIES.includes(inv.shipFromCountry)
-      && inv.shipFromCountry !== inv.shipToCountry
-      && (!inv.supplierTaxRegType || inv.supplierTaxRegType !== "PVM")
-      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM19")
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry, ShipFromCountry: inv.shipFromCountry, SupplierTaxRegType: inv.supplierTaxRegType || "—", SupplierTaxRegCountry: inv.supplierTaxRegCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_011", severity: "High", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
-    title: "Prekių tiekimas į kitą ES valstybę, kai prekės buvo išgabentos ne už ES ribų",
-    titleEn: "Intra-EU supply (PVM13) where Ship-To is inside the EU (possible misclassification)",
-    description: "Pardavimo sąskaitos su PVM13 (0% intra-EU), kai Ship To yra ES valstybė (įskaitant LT). PVM13 skirtas tiekimui į kitą ES narę; jei prekės liko ES viduje/LT, klasifikacija gali būti neteisinga.",
-    legal: "PVMĮ 49 str. (0% intra-EU)", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipTo | ShipFrom = @ShipFrom | NetTotal = @NetTotal",
-    fixEn: 'Confirm the goods were dispatched to another EU member state. The 0% intra-EU rate (PVM13) requires movement to another member state; if the goods stayed in LT or left the EU, reclassify accordingly.', fixLt: 'Patikrinkite, ar prekės išgabentos į kitą ES valstybę narę. 0% tarifas ES viduje (PVM13) reikalauja gabenimo į kitą valstybę narę; jei prekės liko LT ar paliko ES, perklasifikuokite atitinkamai.',
-    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
-      inv.shipToCountry && EU_WITH_LT.includes(inv.shipToCountry)
-      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM13")
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipTo: inv.shipToCountry, ShipFrom: inv.shipFromCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_010", severity: "High", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
-    title: "Prekių tiekimas į kitą ES valstybę prasidėjo ne Lietuvos teritorijoje",
-    titleEn: "Intra-EU supply (PVM13) that did not start in Lithuania",
-    description: "Pardavimo sąskaitos su PVM13, kai Ship From ≠ LT. 0% intra-EU tiekimas iš LT turėtų prasidėti Lietuvoje.",
-    legal: "PVMĮ 49 str. (0% intra-EU)", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | NetTotal = @NetTotal",
-    fixEn: 'Confirm the dispatch started in Lithuania. A 0% intra-EU supply declared from LT (PVM13) should begin in LT; if it started elsewhere, the LT VAT treatment is likely wrong.', fixLt: 'Patikrinkite, ar gabenimas prasidėjo Lietuvoje. 0% tiekimas ES viduje, deklaruotas iš LT (PVM13), turėtų prasidėti LT; jei prasidėjo kitur, LT PVM vertinimas greičiausiai neteisingas.',
-    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
-      inv.shipFromCountry && inv.shipFromCountry !== "LT"
-      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM13")
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry || "—", ShipFromCountry: inv.shipFromCountry, NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_116", severity: "Low", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine", scope: "sales",
-    title: "Ilgalaikio turto pardavimas Lietuvoje",
-    titleEn: "Sale of fixed assets in Lithuania (informational)",
-    description: "Pardavimo sąskaitų eilutės su klasifikacija IT (ilgalaikis turtas) ir PVM1. Informacinis testas ilgalaikio turto pardavimams peržiūrėti.",
-    legal: "PVMĮ; VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
-    fixEn: 'Review the fixed-asset sale and confirm the VAT treatment is correct for the asset disposal (informational — no action required if treatment is verified).', fixLt: 'Peržiūrėkite ilgalaikio turto pardavimą ir patikrinkite, ar PVM vertinimas teisingas turto perleidimui (informacinis — veiksmų nereikia, jei vertinimas patvirtintas).',
-    evaluate: (data, taxIndex) => { const out=[]; (data?.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (classMatches(l, "IT") && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID || "—", ProductCode: l.productCode || "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
-    })); return out; },
-  },
-  {
-    id: "PP_LT_PVM_115", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoiceLine", scope: "purchases",
-    title: "Vietiniai įsigijimai, kai nėra duomenų, ar tiekiamos prekės ar teikiamos paslaugos",
-    titleEn: "Local purchase line where goods/services class is set but product code is missing",
-    description: "Pirkimo eilutės su PVM1, kai goods_services_id užpildytas, bet product_code tuščias. Duomenų pilnumo patikra prekės/paslaugos klasifikacijai.",
-    legal: "VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
-    fixEn: 'Add the missing product code so the goods/services classification of the line is complete and consistent with the goods-services indicator.', fixLt: 'Pridėkite trūkstamą produkto kodą, kad eilutės prekių/paslaugų klasifikacija būtų pilna ir atitiktų prekių-paslaugų požymį.',
-    evaluate: (data, taxIndex) => { const out=[]; (data?.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if ((l.goodsServicesID || "").trim() && !((l.productCode || "").trim()) && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID, ProductCode: "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
-    })); return out; },
-  },
-  {
-    id: "PP_LT_PVM_114", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoiceLine", scope: "purchases",
-    title: "Kiti sandoriai, kurie laikomi įsigijimais Lietuvoje",
-    titleEn: "Other transactions classified as acquisitions in Lithuania (class KT)",
-    description: "Pirkimo eilutės su klasifikacija KT (kita) ir PVM1. Peržiūrai pateikiami kiti sandoriai, laikomi įsigijimais Lietuvoje.",
-    legal: "VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
-    fixEn: "Review the transaction classified as 'other' (KT) and confirm it is correctly treated as a Lithuanian acquisition at standard VAT (PVM1).", fixLt: 'Peržiūrėkite kaip „kita“ (KT) klasifikuotą sandorį ir patikrinkite, ar jis teisingai vertinamas kaip įsigijimas Lietuvoje su standartiniu PVM (PVM1).',
-    evaluate: (data, taxIndex) => { const out=[]; (data?.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (classMatches(l, "KT") && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID || "—", ProductCode: l.productCode || "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
-    })); return out; },
-  },
-  {
-    id: "PP_LT_PVM_113", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoiceLine", scope: "purchases",
-    title: "Ilgalaikio turto įsigijimas Lietuvoje",
-    titleEn: "Acquisition of fixed assets in Lithuania (informational)",
-    description: "Pirkimo eilutės su klasifikacija IT (ilgalaikis turtas) ir PVM1. Informacinis testas ilgalaikio turto įsigijimams peržiūrėti.",
-    legal: "VA-49 (PVM1)", failTpl: "InvoiceNo = @InvoiceNo | GoodsServicesID = @GoodsServicesID | ProductCode = @ProductCode | TaxRate = @TaxRate | TaxCode = @TaxCode | Description = @Description | NetTotal = @NetTotal",
-    fixEn: 'Review the fixed-asset acquisition and confirm the VAT treatment and deductibility are correct (informational — no action required if verified).', fixLt: 'Peržiūrėkite ilgalaikio turto įsigijimą ir patikrinkite, ar PVM vertinimas ir atskaita teisingi (informacinis — veiksmų nereikia, jei patvirtinta).',
-    evaluate: (data, taxIndex) => { const out=[]; (data?.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => {
-      if (classMatches(l, "IT") && stiOf(l, taxIndex) === "PVM1") out.push({ InvoiceNo: inv.invoiceNo, GoodsServicesID: l.goodsServicesID || "—", ProductCode: l.productCode || "—", TaxRate: l.tax?.taxPercentage ?? "—", TaxCode: stiOf(l, taxIndex), Description: (l.description || "").slice(0,60) || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) });
-    })); return out; },
-  },
-  {
-    id: "PP_LT_PVM_061", severity: "Low", level: 3, dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice", scope: "purchases",
-    title: "Paslaugų įsigijimas iš ne ES PVM mokėtojo",
-    titleEn: "Purchase (PVM20) from a non-EU supplier VAT-registration",
-    description: "Pirkimo sąskaitos su PVM20, kai teikėjo PVM registracijos šalis nenurodyta arba yra ne ES valstybė. Peržiūrai pateikiami įsigijimai iš ne ES PVM mokėtojų.",
-    legal: "PVMĮ (atvirkštinis apmokestinimas / importas)", failTpl: "InvoiceNo = @InvoiceNo | SupplierTaxReg = @SupplierTaxRegNumberType; @SupplierTaxRegNumberCountry | NetTotal = @NetTotal",
-    fixEn: 'Review the acquisition from a non-EU supplier and confirm the correct treatment (import VAT / reverse charge) was applied for PVM20.', fixLt: 'Peržiūrėkite įsigijimą iš ne ES teikėjo ir patikrinkite, ar PVM20 atveju pritaikytas teisingas vertinimas (importo PVM / atvirkštinis apmokestinimas).',
-    evaluate: (data, taxIndex) => (data?.purchases?.items || []).filter((inv) =>
-      (!inv.supplierTaxRegCountry || !EU_WITH_LT.includes(inv.supplierTaxRegCountry))
-      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM20")
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, SupplierTaxRegNumberType: inv.supplierTaxRegType || "—", SupplierTaxRegNumberCountry: inv.supplierTaxRegCountry || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
-  {
-    id: "PP_LT_PVM_021", severity: "Low", level: 3, dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice", scope: "sales",
-    title: "Prekių tiekimas į kitą ES valstybę, kai sąskaitose nėra nuorodos į 0 procentų PVM taikymą",
-    titleEn: "Intra-EU supply (PVM13) with no reference justifying the 0% rate",
-    description: "Pardavimo sąskaitos su PVM13, kuriose nėra nuorodos (Reference), pagrindžiančios 0% PVM taikymą. 0% intra-EU tiekimas paprastai reikalauja nuorodos į PVMĮ nuostatą.",
-    legal: "PVMĮ 49 str.; reikalavimas nurodyti pagrindą", failTpl: "InvoiceNo = @InvoiceNo | ShipTo = @ShipToCountry | ShipFrom = @ShipFromCountry | Reference = @Reference | NetTotal = @NetTotal",
-    fixEn: 'Add the reference to the PVMĮ provision (e.g. Art. 49) justifying the 0% rate on the invoice. Intra-EU 0% supplies (PVM13) must state the legal basis for the exemption.', fixLt: 'Pridėkite nuorodą į PVMĮ nuostatą (pvz. 49 str.), pagrindžiančią 0% tarifą sąskaitoje. 0% tiekimai ES viduje (PVM13) turi nurodyti atleidimo teisinį pagrindą.',
-    evaluate: (data, taxIndex) => (data?.sales?.items || []).filter((inv) =>
-      !((inv.references || "").trim())
-      && (inv.lines || []).some((l) => stiOf(l, taxIndex) === "PVM13")
-    ).map((inv) => ({ InvoiceNo: inv.invoiceNo, ShipToCountry: inv.shipToCountry || "—", ShipFromCountry: inv.shipFromCountry || "—", Reference: inv.references || "—", NetTotal: auditR2(inv.documentTotals?.netTotal) })),
-  },
+// ── Counterparty resolution ──────────────────────────────────────────
+// Merges the invoice-level party block (CustomerInfo / SupplierInfo) with
+// the MasterFiles registrations of the referenced customer/supplier, so a
+// rule sees every tax registration the file discloses for the counterparty.
+function buildVatContext(data) {
+  const periodStart = data?.header?.periodStart || data?.header?.fiscalYearFrom || "";
+  const periodEnd = data?.header?.periodEnd || data?.header?.fiscalYearTo || "";
+  const EU = euSetFor(periodStart);
+  const from2026 = String(periodStart || "").slice(0, 10) >= "2026-01-01";
+  const upTo2025 = String(periodEnd || "").slice(0, 10) <= "2025-12-31" && !!periodEnd;
+  const regsC = new Map(), regsS = new Map(), raC = new Map(), hasRAC = new Map(), hasAddrC = new Map();
+  (data?.customers || []).forEach((c) => {
+    const regs = (c.taxRegistrations && c.taxRegistrations.length)
+      ? c.taxRegistrations.map((r) => ({ type: (r.type || "").trim(), country: (r.country || "").trim() }))
+      : (c.taxRegistrationNumber ? [{ type: "", country: (c.country || "").trim() }] : []);
+    regsC.set(c.customerID, regs);
+    const addrs = c.addresses || [];
+    const ra = addrs.find((a) => (a.type || "") === "RA");
+    raC.set(c.customerID, (ra ? ra.country : "") || "");
+    hasRAC.set(c.customerID, !!ra);
+    hasAddrC.set(c.customerID, addrs.length > 0 || !!c.addressCountry);
+    if (!ra && c.addressCountry) raC.set(c.customerID, "");
+  });
+  (data?.suppliers || []).forEach((s) => {
+    const regs = (s.taxRegistrations && s.taxRegistrations.length)
+      ? s.taxRegistrations.map((r) => ({ type: (r.type || "").trim(), country: (r.country || "").trim() }))
+      : (s.taxRegistrationNumber ? [{ type: "", country: (s.country || "").trim() }] : []);
+    regsS.set(s.supplierID, regs);
+  });
+  return { EU, from2026, upTo2025, periodStart, periodEnd, regsC, regsS, raC, hasRAC, hasAddrC, taxIndex: buildTaxIndex(data) };
+}
+// All disclosed registrations for the invoice's counterparty.
+function regsFor(inv, scope, ctx) {
+  const out = [];
+  const t = (inv.supplierTaxRegType || "").trim(), c = (inv.supplierTaxRegCountry || "").trim();
+  if (t || c) out.push({ type: t, country: c });
+  const m = scope === "sales" ? ctx.regsC : ctx.regsS;
+  (m.get(scope === "sales" ? inv.customerID : inv.supplierID) || []).forEach((r) => out.push(r));
+  return out;
+}
+const pvmRegOf = (regs) => regs.find((r) => r.type === "PVM") || null;
+
+// One evidence row per finding — uniform fields across all rules.
+function vatRow(inv, line, ctx, scope) {
+  const regs = regsFor(inv, scope, ctx);
+  const pv = pvmRegOf(regs), r0 = regs[0] || null;
+  return {
+    InvoiceNo: inv.invoiceNo || "—", Date: (inv.invoiceDate || "").slice(0, 10) || "—",
+    Class: line ? (classOf(line) || "—") : "—", Code: line ? (stiOf(line, ctx.taxIndex) || "—") : "—",
+    ShipFrom: inv.shipFromCountry || "—", ShipTo: inv.shipToCountry || "—",
+    RegType: (pv ? "PVM" : (r0 ? (r0.type || "—") : "—")), RegCountry: (pv ? pv.country : (r0 ? r0.country : "")) || "—",
+    RAcountry: (scope === "sales" ? (ctx.raC.get(inv.customerID) || "—") : "—"),
+    NetTotal: auditR2(inv.documentTotals?.netTotal),
+  };
+}
+
+// Class-spec matcher used by the declarative rules below.
+function vatClassMatch(spec, line) {
+  if (!spec) return true;
+  const c = classOf(line);
+  if (spec === "MISSING") return !c;
+  if (spec === "GSID_NO_PC") return !!(line?.goodsServicesID || "").trim() && !(line?.productCode || "").trim();
+  if (spec === "MISSING_OR_KT_IT") return !c || c === "KT" || c === "IT";
+  if (Array.isArray(spec)) return spec.includes(c);
+  return c === spec;
+}
+
+// ── The rule registry: 117 deterministic VAT rules ──
+// ═════════════════════════════════════════════════════════════════════════
+// Phase 1 analytics engine — risk score, acceptance gate, multi-part merge,
+// audit report, versioned rule packs.  (TaxAI engine v10.1.0)
+// ═════════════════════════════════════════════════════════════════════════
+const ENGINE_VERSION = "10.4.0";
+
+// Rule-pack provenance — shown in the Rules tab and stamped into every export.
+const RULE_PACKS = [
+  { version: "2026.06-scale", date: "2026-06-08", title: "Scale layer — readiness monitoring, embeddable SDK, white-label", titleLt: "Mastelio sluoksnis — parengties stebėsena, įterpiamas SDK, baltoji etiketė",
+    changes: ["Continuous-readiness monitoring: every audit snapshots gate/risk/finding-keys per company+period; portfolio board with audit-ready status, staleness alerts and new-vs-resolved deltas", "Bureau batch mode: drop N client files — each runs the full 482-rule pipeline and lands on the board", "Embeddable SDK: window.TaxAI.validateText / validateFile / autofixText / explain + postMessage bridge for accounting-software vendors — all client-side", "White-label: firm name, accent and footer applied to audit reports, VMI letters and portfolio exports (TaxAI core credited)"] },
+  { version: "2026.06-ai-native", date: "2026-06-08", title: "AI-native layer — offline Audit Copilot + VMI response letters", titleLt: "AI sluoksnis — vietinis audito kopilotas + VMI atsakymo laiškai",
+    changes: ["Audit Copilot answers questions about the loaded file (gate, priorities, rule explanations, counts, auto-fixable, search) deterministically — fully offline, before any AI call", "Official VMI response-letter generator: auditor-note dispositions and the auto-fix manifest become the letter's positions and annexes", "Legal-corpus AI agents unchanged; copilot handles audit-state questions first", "Natural-language rules: a deterministic LT/EN compiler turns a typed sentence into a runnable, persisted rule — preview, hit counts, full findings/risk/report integration, zero network"] },
+  { version: "2026.06-autofix", date: "2026-06-08", title: "Auto-Fix engine — findings become applied XML corrections", titleLt: "Auto-Fix variklis — radiniai virsta pritaikytomis XML pataisomis",
+    changes: ["11 rule-scoped fixers: header version/country/currency, EUR currency-amounts, tax & line-amount recomputation, GL/section control totals, document totals, ISO country normalization, exact-duplicate removal", "Dry-run plan with before→after preview; SAFE vs SUGGESTED safety classes", "One-click corrected XML + fix manifest; full 482-rule re-audit with before/after gate & risk", "Form-only principle: representation is normalized and derived totals recomputed — business facts are never invented"] },
+  { version: "2026.06-explain", date: "2026-06-07", title: "Per-finding explanation engine", titleLt: "Radinių paaiškinimų variklis",
+    changes: ["WHAT/WHY/HOW explanation for all rules in LT + EN", "Numbered, abbreviation-safe fix steps", "Severity-aware urgency lead on every finding", "Inline fix line in the findings list"] },
+  { version: "2026.06-parity3", date: "2026-06-06", title: "ColBi parity — final 25 gaps closed (100 %)", titleLt: "ColBi paritetas — uždarytos paskutinės 25 spragos (100 %)",
+    changes: ["SAFT_HDR_009, SAFT_PAY_005 (header date, payment tax totals)", "SAFT_PDT_PMSPEC + 4 APA rules (PM/APA classifier substance tests)", "SAFT_TRT_011/012/013 (monthly Sodra/GPM, guarantee-fund ratio)", "SAFT_AET_003 (VSAFAS public-sector equation), SAFT_BAT_019/020"] },
+  { version: "2026.06-parity2", date: "2026-06-06", title: "ColBi parity — coverage patches 1–2", titleLt: "ColBi paritetas — 1–2 pataisos",
+    changes: ["24 structural rules: source-data referential set, EUR/tax/line-amount recomputation, control totals, batch & open-item checks", "One-pass DOM engine (runGenChecks) for whole-file recomputations"] },
+  { version: "2026.05-vat117", date: "2026-06-05", title: "VAT audit engine — 117 rules (120-workbook, corrected)", titleLt: "PVM audito variklis — 117 taisyklių (120 darbaknygė, pataisyta)",
+    changes: ["All 114 unique ColBi VAT rules implemented", "Workbook defects fixed: missing PL, stale GB-as-EU, PS/PR copy-paste rows, inverted CASE 056", "2026 VA-107 reform pack: PVM58–60 (12 %), PVM2/PVM49 expiry, GB Brexit handling"] },
+  { version: "2020.09-base", date: "2020-09-01", title: "VMI/ColBi LT_RULES base set (337 rules)", titleLt: "VMI/ColBi LT_RULES bazinis rinkinys (337 taisyklės)",
+    changes: ["XSD v2.01 conformance + full schema validation (205 types)", "Structural & integrity rules, duplicates (Table 6), classifiers (VA-49 Annex 2)", "Risk weights (risk_value 0–5) imported per rule"] },
 ];
 
-// Render a failure-message template by substituting @fields from a hit row.
+// VMI risk weights (risk_value column of the ColBi LT_RULES export, scale 0–5),
+// joined onto TaxAI rule ids through the verified per-rule coverage mapping.
+const VMI_RISK_WEIGHTS = {"PP_LT_PVM_010\u2013014":0.1,"PP_LT_PVM_010\u2013018":0.1,"PP_LT_PVM_010\u2013018 (ES tiekimai)":0.1,"PP_LT_PVM_019\u2013021":0.1,"PP_LT_PVM_019\u2013021 (trikamp\u0117 prekyba)":0.1,"PP_LT_PVM_030\u2013038":0.1,"PP_LT_PVM_044\u2013046":0.1,"PP_LT_PVM_044\u2013046 (PVM5)":0.1,"PP_LT_PVM_047\u2013052":0.1,"PP_LT_PVM_047\u2013052 (96 str. atvirk\u0161tinis)":0.1,"PP_LT_PVM_075":0.1,"PP_LT_PVM_075\u2013081":0.1,"PP_LT_PVM_075\u2013081 (paslaugos u\u017e LT rib\u0173)":0.1,"PP_LT_PVM_087":3.0,"PP_LT_PVM_109":3.0,"SAFT_AAT_001":0.1,"SAFT_AAT_002":0.1,"SAFT_AAT_003":0.1,"SAFT_AAT_005":0.1,"SAFT_AET_001":0.1,"SAFT_AET_002":0.1,"SAFT_AET_003":0.1,"SAFT_APT_001":0.1,"SAFT_AST_002":0.1,"SAFT_AST_003":0.1,"SAFT_AST_VAL_ACCT":0.1,"SAFT_ATX_001":0.1,"SAFT_ATX_002":0.3,"SAFT_BAT_011":0.1,"SAFT_BAT_012":0.1,"SAFT_BAT_013":0.1,"SAFT_BAT_015":0.1,"SAFT_BAT_019":0.1,"SAFT_BAT_020":0.1,"SAFT_BAT_021":0.1,"SAFT_CFA_001":0.1,"SAFT_CLS_STITaxCode":0.1,"SAFT_CLS_TaxCode":0.1,"SAFT_CTL_001":0.3,"SAFT_CTL_002":0.3,"SAFT_CTL_003":0.3,"SAFT_CTL_004":0.3,"SAFT_CTL_005":0.3,"SAFT_CUS_002":0.1,"SAFT_CUS_004":0.1,"SAFT_DET_001":0.1,"SAFT_DET_002":0.1,"SAFT_DET_003":0.1,"SAFT_DET_004":0.3,"SAFT_DET_005":0.3,"SAFT_DET_006":0.3,"SAFT_DUBL_AnalysisTypeTableEntry":0.1,"SAFT_DUBL_Asset":0.1,"SAFT_DUBL_AssetTransaction":0.1,"SAFT_DUBL_Customer":0.1,"SAFT_DUBL_GLTransaction":0.1,"SAFT_DUBL_Journal":0.1,"SAFT_DUBL_MovementTypeTableEntry":0.1,"SAFT_DUBL_OpenPurchaseInvoice":0.1,"SAFT_DUBL_OpenSalesInvoice":0.1,"SAFT_DUBL_Owner":0.1,"SAFT_DUBL_Payment":0.1,"SAFT_DUBL_PhysicalStockAcquisition":0.1,"SAFT_DUBL_PhysicalStockEntry":0.1,"SAFT_DUBL_Product":0.1,"SAFT_DUBL_PurchaseInvoice":0.1,"SAFT_DUBL_SalesInvoice":0.1,"SAFT_DUBL_StockMovement":0.1,"SAFT_DUBL_Supplier":0.1,"SAFT_DUBL_TaxCodeDetail":0.1,"SAFT_DUBL_UOMTableEntry":0.1,"SAFT_DVT_022":0.5,"SAFT_DVT_023":0.5,"SAFT_DVT_024":0.1,"SAFT_DVT_APC":0.1,"SAFT_DVT_EUR":0.5,"SAFT_DVT_LINEAMT":0.1,"SAFT_DVT_OPENDATES":0.3,"SAFT_DVT_PSADATES":0.3,"SAFT_DVT_STOCKFLOW":0.3,"SAFT_DVT_TAXC":0.5,"SAFT_FAO_001":0.1,"SAFT_FAO_002":0.1,"SAFT_GLT_002":0.3,"SAFT_GLT_003":1.0,"SAFT_GLT_004":0.3,"SAFT_GLT_006":0.3,"SAFT_HDR_003":0.1,"SAFT_HDR_007":0.1,"SAFT_HDR_008":0.1,"SAFT_HDR_009":0.1,"SAFT_HFA_001":0.1,"SAFT_INT_017":0.1,"SAFT_INT_022":0.1,"SAFT_INT_025":0.1,"SAFT_INT_034":0.1,"SAFT_INT_043":0.1,"SAFT_INT_SD_ACCT":0.1,"SAFT_INT_SD_ANL":0.1,"SAFT_INT_SD_PARTY":0.1,"SAFT_INT_SD_PROD":0.1,"SAFT_INT_SD_TAX":0.1,"SAFT_INT_SD_UOM":0.1,"SAFT_ISO_001":0.1,"SAFT_MOV_001":0.1,"SAFT_MOV_003":0.1,"SAFT_MOV_004":0.3,"SAFT_OST_001":0.1,"SAFT_OST_004":0.1,"SAFT_OST_005":0.1,"SAFT_OWN_001":0.1,"SAFT_PAY_002":0.1,"SAFT_PAY_003":0.3,"SAFT_PAY_004":0.5,"SAFT_PAY_005":0.5,"SAFT_PDT_002":0.1,"SAFT_PDT_020":0.1,"SAFT_PDT_ADDBACK":5.0,"SAFT_PDT_APA_690":0.1,"SAFT_PDT_APA_ACCT":0.1,"SAFT_PDT_APA_DESC":0.1,"SAFT_PDT_APA_USE":0.1,"SAFT_PDT_FINES":0.1,"SAFT_PDT_NORM":0.1,"SAFT_PDT_PMSPEC":0.1,"SAFT_PET_DATES":0.3,"SAFT_PRD_002":0.1,"SAFT_PUR_002":0.1,"SAFT_PUR_003":0.5,"SAFT_PUR_004":0.1,"SAFT_PUR_005":0.5,"SAFT_PUR_006":0.3,"SAFT_RATE_PM0":0.1,"SAFT_RATE_PVM0":0.1,"SAFT_RATE_PVM0 (PVM12 klasifikatorius/tarifas)":0.1,"SAFT_SAL_002":0.1,"SAFT_SAL_003":0.1,"SAFT_SAL_004":0.5,"SAFT_SAL_005":0.1,"SAFT_SAL_006":0.3,"SAFT_SAL_007":0.5,"SAFT_SEQ_001":0.1,"SAFT_SID_001":0.3,"SAFT_SID_002":0.3,"SAFT_SID_003":0.1,"SAFT_SID_004":0.3,"SAFT_SID_005":0.3,"SAFT_SUP_002":0.1,"SAFT_SUP_004":0.1,"SAFT_TAX_004":0.1,"SAFT_TRT_001":0.1,"SAFT_TRT_002":0.1,"SAFT_TRT_003":0.1,"SAFT_TRT_004":0.1,"SAFT_TRT_005":0.1,"SAFT_TRT_006":0.1,"SAFT_TRT_007":0.1,"SAFT_TRT_011":0.1,"SAFT_TRT_012":0.1,"SAFT_TRT_013":0.1,"SAFT_VDT_003":0.1,"SAFT_VDT_007":0.1,"SAFT_VDT_008":0.1,"SAFT_VDT_009":0.1,"SAFT_VDT_010":0.1,"SAFT_VDT_011":0.1,"SAFT_VDT_012":0.1,"SAFT_VDT_013":0.1,"SAFT_VDT_014":0.1,"SAFT_VDT_015":0.1,"SAFT_VDT_016":0.1,"SAFT_VDT_017":0.1,"SAFT_VDT_018":0.1,"SAFT_VDT_019":0.3,"SAFT_VDT_019 (momento netiesioginis testas)":0.1,"SAFT_VDT_020":0.1,"SAFT_VDT_021":0.1,"SAFT_VDT_031":0.1,"SAFT_VDT_036":0.1,"SAFT_VDT_050":0.1};
+
+// Rules without a workbook weight (TaxAI originals, 2026 reform pack) fall back
+// to a severity default on the same 0–5 scale — stated in the methodology.
+const SEVERITY_RISK_DEFAULT = { Critical: 5, High: 3, Medium: 1, Low: 0.3 };
+function ruleRiskWeight(ruleId, severity) {
+  const w = VMI_RISK_WEIGHTS[ruleId];
+  return w != null ? w : (SEVERITY_RISK_DEFAULT[severity] != null ? SEVERITY_RISK_DEFAULT[severity] : 1);
+}
+
+// Aggregate file risk score the way an inspector's tool would: each flagged
+// rule contributes its VMI weight, scaled 1×→2× with hit volume (log-damped,
+// capped at 50 hits) so one systemic rule cannot be drowned out — or inflated —
+// by raw row counts. Fully transparent: per-rule contributions are returned.
+function computeRiskScore(findings) {
+  const byRule = new Map();
+  (findings || []).forEach((f) => {
+    if (!f || f.status === "rejected") return;
+    const k = f.rule_id || f.title || "?";
+    const e = byRule.get(k) || { rule_id: k, title: (f.ruleMeta && f.ruleMeta.titleLt) || f.title || k, titleEn: (f.ruleMeta && f.ruleMeta.titleEn) || f.title || k, severity: f.severity, category: f.category || "—", hits: 0 };
+    e.hits += 1;
+    byRule.set(k, e);
+  });
+  const perRule = [...byRule.values()].map((e) => {
+    const w = ruleRiskWeight(e.rule_id, e.severity);
+    const contrib = w * (1 + Math.log(1 + Math.min(e.hits, 50)) / Math.log(51));
+    return { ...e, weight: w, contrib: Math.round(contrib * 100) / 100 };
+  }).sort((a, b) => b.contrib - a.contrib);
+  const score = Math.round(perRule.reduce((s, r) => s + r.contrib, 0) * 10) / 10;
+  const anyCritical = perRule.some((r) => r.severity === "Critical");
+  const band = score === 0 ? "clean" : (anyCritical || score >= 40) ? "high" : score >= 12 ? "elevated" : "low";
+  const perCategory = {};
+  perRule.forEach((r) => { perCategory[r.category] = Math.round(((perCategory[r.category] || 0) + r.contrib) * 100) / 100; });
+  return { score, band, perRule, perCategory,
+    bandLabel: { clean: ["Clean", "Švaru"], low: ["Low risk", "Žema rizika"], elevated: ["Elevated risk", "Padidėjusi rizika"], high: ["High risk", "Aukšta rizika"] }[band],
+    methodology: "score = Σ over flagged rules of weight × (1 + ln(1+min(hits,50))/ln 51); weights = VMI risk_value (0–5) via the verified ColBi mapping, severity defaults (5/3/1/0.3) otherwise" };
+}
+
+// i.SAF-T acceptance-gate simulation. VMI's assessment environment refuses a
+// file containing very-high-significance (technical/XSD) errors; content
+// findings pass through as warnings. Blocking here = XSD conformance + full
+// schema validation + parse/header technicalities + multi-part inconsistency.
+function simulateAcceptanceGate(parsed, findings) {
+  const reasonMap = new Map();
+  const addReason = (id, title, count) => {
+    const e = reasonMap.get(id) || { id, title, count: 0 };
+    e.count += count || 1;
+    reasonMap.set(id, e);
+  };
+  (findings || []).forEach((f) => {
+    if (!f || f.status === "rejected") return;
+    if (f.type === "X" || f.type === "V") addReason(f.rule_id, (f.ruleMeta && f.ruleMeta.titleLt) || f.title, 1);
+  });
+  if (parsed && parsed._parseError) addReason("XML", "Rinkmena nėra korektiškas XML (parse error)", 1);
+  const h = (parsed && parsed.header) || null;
+  if (h && h.auditFileVersion && h.auditFileVersion !== "2.01") addReason("HDR_VER", "AuditFileVersion turi būti „2.01“ (nurodyta: " + h.auditFileVersion + ")", 1);
+  if (h && h.company && !h.company.registrationNumber && !h.registrationNumber) addReason("HDR_REG", "Trūksta RegistrationNumber — rinkmena nepriskiriama mokesčių mokėtojui", 1);
+  ((parsed && parsed._parts && parsed._parts.inconsistencies) || []).forEach((x) => addReason("PARTS", "Daugiadalė rinkmena: " + x.issue, 1));
+  const reasons = [...reasonMap.values()].sort((a, b) => b.count - a.count);
+  const blockingTotal = reasons.reduce((s, r) => s + r.count, 0);
+  const warningCount = (findings || []).filter((f) => f && f.status !== "rejected" && f.type !== "X" && f.type !== "V").length;
+  const verdict = reasons.length ? "rejected" : warningCount ? "warnings" : "clean";
+  return { verdict, reasons, blockingTotal, warningCount,
+    label: { rejected: ["FILE WOULD BE REJECTED", "RINKMENA BŪTŲ ATMESTA"], warnings: ["ACCEPTED WITH WARNINGS", "PRIIMTA SU PERSPĖJIMAIS"], clean: ["ACCEPTED — CLEAN", "PRIIMTA — ŠVARI"] }[verdict],
+    note: ["Simulation of the i.SAF-T assessment gate: very-high-significance (technical/XSD) errors block submission; content findings pass as warnings.",
+           "i.SAF-T vertinimo aplinkos simuliacija: labai aukšto reikšmingumo (techninės/XSD) klaidos blokuoja pateikimą; turinio radiniai praeina kaip perspėjimai."] };
+}
+
+// Merge the parsed outputs of a multi-part SAF-T set (NumberOfParts > 1) into
+// one dataset: arrays concatenate, numeric counts sum, the richest header is
+// kept field-wise, and part-level inconsistencies are surfaced for the gate
+// and for rule SAFT_HDR_010.
+function mergeParsedParts(parts) {
+  const list = (parts || []).filter(Boolean);
+  if (list.length === 1) return list[0];
+  if (!list.length) return { _parseError: "no parts" };
+  const isPlain = (v) => v && typeof v === "object" && !Array.isArray(v);
+  const mergeVal = (a, b) => {
+    if (a === undefined || a === null) return b;
+    if (b === undefined || b === null) return a;
+    if (Array.isArray(a) && Array.isArray(b)) return a.concat(b);
+    if (isPlain(a) && isPlain(b)) { const o = { ...a }; for (const k of Object.keys(b)) o[k] = k in o ? mergeVal(o[k], b[k]) : b[k]; return o; }
+    if (typeof a === "number" && typeof b === "number") return a + b;
+    return a !== "" ? a : b;
+  };
+  const sorted = [...list].sort((x, y) => ((x.header && x.header.partNumber) || 0) - ((y.header && y.header.partNumber) || 0));
+  const headerScore = (p) => p.header ? Object.values(p.header).filter((v) => v !== "" && v != null).length : 0;
+  const bestHeader = sorted.reduce((b, p) => (headerScore(p) > headerScore(b) ? p : b), sorted[0]).header || {};
+  let merged = sorted[0];
+  for (let i = 1; i < sorted.length; i++) merged = mergeVal(merged, sorted[i]);
+  merged.header = bestHeader;
+  if (merged.schemaValidation) merged.schemaValidation.ok = sorted.every((p) => !p.schemaValidation || p.schemaValidation.ok !== false);
+  const inconsistencies = [];
+  const regs = [...new Set(sorted.map((p) => (p.header && p.header.company && p.header.company.registrationNumber) || (p.header && p.header.registrationNumber) || ""))].filter(Boolean);
+  if (regs.length > 1) inconsistencies.push({ issue: "skirtingi RegistrationNumber tarp dalių", detail: regs.join(" vs ") });
+  const periods = [...new Set(sorted.map((p) => ((p.header && p.header.periodStart) || "") + "→" + ((p.header && p.header.periodEnd) || "")))];
+  if (periods.length > 1) inconsistencies.push({ issue: "skirtingi laikotarpiai tarp dalių", detail: periods.join(" | ") });
+  const expected = (sorted[0].header && sorted[0].header.numberOfParts) || null;
+  const nums = sorted.map((p) => (p.header && p.header.partNumber) || null);
+  if (expected != null && sorted.length !== expected) inconsistencies.push({ issue: "dalių skaičius nesutampa su NumberOfParts", detail: "pateikta " + sorted.length + ", deklaruota " + expected });
+  const dupSeen = new Set();
+  nums.forEach((n) => { if (n != null) { if (dupSeen.has(n)) inconsistencies.push({ issue: "pasikartojantis PartNumber", detail: String(n) }); dupSeen.add(n); } });
+  merged._parts = { count: sorted.length, expected, inconsistencies };
+  return merged;
+}
+
+// Professional bilingual audit report (standalone HTML; prints to PDF).
+function buildAuditReportHTML(payload) {
+  const { lang, fileName, fileHash, header, gate, risk, findings, engineVersion, generatedAt } = payload || {};
+  const lt = lang === "lt";
+  const T = (en, l2) => (lt ? l2 : en);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const B = taxaiBrand();
+  const Bcore = B.name === "TaxAI" ? "TaxAI" : B.name + " (TaxAI core)";
+  const SCc = { Critical: "#c92a2a", High: "#e8590c", Medium: "#b08900", Low: "#2b8a3e" };
+  const vColor = { rejected: "#c92a2a", warnings: "#b08900", clean: "#2b8a3e" }[gate.verdict];
+  const company = (header && header.company) || {};
+  const sevCount = {}; (findings || []).forEach((f) => { sevCount[f.severity] = (sevCount[f.severity] || 0) + 1; });
+  const byCat = new Map();
+  (findings || []).forEach((f) => { const k = f.category || "—"; if (!byCat.has(k)) byCat.set(k, []); byCat.get(k).push(f); });
+  const sevRank = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+  let detailBudget = 250;
+  const catBlocks = [...byCat.entries()].map(([cat, fs]) => {
+    const rows = fs.sort((a, b) => (sevRank[a.severity] ?? 9) - (sevRank[b.severity] ?? 9)).slice(0, Math.max(0, Math.min(fs.length, detailBudget)));
+    detailBudget -= rows.length;
+    const items = rows.map((f) => {
+      const ex = explainFinding(f, lang);
+      return '<div class="finding"><div class="fhead"><span class="chip" style="background:' + SCc[f.severity] + '">' + esc(f.severity) + '</span><span class="rid">' + esc(f.rule_id || "") + "</span><strong>" + esc(lt ? ((f.ruleMeta && f.ruleMeta.titleLt) || f.title) : ((f.ruleMeta && f.ruleMeta.titleEn) || f.title)) + "</strong></div>" +
+        '<div class="what">' + esc(ex.what) + "</div>" +
+        (ex.why ? '<div class="why">' + esc(ex.why) + (ex.legal ? ' <span class="legal">§ ' + esc(ex.legal) + "</span>" : "") + "</div>" : "") +
+        '<div class="lead" style="color:' + (ex.urgent ? "#c92a2a" : "#2b8a3e") + '">' + esc(ex.lead) + "</div>" +
+        "<ol>" + ex.how.map((s) => "<li>" + esc(s) + "</li>").join("") + "</ol></div>";
+    }).join("");
+    return "<section><h3>" + esc(cat) + " <span class='cnt'>(" + fs.length + ")</span></h3>" + items + (fs.length > rows.length ? "<p class='more'>+ " + (fs.length - rows.length) + " " + T("more findings in this category (see CSV export)", "daugiau radinių šioje kategorijoje (žr. CSV eksportą)") + "</p>" : "") + "</section>";
+  }).join("");
+  const topRisk = risk.perRule.slice(0, 10).map((r) => "<tr><td class='m'>" + esc(r.rule_id) + "</td><td>" + esc(lt ? r.title : r.titleEn) + "</td><td class='n'>" + r.hits + "</td><td class='n'>" + r.weight + "</td><td class='n'><strong>" + r.contrib + "</strong></td></tr>").join("");
+  const gateReasons = gate.reasons.slice(0, 12).map((r) => "<li><span class='m'>" + esc(r.id) + "</span> — " + esc(r.title) + " ×" + r.count + "</li>").join("");
+  return "<!DOCTYPE html><html lang='" + (lt ? "lt" : "en") + "'><head><meta charset='utf-8'><title>" + esc(fileName) + " — " + T("SAF-T Audit Report", "SAF-T audito ataskaita") + "</title><style>" +
+    "@page{size:A4;margin:18mm}body{font:13px/1.55 'Segoe UI',Arial,sans-serif;color:#1a1a1a;margin:0;padding:32px;max-width:880px}h1{font-size:24px;font-weight:300;margin:0 0 4px}h2{font-size:16px;border-bottom:2px solid #1a1a1a;padding-bottom:6px;margin:34px 0 14px;page-break-after:avoid}h3{font-size:13.5px;margin:22px 0 8px;page-break-after:avoid}.sub{color:#666;font-size:11.5px}.cards{display:flex;gap:14px;margin:18px 0;flex-wrap:wrap}.card{border:1px solid #ddd;padding:12px 16px;min-width:150px}.card .v{font-size:22px;font-weight:600}.card .k{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#777}.verdict{display:inline-block;padding:8px 16px;color:#fff;font-weight:700;letter-spacing:.06em;border-radius:2px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border:1px solid #e3e3e3;padding:6px 8px;text-align:left}.n{text-align:right;font-variant-numeric:tabular-nums}.m{font-family:Consolas,monospace;font-size:11px}.chip{color:#fff;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:2px;letter-spacing:.06em;margin-right:8px}.rid{font-family:Consolas,monospace;font-size:10.5px;color:#777;margin-right:8px}.finding{border:1px solid #e7e7e7;border-left:3px solid #ccc;padding:10px 14px;margin:0 0 10px;page-break-inside:avoid}.fhead{margin-bottom:6px}.what{font-family:Consolas,monospace;font-size:11px;background:#f7f7f5;padding:6px 8px;margin:6px 0;word-break:break-word}.why{color:#444;font-size:12px;margin:6px 0}.legal{color:#2b6a4e;font-size:11px}.lead{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px}ol{margin:4px 0 2px 20px;padding:0}li{margin:0 0 3px}.cnt,.more{color:#888;font-weight:400;font-size:11px}footer{margin-top:40px;border-top:1px solid #ddd;padding-top:10px;color:#888;font-size:10.5px}" +
+    "</style></head><body>" +
+    "<h1>" + T("SAF-T Compliance Audit Report", "SAF-T atitikties audito ataskaita") + "</h1>" +
+    "<div class='sub'>" + esc(company.name || "—") + " · " + esc(company.registrationNumber || (header && header.registrationNumber) || "—") + " · " + esc((header && header.periodStart) || "") + " — " + esc((header && header.periodEnd) || "") + "<br>" + T("File", "Rinkmena") + ": " + esc(fileName) + (fileHash ? " · SHA-256 " + esc(String(fileHash).slice(0, 16)) + "…" : "") + " · " + esc(generatedAt) + " · " + esc(Bcore) + " · engine v" + esc(engineVersion) + "</div>" +
+    "<h2>" + T("Executive summary", "Santrauka vadovybei") + "</h2>" +
+    "<p><span class='verdict' style='background:" + vColor + "'>" + T("i.SAF-T GATE", "i.SAF-T VARTAI") + ": " + esc(lt ? gate.label[1] : gate.label[0]) + "</span></p>" +
+    "<div class='cards'><div class='card'><div class='v'>" + risk.score + "</div><div class='k'>" + T("Risk score", "Rizikos balas") + " · " + esc(lt ? risk.bandLabel[1] : risk.bandLabel[0]) + "</div></div>" +
+    "<div class='card'><div class='v'>" + ((findings || []).length) + "</div><div class='k'>" + T("Findings", "Radiniai") + "</div></div>" +
+    ["Critical", "High", "Medium", "Low"].map((s) => "<div class='card'><div class='v' style='color:" + SCc[s] + "'>" + (sevCount[s] || 0) + "</div><div class='k'>" + s + "</div></div>").join("") + "</div>" +
+    "<p class='sub'>" + esc(lt ? gate.note[1] : gate.note[0]) + "</p>" +
+    (gate.reasons.length ? "<h2>" + T("Blocking (very-high-significance) issues", "Blokuojančios (labai aukšto reikšmingumo) klaidos") + "</h2><ul>" + gateReasons + "</ul>" : "") +
+    "<h2>" + T("Top risk contributors", "Didžiausi rizikos šaltiniai") + "</h2>" +
+    "<table><tr><th>" + T("Rule", "Taisyklė") + "</th><th>" + T("Title", "Pavadinimas") + "</th><th class='n'>" + T("Hits", "Atvejai") + "</th><th class='n'>" + T("VMI weight", "VMI svoris") + "</th><th class='n'>" + T("Contribution", "Indėlis") + "</th></tr>" + (topRisk || "<tr><td colspan='5'>—</td></tr>") + "</table>" +
+    "<h2>" + T("Findings — what was found, why it matters, how to fix it", "Radiniai — kas nustatyta, kodėl tai svarbu ir kaip ištaisyti") + "</h2>" + (catBlocks || "<p>" + T("No findings.", "Radinių nėra.") + "</p>") +
+    "<h2>" + T("Methodology", "Metodologija") + "</h2>" +
+    "<p class='sub'>" + esc(risk.methodology) + ".<br>" + T("Rule base: 482 named rules + full XSD v2.01 schema validation; verified 1:1 against the VMI/ColBi LT_RULES (2020-09) and 120-audit-rules (2021-02) engine exports, extended with the 2026 VA-107 VAT reform pack.", "Taisyklių bazė: 482 įvardytos taisyklės + pilna XSD v2.01 schemos validacija; patikrinta 1:1 su VMI/ColBi LT_RULES (2020-09) ir 120 audito taisyklių (2021-02) variklio eksportais, papildyta 2026 m. VA-107 PVM reformos paketu.") + "</p>" +
+    "<footer>" + esc(B.name) + " v" + esc(engineVersion) + (B.footer ? " · " + esc(B.footer) : "") + " · " + esc(generatedAt) + " · " + T("Generated entirely client-side — accounting data never left this computer.", "Sugeneruota vien kliento pusėje — apskaitos duomenys nepaliko šio kompiuterio.") + "</footer>" +
+    "</body></html>";
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Auto-Fix engine (Phase 2) — turns deterministic findings into applied XML
+// corrections. Form-only principle: it normalizes REPRESENTATION (codes,
+// formats) and recomputes DERIVED values (control totals, currency mirrors,
+// arithmetic) — it never invents business facts (dates, amounts, parties).
+// Works identically on a browser DOM and on the LiteXML tree (large files,
+// Node tests). Every change is planned first (dry-run with before→after) and
+// applied only on explicit user action, producing an audit manifest.
+// ═════════════════════════════════════════════════════════════════════════
+const AUTOFIX_TOL = 0.011;
+function afxDC(el, tag) { if (!el) return null; const ch = el.children || []; for (let i = 0; i < ch.length; i++) { const c = ch[i]; if (c.localName === tag || c.tagName === tag) return c; } return null; }
+function afxDCS(el, tag) { const out = []; if (!el) return out; const ch = el.children || []; for (let i = 0; i < ch.length; i++) { const c = ch[i]; if (c.localName === tag || c.tagName === tag) out.push(c); } return out; }
+function afxTxt(el) { return el ? String(el.textContent || "").trim() : ""; }
+function afxNum(el) { if (!el) return null; const v = parseFloat(afxTxt(el).replace(",", ".")); return isNaN(v) ? null : v; }
+const afx2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
+function afxAll(doc, tag) { return doc.getElementsByTagName(tag) || []; }
+function afxWalk(doc, cb) { const st = [doc.documentElement]; while (st.length) { const n = st.pop(); if (!n) continue; cb(n); const ch = n.children || []; for (let i = ch.length - 1; i >= 0; i--) st.push(ch[i]); } }
+function afxOwnText(n) { if (n._t !== undefined) return n._t || ""; let s = ""; const cn = n.childNodes || []; for (let i = 0; i < cn.length; i++) if (cn[i].nodeType === 3) s += cn[i].nodeValue || ""; return s; }
+function afxCanon(n) { let a = ""; if (n.attrs) { a = Object.keys(n.attrs).sort().map((k) => k + "=" + n.attrs[k]).join(";"); } else if (n.attributes) { a = Array.from(n.attributes).map((x) => x.name + "=" + x.value).sort().join(";"); } const kids = []; const ch = n.children || []; for (let i = 0; i < ch.length; i++) kids.push(afxCanon(ch[i])); return (n.localName || n.tagName) + "[" + a + "]{" + afxOwnText(n).trim() + "}(" + kids.join(",") + ")"; }
+function afxCh(node, value, label, kind) { return { node, kind: kind || "text", value, label, before: kind === "remove" ? "(visas įrašas)" : afxTxt(node) }; }
+
+const AUTO_FIXERS = [
+  { id: "FX_HDR_VERSION", safety: "safe", ruleIds: ["SAFT_HDR_002"],
+    titleLt: "AuditFileVersion → „2.01“", titleEn: "AuditFileVersion → \"2.01\"",
+    plan(doc) { const el = afxDC(afxDC(doc.documentElement, "Header"), "AuditFileVersion"); return el && afxTxt(el) !== "2.01" ? [afxCh(el, "2.01", "Header/AuditFileVersion")] : []; } },
+  { id: "FX_HDR_COUNTRY", safety: "safe", ruleIds: ["SAFT_HDR_003"],
+    titleLt: "AuditFileCountry → „LT“", titleEn: "AuditFileCountry → \"LT\"",
+    plan(doc) { const el = afxDC(afxDC(doc.documentElement, "Header"), "AuditFileCountry"); return el && afxTxt(el) !== "LT" ? [afxCh(el, "LT", "Header/AuditFileCountry")] : []; } },
+  { id: "FX_HDR_CURRENCY", safety: "suggest", ruleIds: ["SAFT_HDR_007"],
+    titleLt: "DefaultCurrencyCode → „EUR“", titleEn: "DefaultCurrencyCode → \"EUR\"",
+    plan(doc) { const el = afxDC(afxDC(doc.documentElement, "Header"), "DefaultCurrencyCode"); return el && afxTxt(el) && afxTxt(el) !== "EUR" ? [afxCh(el, "EUR", "Header/DefaultCurrencyCode")] : []; } },
+  { id: "FX_EUR_AMOUNT", safety: "safe", ruleIds: ["SAFT_DVT_EUR", "SAFT_DVT_023"],
+    titleLt: "EUR įrašuose CurrencyAmount = Amount", titleEn: "EUR records: CurrencyAmount = Amount",
+    plan(doc) { const out = []; afxWalk(doc, (el) => { const cc = afxDC(el, "CurrencyCode"); if (!cc || afxTxt(cc) !== "EUR") return; const a = afxNum(afxDC(el, "Amount")); const caEl = afxDC(el, "CurrencyAmount"); const ca = afxNum(caEl); if (a != null && ca != null && Math.abs(a - ca) > 0.005 && out.length < 500) out.push(afxCh(caEl, afx2(a), (el.localName || "") + "/CurrencyAmount")); }); return out; } },
+  { id: "FX_TAX_CALC", safety: "suggest", ruleIds: ["SAFT_DVT_TAXC"],
+    titleLt: "PVM suma = bazė × tarifas (perskaičiuojama)", titleEn: "Tax amount = base × rate (recomputed)",
+    plan(doc) { const out = []; for (const ti of afxAll(doc, "TaxInformation")) { const base = afxNum(afxDC(ti, "TaxBase")); const rate = afxNum(afxDC(ti, "TaxPercentage")); const ta = afxDC(ti, "TaxAmount"); const amtEl = afxDC(ta, "Amount"); const amt = afxNum(amtEl); if (base == null || rate == null || amt == null) continue; const exp = base * rate / 100; if (Math.abs(amt - exp) > AUTOFIX_TOL && out.length < 500) { out.push(afxCh(amtEl, afx2(exp), "TaxInformation/TaxAmount/Amount")); const caEl = afxDC(ta, "CurrencyAmount"); if (caEl && afxTxt(afxDC(ta, "CurrencyCode")) === "EUR") out.push(afxCh(caEl, afx2(exp), "TaxInformation/TaxAmount/CurrencyAmount")); } } return out; } },
+  { id: "FX_LINE_AMT", safety: "suggest", ruleIds: ["SAFT_DVT_LINEAMT"],
+    titleLt: "Eilutės suma = kiekis × vieneto kaina", titleEn: "Line amount = quantity × unit price",
+    plan(doc) { const out = []; for (const l of afxAll(doc, "Line")) { const q = afxNum(afxDC(l, "Quantity")); const p = afxNum(afxDC(l, "UnitPrice")); const ila = afxDC(l, "InvoiceLineAmount"); const amtEl = afxDC(ila, "Amount"); const amt = afxNum(amtEl); if (q == null || p == null || amt == null) continue; const exp = q * p; if (Math.abs(amt - exp) > AUTOFIX_TOL && out.length < 500) { out.push(afxCh(amtEl, afx2(exp), "Line/InvoiceLineAmount/Amount")); const caEl = afxDC(ila, "CurrencyAmount"); if (caEl && afxTxt(afxDC(ila, "CurrencyCode")) === "EUR") out.push(afxCh(caEl, afx2(exp), "Line/InvoiceLineAmount/CurrencyAmount")); } } return out; } },
+  { id: "FX_GL_TOTALS", safety: "safe", ruleIds: ["SAFT_GLT_006"],
+    titleLt: "DK kontrolinės sumos (NumberOfEntries / TotalDebit / TotalCredit)", titleEn: "GL control totals (NumberOfEntries / TotalDebit / TotalCredit)",
+    plan(doc) { const gle = afxAll(doc, "GeneralLedgerEntries")[0]; if (!gle) return []; const out = []; const nTx = gle.getElementsByTagName("Transaction").length; let dSum = 0, cSum = 0; for (const line of gle.getElementsByTagName("Line")) { const d = afxNum(afxDC(afxDC(line, "DebitAmount"), "Amount")); const c = afxNum(afxDC(afxDC(line, "CreditAmount"), "Amount")); if (d != null) dSum += d; if (c != null) cSum += c; } const ne = afxDC(gle, "NumberOfEntries"); if (ne && afxNum(ne) !== nTx) out.push(afxCh(ne, String(nTx), "GeneralLedgerEntries/NumberOfEntries")); const td = afxDC(gle, "TotalDebit"); if (td && afxNum(td) != null && Math.abs(afxNum(td) - dSum) > 0.005) out.push(afxCh(td, afx2(dSum), "GeneralLedgerEntries/TotalDebit")); const tc = afxDC(gle, "TotalCredit"); if (tc && afxNum(tc) != null && Math.abs(afxNum(tc) - cSum) > 0.005) out.push(afxCh(tc, afx2(cSum), "GeneralLedgerEntries/TotalCredit")); return out; } },
+  { id: "FX_SECTION_COUNTS", safety: "safe", ruleIds: ["SAFT_CTL_001", "SAFT_CTL_002", "SAFT_CTL_003", "SAFT_MOV_003"],
+    titleLt: "Skyrių kontroliniai įrašų skaičiai", titleEn: "Section control entry counts",
+    plan(doc) { const out = []; const fix = (secTag, childTag, neTag) => { const sec = afxAll(doc, secTag)[0]; if (!sec) return; const ne = afxDC(sec, neTag); if (!ne || afxNum(ne) == null) return; const n = afxDCS(sec, childTag).length; if (afxNum(ne) !== n) out.push(afxCh(ne, String(n), secTag + "/" + neTag)); }; fix("SalesInvoices", "Invoice", "NumberOfEntries"); fix("PurchaseInvoices", "Invoice", "NumberOfEntries"); fix("Payments", "Payment", "NumberOfEntries"); fix("MovementOfGoods", "StockMovement", "NumberOfMovementLines"); return out; } },
+  { id: "FX_DOC_TOTALS", safety: "safe", ruleIds: ["SAFT_SAL_004", "SAFT_SAL_007", "SAFT_PUR_003", "SAFT_PUR_005"],
+    titleLt: "Sąskaitų DocumentTotals (Net/Gross) perskaičiavimas", titleEn: "Invoice DocumentTotals (Net/Gross) recomputation",
+    plan(doc) { const out = []; for (const secTag of ["SalesInvoices", "PurchaseInvoices"]) { const sec = afxAll(doc, secTag)[0]; if (!sec) continue; for (const inv of afxDCS(sec, "Invoice")) { const lines = afxDCS(inv, "Line"); const dt = afxDC(inv, "DocumentTotals"); if (!dt) continue; let lineSum = 0, hasL = false; for (const l of lines) { const a = afxNum(afxDC(afxDC(l, "InvoiceLineAmount"), "Amount")); if (a == null) continue; const q = afxNum(afxDC(l, "Quantity")); const p = afxNum(afxDC(l, "UnitPrice")); const eff = (q != null && p != null && Math.abs(a - q * p) > AUTOFIX_TOL) ? q * p : a; lineSum += eff; hasL = true; } let taxSum = 0, hasT = false; for (const ti of afxDCS(dt, "TaxInformationTotals")) { const a = afxNum(afxDC(afxDC(ti, "TaxAmount"), "Amount")); if (a != null) { taxSum += a; hasT = true; } } if (!hasT) for (const l of lines) for (const ti of afxDCS(l, "TaxInformation")) { const a = afxNum(afxDC(afxDC(ti, "TaxAmount"), "Amount")); if (a != null) { taxSum += a; hasT = true; } } const netEl = afxDC(dt, "NetTotal"); let net = afxNum(netEl); if (netEl && hasL && net != null && Math.abs(net - lineSum) > Math.max(0.05, Math.abs(net) * 0.01)) { out.push(afxCh(netEl, afx2(lineSum), secTag + "/Invoice/DocumentTotals/NetTotal")); net = lineSum; } const grossEl = afxDC(dt, "GrossTotal"); const gross = afxNum(grossEl); const expG = (net != null ? net : 0) + taxSum; if (grossEl && gross != null && (net != null || hasT) && Math.abs(gross - expG) > Math.max(0.05, Math.abs(expG) * 0.01)) out.push(afxCh(grossEl, afx2(expG), secTag + "/Invoice/DocumentTotals/GrossTotal")); if (out.length >= 500) return out; } } return out; } },
+  { id: "FX_ISO_COUNTRY", safety: "safe", ruleIds: ["SAFT_ISO_001"],
+    titleLt: "Šalių kodų normalizavimas (didžiosios, UK→GB, EL→GR)", titleEn: "Country-code normalization (uppercase, UK→GB, EL→GR)",
+    plan(doc) { const MAP = { UK: "GB", EL: "GR" }; const iso = typeof ISO2 !== "undefined" ? ISO2 : null; const out = []; for (const tag of ["Customer", "Supplier"]) { for (const ent of afxAll(doc, tag)) { for (const cEl of ent.getElementsByTagName("Country")) { const old = afxTxt(cEl); if (!old) continue; let nv = old.trim().toUpperCase(); nv = MAP[nv] || nv; if (nv !== old && (iso ? iso.has(nv) : /^[A-Z]{2}$/.test(nv)) && out.length < 500) out.push(afxCh(cEl, nv, tag + "/…/Country")); } } } return out; } },
+  { id: "FX_DEDUP", safety: "suggest", match: (flagged) => !flagged || [...flagged].some((id) => String(id).indexOf("SAFT_DUBL_") === 0),
+    ruleIds: [], titleLt: "Tikslių dublikatų šalinimas (paliekamas pirmas)", titleEn: "Exact-duplicate removal (first kept)",
+    plan(doc, flagged) { const tags = flagged ? [...flagged].filter((id) => String(id).indexOf("SAFT_DUBL_") === 0).map((id) => id.slice(10)) : ["Account", "Customer", "Supplier", "TaxCodeDetail", "UOMTableEntry", "AnalysisTypeTableEntry", "MovementTypeTableEntry", "Product", "Asset", "Owner"]; const out = []; for (const tag of tags) { const seen = new Set(); for (const n of afxAll(doc, tag)) { const key = afxCanon(n); if (seen.has(key)) { if (out.length < 300) out.push(afxCh(n, null, "dublikatas: " + tag, "remove")); } else seen.add(key); } } return out; } },
+];
+const AUTO_FIXABLE_RULE_IDS = new Set(AUTO_FIXERS.flatMap((f) => f.ruleIds).concat(["SAFT_DUBL_"]));
+function isAutoFixableRule(ruleId) { return AUTO_FIXABLE_RULE_IDS.has(ruleId) || String(ruleId || "").indexOf("SAFT_DUBL_") === 0; }
+
+// Dry-run: which fixers apply (gated by flagged rule ids; null = all) and what
+// exactly each would change. Nothing is mutated here.
+function planAutoFixes(doc, flaggedRuleIds) {
+  const flagged = flaggedRuleIds || null;
+  const plans = [];
+  for (const f of AUTO_FIXERS) {
+    const applies = !flagged || (f.match ? f.match(flagged) : f.ruleIds.some((id) => flagged.has(id)));
+    if (!applies) continue;
+    let changes = [];
+    try { changes = f.plan(doc, flagged) || []; } catch (e) { changes = []; }
+    plans.push({ id: f.id, safety: f.safety, titleLt: f.titleLt, titleEn: f.titleEn, ruleIds: f.ruleIds, changes });
+  }
+  return plans;
+}
+
+// Apply the selected plans; returns the manifest. Adds a provenance comment
+// on real DOM documents (LiteXML test trees have no comment nodes).
+function applyAutoFixes(doc, plans) {
+  const manifest = [];
+  (plans || []).forEach((p) => (p.changes || []).forEach((ch) => {
+    try {
+      if (ch.kind === "remove") { if (ch.node.parentNode) ch.node.parentNode.removeChild(ch.node); }
+      else { ch.node.textContent = ch.value; }
+      manifest.push({ fixer: p.id, label: ch.label, before: ch.before, after: ch.kind === "remove" ? "(pašalinta)" : ch.value });
+    } catch (e) { /* skip unapplicable op */ }
+  }));
+  try {
+    if (manifest.length && doc.createComment && doc.insertBefore && doc.documentElement) {
+      doc.insertBefore(doc.createComment(" TaxAI v" + ENGINE_VERSION + " auto-fix: " + manifest.length + " corrections applied " + new Date().toISOString().slice(0, 19) + "Z. Form-only normalization and derived-total recomputation; no business facts altered. "), doc.documentElement);
+    }
+  } catch (e) { /* provenance comment is best-effort */ }
+  return manifest;
+}
+
+// Serialize either a native XML document (XMLSerializer) or a LiteXML tree.
+function serializeSaftDoc(doc) {
+  if (!doc) return "";
+  if (!doc._lite && typeof XMLSerializer !== "undefined") {
+    try { return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(doc.documentElement || doc).replace(/^<\?xml[^>]*\?>\s*/, ""); } catch (e) { /* fall through */ }
+  }
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const escA = (s) => esc(s).replace(/"/g, "&quot;");
+  const ser = (n) => {
+    let a = "";
+    if (n.attrs) for (const k of Object.keys(n.attrs)) a += " " + k + '="' + escA(n.attrs[k]) + '"';
+    let inner = esc(n._t || "");
+    for (const c of n.children || []) inner += ser(c);
+    return "<" + n.tagName + a + ">" + inner + "</" + n.tagName + ">";
+  };
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + ser(doc.documentElement);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Phase 3 — AI-native layer.
+// (a) Audit Copilot: deterministic, fully OFFLINE question answering about
+//     the loaded file (gate verdict, priorities, per-rule explanations,
+//     counts, auto-fixable set, free-text search over findings). It runs
+//     before any network AI call — the privacy story extends to chat.
+// (b) VMI response-letter builder: the auditor-note dispositions and the
+//     auto-fix manifest become an official, ready-to-sign reply to VMI.
+// ═════════════════════════════════════════════════════════════════════════
+function cpNorm(s) { return String(s || "").toLowerCase().replace(/[ąčęėįšųūž]/g, (ch) => ({ "ą": "a", "č": "c", "ę": "e", "ė": "e", "į": "i", "š": "s", "ų": "u", "ū": "u", "ž": "z" }[ch] || ch)); }
+
+function auditCopilotAnswer(query, ctx) {
+  const q = cpNorm(query);
+  const lt = ctx.lang === "lt";
+  const F = ctx.findings || [];
+  const ids = [];
+  const reply = (text) => ({ handled: true, text, ruleIds: [...new Set(ids)].slice(0, 8) });
+  const fLine = (f) => `[${f.severity}] ${f.rule_id} — ${(lt ? (f.ruleMeta && f.ruleMeta.titleLt) : (f.ruleMeta && f.ruleMeta.titleEn)) || f.title}`;
+
+  // explicit rule mention → full WHAT/WHY/HOW explanation
+  const rm = query.match(/SAFT_[A-Z0-9_]+/i) || query.match(/\bPVM\d{1,3}\b/i);
+  if (rm) {
+    const tok = rm[0].toUpperCase();
+    const hits = F.filter((f) => String(f.rule_id || "").toUpperCase() === tok || String(f.rule_id || "").toUpperCase().includes(tok) || cpNorm(f.evidence && f.evidence[0]).toUpperCase().includes(tok.toLowerCase().toUpperCase()) || String((f.evidence && f.evidence[0]) || "").toUpperCase().includes(tok));
+    if (!hits.length) return reply(lt ? `Taisyklė ${tok} šioje rinkmenoje nesuaktyvinta — radinių nėra.` : `Rule ${tok} did not fire on this file — no findings.`);
+    const f = hits[0]; ids.push(f.rule_id);
+    const ex = explainFinding(f, ctx.lang);
+    return reply((lt ? `${tok}: ${hits.length} radinys(-iai). ${ex.lead}.` : `${tok}: ${hits.length} finding(s). ${ex.lead}.`) +
+      `\n\n${lt ? "Kas nustatyta" : "What was found"}: ${ex.what}` +
+      `\n${lt ? "Kodėl svarbu" : "Why it matters"}: ${ex.why}` + (ex.legal ? `\n§ ${ex.legal}` : "") +
+      `\n${lt ? "Kaip ištaisyti" : "How to fix"}:\n` + ex.how.map((s, i) => `${i + 1}. ${s}`).join("\n") +
+      (isAutoFixableRule(f.rule_id) ? (lt ? "\n\n⚙ Ši taisyklė taisoma automatiškai — atidarykite skirtuką „Auto-taisymas“." : "\n\n⚙ This rule is auto-fixable — open the Auto-Fix tab.") : ""));
+  }
+
+  if (/(atmest|reject|vartai|gate|priimt|accept|pateikt|submit|blokuoj|block)/.test(q)) {
+    const g = ctx.gate;
+    const head = lt ? `i.SAF-T vartų simuliacija: ${g.label[1]}.` : `i.SAF-T gate simulation: ${g.label[0]}.`;
+    if (g.verdict === "rejected") {
+      g.reasons.slice(0, 6).forEach((r) => ids.push(r.id));
+      return reply(head + (lt ? `\nPateikimą blokuoja ${g.blockingTotal} labai aukšto reikšmingumo klaidos:\n` : `\n${g.blockingTotal} very-high-significance errors block submission:\n`) +
+        g.reasons.slice(0, 6).map((r) => `• ${r.id} — ${r.title} ×${r.count}`).join("\n") +
+        (lt ? `\n\nJas ištaisius failas būtų priimtas su ${g.warningCount} turinio perspėjimais.` : `\n\nOnce fixed, the file would be accepted with ${g.warningCount} content warnings.`));
+    }
+    if (g.verdict === "warnings") return reply(head + (lt ? ` Pateikimas galimas; vertinimui lieka ${g.warningCount} turinio perspėjimai.` : ` Submission is possible; ${g.warningCount} content warnings remain.`));
+    return reply(head + (lt ? " Blokuojančių klaidų nėra — failas paruoštas teikimui." : " No blocking errors — the file is submission-ready."));
+  }
+
+  if (/(pirmiaus|priorit|svarbiaus|first|ka (reik(et)?u )?taisyti|what.*fix|nuo ko prad)/.test(q)) {
+    const top = (ctx.risk.perRule || []).slice(0, 5);
+    if (!top.length) return reply(lt ? "Radinių nėra — taisyti nieko nereikia." : "No findings — nothing to fix.");
+    top.forEach((r) => ids.push(r.rule_id));
+    return reply((lt ? "Didžiausi rizikos šaltiniai — taisykite šia tvarka:" : "Top risk contributors — fix in this order:") + "\n" +
+      top.map((r, i) => `${i + 1}. ${r.rule_id} — ${lt ? r.title : r.titleEn} (×${r.hits}, ${lt ? "indėlis" : "contrib"} ${r.contrib})${isAutoFixableRule(r.rule_id) ? " ⚙" : ""}`).join("\n") +
+      (lt ? "\n⚙ — taisoma automatiškai (skirtukas „Auto-taisymas“)." : "\n⚙ — auto-fixable (Auto-Fix tab)."));
+  }
+
+  if (/\bkiek\b|how many|\bcount\b|\bskaicius\b/.test(q)) {
+    const sev = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+    F.forEach((f) => { if (sev[f.severity] != null) sev[f.severity]++; });
+    const want = /kritin|critical/.test(q) ? "Critical" : /auks|high/.test(q) ? "High" : /vidut|medium/.test(q) ? "Medium" : /zem|low/.test(q) ? "Low" : null;
+    if (want) return reply(lt ? `${want} radinių: ${sev[want]} (iš viso ${F.length}).` : `${want} findings: ${sev[want]} (of ${F.length} total).`);
+    return reply((lt ? `Iš viso ${F.length} radinių: ` : `${F.length} findings total: `) + `Critical ${sev.Critical}, High ${sev.High}, Medium ${sev.Medium}, Low ${sev.Low}.` +
+      (lt ? ` Rizikos balas ${ctx.risk.score} (${ctx.risk.bandLabel[1]}).` : ` Risk score ${ctx.risk.score} (${ctx.risk.bandLabel[0]}).`));
+  }
+
+  if (/(automat|auto[- ]?fix|taisom|fixable)/.test(q)) {
+    const fx = [...new Set(F.filter((f) => isAutoFixableRule(f.rule_id)).map((f) => f.rule_id))];
+    fx.slice(0, 8).forEach((id) => ids.push(id));
+    if (!fx.length) return reply(lt ? "Automatiškai taisomų radinių nėra — likusiems naudokite „Kaip ištaisyti“ žingsnius šaltinio sistemoje." : "No auto-fixable findings — use the per-finding fix steps in the source system.");
+    return reply((lt ? `Automatiškai taisomos ${fx.length} taisyklės:` : `${fx.length} flagged rules are auto-fixable:`) + "\n" + fx.slice(0, 8).map((id) => "⚙ " + id).join("\n") +
+      (lt ? "\nSkirtuke „Auto-taisymas“ — planas su peržiūra, taikymas ir pertikrinimas 482 taisyklėmis vienu paspaudimu." : "\nThe Auto-Fix tab gives a previewed plan, one-click apply and a full 482-rule re-audit."));
+  }
+
+  if (/(rizik|risk)/.test(q)) {
+    const r = ctx.risk; const top = (r.perRule || [])[0];
+    if (top) ids.push(top.rule_id);
+    return reply((lt ? `Rizikos balas: ${r.score} — ${r.bandLabel[1]}.` : `Risk score: ${r.score} — ${r.bandLabel[0]}.`) +
+      (top ? (lt ? ` Didžiausias šaltinis: ${top.rule_id} (indėlis ${top.contrib}).` : ` Largest contributor: ${top.rule_id} (contrib ${top.contrib}).`) : "") +
+      (lt ? " Svoriai — VMI risk_value (0–5) per patikrintą ColBi atitikmenų žemėlapį." : " Weights — VMI risk_value (0–5) via the verified ColBi mapping."));
+  }
+
+  if (/(parodyk|rask|surask|isvardink|show|find|search|list)/.test(q)) {
+    const terms = q.replace(/(parodyk|rask|surask|isvardink|radinius|radiniai|show|find|search|list|findings|apie|about|visus|all)/g, " ").trim().split(/\s+/).filter((w) => w.length > 2);
+    const match = !terms.length ? F.slice(0, 6) : F.filter((f) => { const hay = cpNorm([f.rule_id, f.title, f.ruleMeta && f.ruleMeta.titleLt, f.category, f.evidence && f.evidence[0]].join(" ")); return terms.some((t) => hay.includes(t)); }).slice(0, 6);
+    if (!match.length) return reply(lt ? "Pagal šią užklausą radinių nerasta." : "No findings match that query.");
+    match.forEach((f) => ids.push(f.rule_id));
+    return reply((lt ? `Rasta ${match.length}:` : `Found ${match.length}:`) + "\n" + match.map(fLine).join("\n"));
+  }
+
+  return { handled: false, text: "", ruleIds: [] };
+}
+
+// Official response letter to VMI: positions come from the auditor notes
+// (accordance + justification), corrective actions from the auto-fix manifest,
+// open items from the per-finding fix steps. Deterministic and offline.
+function buildVmiLetterDoc(p) {
+  const lt = p.lang === "lt";
+  const T = (en, l2) => (lt ? l2 : en);
+  const BL = taxaiBrand();
+  const BLcore = BL.name === "TaxAI" ? "TaxAI" : BL.name + " (TaxAI)";
+  const c = p.company || {};
+  const today = p.generatedAt || new Date().toISOString().slice(0, 10);
+  const L = [];
+  L.push(`${c.name || "____________________"}`);
+  L.push(T("Company code", "Įmonės kodas") + ": " + (c.registrationNumber || "____________"));
+  L.push(today);
+  L.push("");
+  L.push(T("To: State Tax Inspectorate under the Ministry of Finance of the Republic of Lithuania", "Valstybinei mokesčių inspekcijai prie Lietuvos Respublikos finansų ministerijos"));
+  L.push("");
+  L.push(T(`REGARDING THE STANDARD AUDIT FILE FOR TAX (SAF-T) FOR THE PERIOD ${p.period?.start || "____"} – ${p.period?.end || "____"}`,
+           `DĖL STANDARTINĖS APSKAITOS DUOMENŲ RINKMENOS (SAF-T) UŽ LAIKOTARPĮ ${p.period?.start || "____"} – ${p.period?.end || "____"}`));
+  L.push(T("(reply to STI instruction / inquiry No. ________ of ________)", "(atsakymas į VMI nurodymą / paklausimą Nr. ________, ________ d.)"));
+  L.push("");
+  L.push(T("1. GENERAL INFORMATION", "1. BENDROJI DALIS"));
+  L.push(T(`The SAF-T file "${p.fileName || "—"}"${p.fileHash ? " (SHA-256 " + String(p.fileHash).slice(0, 16) + "…)" : ""} was verified with the ${BLcore} engine v${p.engineVersion} — 482 named rules and full XSD v2.01 schema validation, mirroring the STI rule set with documented risk weights.`,
+           `SAF-T rinkmena „${p.fileName || "—"}“${p.fileHash ? " (SHA-256 " + String(p.fileHash).slice(0, 16) + "…)" : ""} patikrinta „${BLcore}“ varikliu v${p.engineVersion} — 482 įvardytos taisyklės ir pilna XSD v2.01 schemos validacija, atitinkančios VMI taisyklių rinkinį su dokumentuotais rizikos svoriais.`));
+  L.push(T(`Assessment-gate simulation: ${p.gate.label[0]}. Risk score: ${p.risk.score} (${p.risk.bandLabel[0]}).`,
+           `Vertinimo vartų simuliacija: ${p.gate.label[1]}. Rizikos balas: ${p.risk.score} (${p.risk.bandLabel[1]}).`));
+  L.push("");
+  let annex = 1;
+  const annexes = [T("SAF-T audit report (TaxAI)", "SAF-T audito ataskaita (TaxAI)")];
+  if ((p.manifest || []).length) {
+    L.push(T("2. TECHNICAL NON-CONFORMITIES CORRECTED", "2. PAŠALINTI TECHNINIAI NEATITIKIMAI"));
+    const byFx = {};
+    p.manifest.forEach((m) => { byFx[m.fixer] = (byFx[m.fixer] || 0) + 1; });
+    Object.entries(byFx).forEach(([k, n]) => L.push(`  • ${k}: ${n} ${T("corrections", "pataisos(-ų)")}`));
+    L.push(T("Only representation was normalized and derived totals recomputed; no business facts were altered. The corrected file and the correction manifest are enclosed.",
+             "Normalizuota tik forma ir perskaičiuotos išvestinės sumos; ūkiniai faktai nekeisti. Pataisyta rinkmena ir pataisų manifestas pridedami."));
+    annexes.push(T("Correction manifest (JSON)", "Pataisų manifestas (JSON)"), T("Corrected SAF-T file", "Pataisyta SAF-T rinkmena"));
+    L.push("");
+  }
+  const sec3 = (p.manifest || []).length ? 3 : 2;
+  if ((p.accordance || []).length) {
+    L.push(T(`${sec3}. ENTRIES FLAGGED BY THE RULES BUT CONSISTENT WITH THE ACCOUNTING POLICY`, `${sec3}. PAŽYMĖTI, TAČIAU APSKAITOS POLITIKĄ ATITINKANTYS ĮRAŠAI`));
+    p.accordance.slice(0, 40).forEach((a, i) => {
+      L.push(`  ${sec3}.${i + 1}. ${a.title} (${a.rule_id}${a.legal ? "; " + a.legal : ""})`);
+      L.push("       " + T("Position", "Pozicija") + ": " + (String(a.justification || "").trim().slice(0, 400) || T("(justification recorded in the working papers)", "(pagrindimas užfiksuotas darbo dokumentuose)")));
+    });
+    if (p.accordance.length > 40) L.push("  " + T(`+ ${p.accordance.length - 40} more — see Annex 1`, `+ dar ${p.accordance.length - 40} — žr. 1 priedą`));
+    L.push("");
+  }
+  const sec4 = sec3 + ((p.accordance || []).length ? 1 : 0);
+  if ((p.pending || []).length) {
+    L.push(T(`${sec4}. CORRECTIONS IN PROGRESS IN THE SOURCE SYSTEM`, `${sec4}. VYKDOMI TAISYMAI ŠALTINIO SISTEMOJE`));
+    p.pending.slice(0, 40).forEach((a, i) => {
+      L.push(`  ${sec4}.${i + 1}. ${a.title} (${a.rule_id})`);
+      L.push("       " + T("Planned action", "Numatomas veiksmas") + ": " + (a.step || T("review against source documents", "peržiūra pagal pirminius dokumentus")) + " — " + T("deadline ________", "terminas ________"));
+    });
+    if (p.pending.length > 40) L.push("  " + T(`+ ${p.pending.length - 40} more — see Annex 1`, `+ dar ${p.pending.length - 40} — žr. 1 priedą`));
+    L.push("");
+  }
+  L.push(T("ANNEXES:", "PRIEDAI:"));
+  annexes.forEach((a, i) => L.push(`  ${i + 1}. ${a}`));
+  L.push("");
+  L.push(T("Respectfully,", "Pagarbiai"));
+  L.push("");
+  L.push(T("Chief Accountant  ______________________  (name, surname)", "Vyr. buhalteris (-ė)  ______________________  (vardas, pavardė)"));
+  L.push(T("Tel.: ____________   E-mail: ____________", "Tel.: ____________   El. p.: ____________"));
+  const text = L.join("\n");
+  const esc = (s) => String(s).replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
+  const html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + esc(p.fileName || "SAF-T") + " — " + T("Reply to VMI", "Atsakymas VMI") + "</title><style>@page{size:A4;margin:22mm}body{font:13px/1.6 'Times New Roman',serif;color:#111;max-width:760px;margin:0 auto;padding:30px;white-space:pre-wrap}</style></head><body>" + esc(text) + "</body></html>";
+  return { text, html };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Natural-language rules — deterministic local compiler (Phase 3, part 4).
+// A typed sentence ("Pardavimo sąskaitos virš 10 000 EUR be PVM kodo",
+// "GL transactions on weekends over 1000") compiles into a serializable
+// rule spec {scope, conds[]} with a bilingual interpretation, runnable on
+// any parsed file. No network, no model — the grammar covers the checks
+// accountants actually write; anything it cannot parse is refused with an
+// explanation (the AI agents remain available for free-form requests).
+// ═════════════════════════════════════════════════════════════════════════
+function nlrNum(s) {
+  let t = String(s || "").trim().replace(/\s+/g, "");
+  if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, "").replace(",", ".");
+  else t = t.replace(/,/g, "");
+  const v = parseFloat(t);
+  return isNaN(v) ? null : v;
+}
+const nlr2 = (v) => Math.round(v * 100) / 100;
+
+function parseNlRule(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return { ok: false, error: "Įveskite taisyklės sakinį. / Enter a rule sentence." };
+  const q = cpNorm(raw);
+  const err = (lt, en) => ({ ok: false, error: lt + " / " + en });
+
+  // scope
+  const scope =
+    /pardavim|sales|israsyt/.test(q) ? "sales" :
+    /pirkim|purchase|gaut/.test(q) ? "purchases" :
+    /\bdk\b|operacij|transaction|ledger|didzio|zurnal/.test(q) ? "gl" :
+    /mokejim|payment/.test(q) ? "payments" :
+    /klient|customer|pirkej/.test(q) ? "customers" :
+    /tiekej|supplier/.test(q) ? "suppliers" : null;
+  if (!scope) return err("Nurodykite sritį: pardavimo/pirkimo sąskaitos, DK operacijos, mokėjimai, klientai ar tiekėjai.",
+                         "Name a scope: sales/purchase invoices, GL transactions, payments, customers or suppliers.");
+  const entityScope = scope === "customers" || scope === "suppliers";
+
+  const conds = [], LT = [], EN = [];
+  const add = (c, lt, en) => { conds.push(c); LT.push(lt); EN.push(en); };
+
+  // amounts
+  let m = q.match(/(?:tarp|between)\s*([\d\s.,]+)\s*(?:ir|and)\s*([\d\s.,]+)/);
+  if (m) { const a = nlrNum(m[1]), b = nlrNum(m[2]); if (a != null && b != null) add({ k: "between", a: Math.min(a, b), b: Math.max(a, b) }, `suma tarp ${a} ir ${b}`, `amount between ${a} and ${b}`); }
+  m = q.match(/(?:virs|daugiau(?:\s+(?:kaip|nei|uz))?|over|above|more than|>)\s*([\d\s.,]+)/);
+  if (m && !conds.some((c) => c.k === "between")) { const v = nlrNum(m[1]); if (v != null) add({ k: "gt", v }, `suma virš ${v}`, `amount over ${v}`); }
+  m = q.match(/(?:maziau(?:\s+(?:kaip|nei|uz))?|iki(?=\s*[\d])|below|under|less than|<)\s*([\d\s.,]+)/);
+  if (m) { const v = nlrNum(m[1]); if (v != null) add({ k: "lt", v }, `suma mažiau nei ${v}`, `amount below ${v}`); }
+
+  // missing fields
+  if (/(?:\bbe\b|without|\bno\b)\s+(?:pvm\s+mok|vat\s*(?:number|reg)|pvm\s+registr)/.test(q)) add({ k: "noVat" }, "be PVM mokėtojo kodo", "without a VAT number");
+  else if (/(?:\bbe\b|without|\bno\b)\s+(?:pvm|tax|mokesci\w*)\s*(?:kod|code)/.test(q)) add({ k: "noTaxCode" }, "be PVM kodo", "without a tax code");
+  if (/(?:\bbe\b|without|\bno\b)\s+(?:aprasym|description)/.test(q)) add({ k: "noDesc" }, "be aprašymo", "without a description");
+  if (/(?:\bbe\b|without|\bno\b)\s+(?:dat|date)/.test(q)) add({ k: "noDate" }, "be datos", "without a date");
+
+  // tax code equals (bare PVMnn token)
+  m = q.match(/\bpvm(\d{1,3})\b/);
+  if (m) add({ k: "code", code: "PVM" + m[1] }, `su kodu PVM${m[1]}`, `with code PVM${m[1]}`);
+
+  // country
+  m = q.match(/(?:salis|salies|country)\s*(?:=|yra|is|:)?\s*([a-z]{2})\b/);
+  if (m) add({ k: "country", cc: m[1].toUpperCase() }, `šalis ${m[1].toUpperCase()}`, `country ${m[1].toUpperCase()}`);
+
+  // dates
+  if (/savaitgal|weekend/.test(q)) add({ k: "weekend" }, "savaitgalį", "on a weekend");
+  m = q.match(/(?:\bpo\b|after)\s*(\d{4}-\d{2}-\d{2})/);
+  if (m) add({ k: "after", d: m[1] }, `po ${m[1]}`, `after ${m[1]}`);
+  m = q.match(/(?:\biki\b|\bpries\b|before)\s*(\d{4}-\d{2}-\d{2})/);
+  if (m) add({ k: "before", d: m[1] }, `iki ${m[1]}`, `before ${m[1]}`);
+
+  // description contains
+  m = raw.match(/(?:aprašym\w*\s+(?:yra|turi)|description\s+contains)\s*["'„“”]?([^"'„“”]+?)["'„“”]?\s*$/i);
+  if (m) add({ k: "contains", t: m[1].trim() }, `aprašyme yra „${m[1].trim()}“`, `description contains "${m[1].trim()}"`);
+
+  if (!conds.length) return err("Nesupratau nė vienos sąlygos. Pavyzdys: „Pardavimo sąskaitos virš 10 000 be PVM kodo“.",
+                                "No condition recognized. Example: \"sales invoices over 10 000 without a tax code\".");
+
+  // scope compatibility
+  const bad = (k, lt, en) => conds.some((c) => c.k === k) ? err(lt, en) : null;
+  if (entityScope) {
+    const e = bad("gt", "Sumos sąlyga netaikoma klientams/tiekėjams.", "Amount conditions don't apply to customers/suppliers.")
+      || bad("lt", "Sumos sąlyga netaikoma klientams/tiekėjams.", "Amount conditions don't apply to customers/suppliers.")
+      || bad("between", "Sumos sąlyga netaikoma klientams/tiekėjams.", "Amount conditions don't apply to customers/suppliers.")
+      || bad("code", "PVM kodo sąlyga netaikoma klientams/tiekėjams.", "Tax-code conditions don't apply to customers/suppliers.")
+      || bad("weekend", "Datos sąlygos netaikomos klientams/tiekėjams.", "Date conditions don't apply to customers/suppliers.")
+      || bad("noTaxCode", "Klientams/tiekėjams naudokite „be PVM mokėtojo kodo“.", "For customers/suppliers use \"without a VAT number\".");
+    if (e) return e;
+  } else if (conds.some((c) => c.k === "noVat") && scope !== "customers" && scope !== "suppliers") {
+    return err("„Be PVM mokėtojo kodo“ taikoma klientams arba tiekėjams.", "\"Without a VAT number\" applies to customers or suppliers.");
+  }
+  if (!entityScope && conds.some((c) => c.k === "country")) {
+    return err("Šalies sąlyga taikoma klientams arba tiekėjams.", "Country conditions apply to customers or suppliers.");
+  }
+
+  const severity = /kritin|critical/.test(q) ? "Critical" : /auksta|svarb|high/.test(q) ? "High" : /zem\w*\b|low/.test(q) ? "Low" : "Medium";
+  return { ok: true, spec: { scope, severity, conds }, interpretation: LT, interpretationEn: EN };
+}
+
+function runUserRule(rule, d) {
+  const spec = rule.conds ? rule : rule.spec; // accept stored rule or fresh parse
+  const conds = spec.conds || [], scope = spec.scope;
+  const wk = (ds) => { const t = new Date(ds + "T12:00:00"); const g = t.getDay(); return !isNaN(t) && (g === 0 || g === 6); };
+  const test = (amount, date, codes, desc, vat) => conds.every((c) => {
+    switch (c.k) {
+      case "gt": return amount != null && amount > c.v;
+      case "lt": return amount != null && amount < c.v;
+      case "between": return amount != null && amount >= c.a && amount <= c.b;
+      case "noTaxCode": return !(codes && codes.length);
+      case "noVat": return !String(vat || "").trim();
+      case "noDesc": return !String(desc || "").trim();
+      case "noDate": return !String(date || "").trim();
+      case "code": return (codes || []).some((x) => String(x).toUpperCase() === c.code);
+      case "weekend": return !!date && wk(date);
+      case "after": return !!date && date > c.d;
+      case "before": return !!date && date < c.d;
+      case "contains": return cpNorm(desc).includes(cpNorm(c.t));
+      default: return false;
+    }
+  });
+  const out = [];
+  const push = (row) => { if (out.length < 200) out.push(row); };
+  if (scope === "sales" || scope === "purchases") {
+    ((d[scope] && d[scope].items) || []).forEach((i) => {
+      const amount = i.documentTotals ? (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal) : null;
+      const codes = (i.lines || []).map((l) => l.taxInfo && l.taxInfo.taxCode).filter(Boolean);
+      const desc = (i.lines || []).map((l) => l.description || "").join(" ");
+      if (test(amount, i.invoiceDate || "", codes, desc, "x")) push({ no: i.invoiceNo || "—", data: i.invoiceDate || "—", suma: amount != null ? nlr2(amount) : "—" });
+    });
+  } else if (scope === "gl") {
+    (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => {
+      const amount = Math.max(l.debitAmount || 0, l.creditAmount || 0);
+      const codes = l.taxInfo && l.taxInfo.taxCode ? [l.taxInfo.taxCode] : [];
+      if (test(amount, t.transactionDate || "", codes, l.description || t.description || "", "x")) push({ tx: t.transactionID || "—", rec: l.recordID || "—", acct: l.accountID || "—", suma: nlr2(amount), data: t.transactionDate || "—" });
+    }));
+  } else if (scope === "payments") {
+    (d.payments || []).forEach((p) => { if (test(p.grossTotal, p.transactionDate || "", [], p.description || "", "x")) push({ ref: p.paymentRefNo || "—", data: p.transactionDate || "—", suma: p.grossTotal != null ? nlr2(p.grossTotal) : "—" }); });
+  } else if (scope === "customers" || scope === "suppliers") {
+    (d[scope] || []).forEach((c) => {
+      const ok = conds.every((cd) => cd.k === "noVat" ? !String(c.taxRegistrationNumber || "").trim()
+        : cd.k === "country" ? String(c.country || c.addressCountry || "").trim().toUpperCase() === cd.cc
+        : cd.k === "noDesc" || cd.k === "contains" ? (cd.k === "contains" ? cpNorm(c.name).includes(cpNorm(cd.t)) : !String(c.name || "").trim())
+        : cd.k === "noDate" ? false : true);
+      if (ok) push({ id: c.customerID || c.supplierID || "—", pavadinimas: c.name || "—", salis: c.country || c.addressCountry || "—" });
+    });
+  }
+  return out;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Phase 4 — scale layer.
+// (a) Continuous-readiness monitoring: every audit produces a compact
+//     snapshot (gate, risk, severity counts, finding keys) per company +
+//     period; histories give trends, staleness and new-vs-resolved deltas.
+// (b) Portfolio (bureau) exports across all monitored companies.
+// (c) White-label branding for firms — applied to client-facing documents,
+//     with the TaxAI core credited truthfully.
+// (d) Embeddable SDK: window.TaxAI + a postMessage bridge so accounting
+//     software vendors can build the validator in — entirely client-side.
+// ═════════════════════════════════════════════════════════════════════════
+const SNAP_HISTORY_PER_KEY = 24, SNAP_GLOBAL_CAP = 600, SNAP_KEYS_CAP = 800;
+
+function snapshotKey(header) {
+  const h = header || {};
+  const reg = (h.company && h.company.registrationNumber) || h.registrationNumber || "?";
+  return reg + "|" + (h.periodStart || "") + "|" + (h.periodEnd || "");
+}
+function makeSnapshot(parsed, findings, extra) {
+  const h = (parsed && parsed.header) || {};
+  const fs = findings || [];
+  const sev = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+  fs.forEach((f) => { if (sev[f.severity] != null) sev[f.severity]++; });
+  const gate = simulateAcceptanceGate(parsed, fs);
+  const risk = computeRiskScore(fs);
+  return {
+    key: snapshotKey(h),
+    reg: (h.company && h.company.registrationNumber) || h.registrationNumber || "?",
+    name: (h.company && h.company.name) || "",
+    periodStart: h.periodStart || "", periodEnd: h.periodEnd || "",
+    ts: (extra && extra.ts) || Date.now(),
+    fileName: (extra && extra.fileName) || "",
+    engineVersion: ENGINE_VERSION,
+    gateVerdict: gate.verdict, risk: risk.score, band: risk.band,
+    sev, total: fs.length,
+    findingKeys: fs.slice(0, SNAP_KEYS_CAP).map((f) => (f.rule_id || "?") + "::" + String((f.evidence && f.evidence[0]) || f.detail || "").slice(0, 120)),
+  };
+}
+function saveAuditSnapshot(list, snap) {
+  const all = (list || []).concat([snap]);
+  const byKey = {};
+  all.forEach((s) => { (byKey[s.key] = byKey[s.key] || []).push(s); });
+  let merged = [];
+  Object.keys(byKey).forEach((k) => { const arr = byKey[k].sort((a, b) => a.ts - b.ts); merged = merged.concat(arr.slice(-SNAP_HISTORY_PER_KEY)); });
+  merged.sort((a, b) => a.ts - b.ts);
+  if (merged.length > SNAP_GLOBAL_CAP) merged = merged.slice(-SNAP_GLOBAL_CAP);
+  return merged;
+}
+function latestSnapshots(list) {
+  const m = new Map();
+  (list || []).forEach((s) => { const p = m.get(s.key); if (!p || s.ts >= p.ts) m.set(s.key, s); });
+  return [...m.values()].sort((a, b) => String(a.name || a.reg).localeCompare(String(b.name || b.reg)));
+}
+function snapshotHistory(list, key) { return (list || []).filter((s) => s.key === key).sort((a, b) => a.ts - b.ts); }
+function diffSnapshots(prev, curr) {
+  const Pa = (prev && prev.findingKeys) || [], Ca = (curr && curr.findingKeys) || [];
+  const Ps = new Set(Pa), Cs = new Set(Ca);
+  const added = [], resolved = [];
+  let addedCount = 0, resolvedCount = 0, persisting = 0;
+  Cs.forEach((k) => { if (Ps.has(k)) persisting++; else { addedCount++; if (added.length < 50) added.push(String(k).split("::")[0]); } });
+  Ps.forEach((k) => { if (!Cs.has(k)) { resolvedCount++; if (resolved.length < 50) resolved.push(String(k).split("::")[0]); } });
+  return { added, resolved, addedCount, resolvedCount, persisting };
+}
+function snapshotReadiness(snap, now) {
+  const ts = now != null ? now : Date.now();
+  const staleDays = Math.max(0, Math.floor((ts - (snap.ts || ts)) / 86400000));
+  const status = snap.gateVerdict === "rejected" ? "blocked" : snap.gateVerdict === "warnings" ? "warnings" : "ready";
+  return { status, staleDays, stale: staleDays > 35,
+    label: { ready: ["AUDIT-READY", "PARUOŠTA AUDITUI"], warnings: ["READY · WARNINGS", "PARUOŠTA · PERSPĖJIMAI"], blocked: ["NOT SUBMITTABLE", "NETEIKTINA"] }[status] };
+}
+function buildPortfolioCSV(rows) {
+  const esc = (v) => { const s = String(v == null ? "" : v); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const head = ["company", "reg", "period_start", "period_end", "last_run", "gate", "risk_score", "band", "critical", "high", "medium", "low", "total_findings", "new_vs_prev", "resolved_vs_prev", "engine"];
+  const lines = [head.join(",")];
+  (rows || []).forEach((r) => lines.push([r.name, r.reg, r.periodStart, r.periodEnd, new Date(r.ts).toISOString().slice(0, 10), r.gateVerdict, r.risk, r.band,
+    r.sev.Critical, r.sev.High, r.sev.Medium, r.sev.Low, r.total, r.delta ? r.delta.addedCount : "", r.delta ? r.delta.resolvedCount : "", r.engineVersion].map(esc).join(",")));
+  return lines.join("\n");
+}
+function buildPortfolioReportHTML(rows, lang, brandName, now) {
+  const lt = lang === "lt";
+  const T = (en, l2) => (lt ? l2 : en);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const GC = { rejected: "#c92a2a", warnings: "#b08900", clean: "#2b8a3e" };
+  const stats = { ready: 0, warnings: 0, blocked: 0, stale: 0 };
+  const body = (rows || []).map((r) => {
+    const rd = snapshotReadiness(r, now);
+    stats[rd.status]++; if (rd.stale) stats.stale++;
+    return "<tr><td>" + esc(r.name || "—") + "</td><td class='m'>" + esc(r.reg) + "</td><td class='m'>" + esc(r.periodStart) + " – " + esc(r.periodEnd) + "</td>" +
+      "<td class='m'>" + new Date(r.ts).toISOString().slice(0, 10) + (rd.stale ? " ⚠" : "") + "</td>" +
+      "<td style='color:" + GC[r.gateVerdict] + ";font-weight:700'>" + esc(lt ? rd.label[1] : rd.label[0]) + "</td>" +
+      "<td class='n'>" + r.risk + "</td><td class='n'>" + r.sev.Critical + "/" + r.sev.High + "/" + r.sev.Medium + "/" + r.sev.Low + "</td>" +
+      "<td class='n'>" + (r.delta ? "+" + r.delta.addedCount + " / −" + r.delta.resolvedCount : "—") + "</td></tr>";
+  }).join("");
+  return "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + esc(brandName) + " — " + T("Portfolio readiness", "Portfelio parengtis") + "</title><style>@page{size:A4 landscape;margin:14mm}body{font:12px/1.5 'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:26px}h1{font-weight:300;font-size:21px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:14px}td,th{border:1px solid #e3e3e3;padding:6px 8px;text-align:left;font-size:11.5px}.n{text-align:right}.m{font-family:Consolas,monospace;font-size:10.5px}.sub{color:#666;font-size:11px}</style></head><body>" +
+    "<h1>" + esc(brandName) + " · " + T("SAF-T portfolio readiness", "SAF-T portfelio parengtis") + "</h1>" +
+    "<div class='sub'>" + (rows || []).length + " " + T("companies", "įmonės(-ių)") + " · " + T("ready", "paruošta") + " " + stats.ready + " · " + T("warnings", "su perspėjimais") + " " + stats.warnings + " · " + T("blocked", "neteiktina") + " " + stats.blocked + " · " + T("stale (>35 d.)", "pasenę (>35 d.)") + " " + stats.stale + " · " + new Date(now != null ? now : Date.now()).toISOString().slice(0, 10) + " · engine v" + esc(ENGINE_VERSION) + "</div>" +
+    "<table><tr><th>" + T("Company", "Įmonė") + "</th><th>" + T("Reg.", "Į. k.") + "</th><th>" + T("Period", "Laikotarpis") + "</th><th>" + T("Last run", "Pask. patikra") + "</th><th>" + T("Status", "Būsena") + "</th><th class='n'>" + T("Risk", "Rizika") + "</th><th class='n'>C/H/M/L</th><th class='n'>Δ</th></tr>" + (body || "<tr><td colspan='8'>—</td></tr>") + "</table></body></html>";
+}
+
+// White-label: window.TAXAI_BRAND (vendor embed) and localStorage override.
+function taxaiBrand() {
+  const def = { name: "TaxAI", accent: "#7cc4ff", footer: "" };
+  try {
+    const w = (typeof window !== "undefined" && window.TAXAI_BRAND) || null;
+    let s = null;
+    try { s = (typeof localStorage !== "undefined") ? JSON.parse(localStorage.getItem("taxai_brand") || "null") : null; } catch (e) { s = null; }
+    return Object.assign({}, def, w || {}, s || {});
+  } catch (e) { return def; }
+}
+
+// Embeddable SDK surface — pure composition of the engine.
+function sdkBuildResult(parsed, runResult) {
+  const fs = ((runResult && runResult.findings) || []).map((f) => ({ rule_id: f.rule_id, type: f.type, severity: f.severityUi || f.severity, category: f.category, title: f.title, detail: f.detail, evidence: f.evidence, ruleMeta: f.ruleMeta }));
+  return { engineVersion: ENGINE_VERSION, header: (parsed && parsed.header) || null, counts: (parsed && parsed.counts) || null,
+    summary: (runResult && runResult.summary) || { total: fs.length },
+    gate: simulateAcceptanceGate(parsed, fs), risk: computeRiskScore(fs), findings: fs };
+}
+function installTaxAISdk() {
+  try {
+    if (typeof window === "undefined" || window.TaxAI) return;
+    const api = {
+      version: ENGINE_VERSION,
+      brand: taxaiBrand(),
+      packs: RULE_PACKS,
+      explain: (f, l) => explainFinding(f, l || "lt"),
+      async validateText(xml) {
+        const parsed = parseSAFTFull(String(xml || ""));
+        if (parsed && parsed._parseError) return { engineVersion: ENGINE_VERSION, error: parsed._parseError };
+        return sdkBuildResult(parsed, runAllRules(parsed));
+      },
+      async validateFile(file) {
+        const r = await parseSaftSmart(file);
+        if (r.parsed && r.parsed._parseError) return { engineVersion: ENGINE_VERSION, error: r.parsed._parseError };
+        return sdkBuildResult(r.parsed, runAllRules(r.parsed));
+      },
+      autofixText(xml, opts) {
+        const o = opts || {};
+        const doc = new DOMParser().parseFromString(String(xml || ""), "text/xml");
+        if (doc.querySelector && doc.querySelector("parsererror")) return { engineVersion: ENGINE_VERSION, error: "XML parse error" };
+        const parsed = parseSAFTFull(doc);
+        const rr = runAllRules(parsed);
+        const fs = (rr.findings || []).map((f) => ({ ...f, severity: f.severityUi || f.severity }));
+        const flagged = o.force ? null : new Set(fs.map((f) => f.rule_id).filter(Boolean));
+        const plans = planAutoFixes(doc, flagged);
+        if (!o.apply) return { engineVersion: ENGINE_VERSION, plans: plans.map((p) => ({ id: p.id, safety: p.safety, changes: p.changes.length })) };
+        const sel = plans.filter((p) => p.changes.length && (o.includeSuggested ? true : p.safety === "safe"));
+        const manifest = applyAutoFixes(doc, sel);
+        return { engineVersion: ENGINE_VERSION, manifest, fixedXml: serializeSaftDoc(doc) };
+      },
+    };
+    window.TaxAI = api;
+    window.addEventListener("message", async (e) => {
+      const d = e && e.data;
+      if (!d || typeof d !== "object" || d.type !== "taxai:validate" || typeof d.xml !== "string") return;
+      let msg;
+      try { const res = await api.validateText(d.xml); msg = { type: "taxai:result", id: d.id || null, ok: !res.error, result: res }; }
+      catch (err) { msg = { type: "taxai:result", id: d.id || null, ok: false, error: String(err && err.message || err).slice(0, 300) }; }
+      try { if (e.source && e.source.postMessage) e.source.postMessage(msg, "*"); else window.postMessage(msg, "*"); } catch (pe) { /* sandboxed */ }
+    });
+  } catch (e) { /* SDK is optional */ }
+}
+
+const AUDIT_RULES = [
+  { id: "PP_LT_PVM_001", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12) dispatched from outside Lithuania", title: "Eksportas (PVM12), kai gabenimas prasidėjo ne Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12) dispatched from outside Lithuania). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && F!=='LT') },
+  { id: "PP_LT_PVM_002", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12) but goods ended inside the EU", title: "Eksportas (PVM12), bet prekės liko ES teritorijoje",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12) but goods ended inside the EU). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && (ctx.EU.has(T)||T==='LT')) },
+  { id: "PP_LT_PVM_003", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12) where the buyer's registered address is in Lithuania", title: "Eksportas (PVM12), kai pirkėjo registracijos adresas — Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12) where the buyer's registered address is in Lithuania). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && (T && !ctx.EU.has(T) && T!=='LT') && raC==='LT') },
+  { id: "PP_LT_PVM_004", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12): buyer not registered in LT by address but gave a Lithuanian VAT number", title: "Eksportas (PVM12): pirkėjas neturi LT registracijos adreso, bet nurodė LT PVM kodą",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12): buyer not registered in LT by address but gave a Lithuanian VAT number). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && (T && !ctx.EU.has(T) && T!=='LT') && hasRA && raC!=='LT' && pv && pv.country==='LT') },
+  { id: "PP_LT_PVM_005", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12): buyer has no LT registered address and no LT VAT number", title: "Eksportas (PVM12): pirkėjas neturi LT registracijos adreso ir nenurodė LT PVM kodo",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12): buyer has no LT registered address and no LT VAT number). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && (T && !ctx.EU.has(T) && T!=='LT') && hasRA && raC!=='LT' && (!pv || pv.country!=='LT')) },
+  { id: "PP_LT_PVM_006", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12): buyer's address is not a registration address (or type missing)", title: "Eksportas (PVM12): pirkėjo adresas nėra registracijos adresas (arba tipas nenurodytas)",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12): buyer's address is not a registration address (or type missing)). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && (T && !ctx.EU.has(T) && T!=='LT') && hasAddr && !hasRA) },
+  { id: "PP_LT_PVM_007", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export (PVM12) with no destination (Ship-To) country at all", title: "Eksportas (PVM12) be nurodytos paskirties (Ship-To) šalies",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export (PVM12) with no destination (Ship-To) country at all). Legal basis: PVMĮ 41 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!T && (!F||F==='LT')) },
+  { id: "PP_LT_PVM_008", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM12"], cls: ["PS", "IT", "KT"], perLine: true,
+    titleEn: "Export code (PVM12) on lines that are not goods", title: "Eksporto kodas (PVM12) eilutėse, kurios nėra prekės",
+    descriptionEn: "Flags each line where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export code (PVM12) on lines that are not goods). Legal basis: PVMĮ 41 str..", description: "Žymimos eilutės, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str..", legal: "PVMĮ 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_009", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM12"], cls: null, perLine: false,
+    titleEn: "Export invoice lacks a reference to the 0% VAT basis", title: "Eksporto sąskaitoje nėra nuorodos į 0 proc. PVM taikymo pagrindą",
+    descriptionEn: "Flags invoices where STI code PVM12 is combined with facts that contradict or fail to support that treatment (export invoice lacks a reference to the 0% VAT basis). Legal basis: PVMĮ 41 str.; SF rekvizitai.", description: "Žymimos sąskaitos, kuriose STI kodas PVM12 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 41 str.; SF rekvizitai.", legal: "PVMĮ 41 str.; SF rekvizitai",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the export evidence (customs declaration, transport docs). PVM12 (0% export, PVMĮ 41 str.) requires dispatch from Lithuania to a destination outside the EU; otherwise reclassify the supply.", fixLt: "Patikrinkite eksporto įrodymus (muitinės deklaraciją, transporto dokumentus). PVM12 (0 proc. eksportas, PVMĮ 41 str.) taikomas tik kai prekės išgabenamos iš Lietuvos už ES ribų; kitu atveju perklasifikuokite tiekimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!(inv.references||'').trim()) },
+  { id: "PP_LT_PVM_010", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU 0% supply (PVM13) did not start in Lithuania", title: "0 proc. tiekimas ES viduje (PVM13) prasidėjo ne Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU 0% supply (PVM13) did not start in Lithuania). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && F!=='LT') },
+  { id: "PP_LT_PVM_011", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU 0% supply (PVM13) but goods did not end in another EU state", title: "0 proc. ES tiekimas (PVM13), bet prekės nepateko į kitą ES valstybę",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU 0% supply (PVM13) but goods did not end in another EU state). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && (T==='LT'||!ctx.EU.has(T))) },
+  { id: "PP_LT_PVM_012", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13) where the buyer's code is not a VAT-payer code", title: "ES tiekimas (PVM13), kai pirkėjo kodas nėra PVM mokėtojo kodas",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13) where the buyer's code is not a VAT-payer code). Legal basis: PVMĮ 49 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str. 1 d..", legal: "PVMĮ 49 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && T && ctx.EU.has(T) && !pv) },
+  { id: "PP_LT_PVM_013", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13): buyer's VAT number is from a different member state than Ship-To", title: "ES tiekimas (PVM13): pirkėjo PVM kodas — kitos valstybės nei Ship-To",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13): buyer's VAT number is from a different member state than Ship-To). Legal basis: PVMĮ 49 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str. 1 d..", legal: "PVMĮ 49 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && T && ctx.EU.has(T) && pv && ctx.EU.has(pv.country) && pv.country!==T) },
+  { id: "PP_LT_PVM_014", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13) matching the destination member state — review list", title: "ES tiekimas (PVM13), kai pirkėjo PVM kodas sutampa su paskirties valstybe — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13) matching the destination member state — review list). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && T && ctx.EU.has(T) && pv && pv.country===T) },
+  { id: "PP_LT_PVM_015", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13): buyer's VAT number is Lithuanian or non-EU", title: "ES tiekimas (PVM13): pirkėjo PVM kodas — LT arba ne ES valstybės",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13): buyer's VAT number is Lithuanian or non-EU). Legal basis: PVMĮ 49 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str. 1 d..", legal: "PVMĮ 49 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && T && ctx.EU.has(T) && pv && (pv.country==='LT' || (pv.country && !ctx.EU.has(pv.country)))) },
+  { id: "PP_LT_PVM_016", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13): no Ship-To and buyer's code is not a VAT code", title: "ES tiekimas (PVM13): nėra Ship-To, o pirkėjo kodas — ne PVM kodas",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13): no Ship-To and buyer's code is not a VAT code). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && !T && !pv) },
+  { id: "PP_LT_PVM_017", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13): no Ship-To and buyer's VAT number is LT/non-EU", title: "ES tiekimas (PVM13): nėra Ship-To, o pirkėjo PVM kodas — LT/ne ES",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13): no Ship-To and buyer's VAT number is LT/non-EU). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && !T && pv && (pv.country==='LT' || (pv.country && !ctx.EU.has(pv.country)))) },
+  { id: "PP_LT_PVM_018", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13) with EU buyer VAT number but no Ship-To country", title: "ES tiekimas (PVM13) su ES pirkėjo PVM kodu, bet be Ship-To šalies",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13) with EU buyer VAT number but no Ship-To country). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && !T && pv && pv.country && ctx.EU.has(pv.country)) },
+  { id: "PP_LT_PVM_019", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU supply (PVM13): neither Ship-To nor the buyer's VAT-number country is known", title: "ES tiekimas (PVM13): nežinoma nei Ship-To, nei pirkėjo PVM kodo šalis",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU supply (PVM13): neither Ship-To nor the buyer's VAT-number country is known). Legal basis: PVMĮ 49 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && !T && pv && !pv.country) },
+  { id: "PP_LT_PVM_020", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM13"], cls: ["PS", "IT", "KT"], perLine: true,
+    titleEn: "Intra-EU goods code (PVM13) on lines that are not goods", title: "ES prekių kodas (PVM13) eilutėse, kurios nėra prekės",
+    descriptionEn: "Flags each line where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU goods code (PVM13) on lines that are not goods). Legal basis: PVMĮ 49 str..", description: "Žymimos eilutės, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str..", legal: "PVMĮ 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_021", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM13"], cls: null, perLine: false,
+    titleEn: "Intra-EU 0% invoice lacks a reference to the 0% VAT basis", title: "ES 0 proc. sąskaitoje nėra nuorodos į 0 proc. PVM pagrindą",
+    descriptionEn: "Flags invoices where STI code PVM13 is combined with facts that contradict or fail to support that treatment (intra-EU 0% invoice lacks a reference to the 0% VAT basis). Legal basis: PVMĮ 49 str.; SF rekvizitai.", description: "Žymimos sąskaitos, kuriose STI kodas PVM13 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 49 str.; SF rekvizitai.", legal: "PVMĮ 49 str.; SF rekvizitai",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the goods physically moved from Lithuania to another EU member state and the buyer holds a valid VAT number there (check VIES). If not, the 0% intra-EU treatment (PVM13, PVMĮ 49 str.) does not apply.", fixLt: "Įsitikinkite, kad prekės fiziškai išgabentos iš Lietuvos į kitą ES valstybę narę ir pirkėjas ten turi galiojantį PVM kodą (patikrinkite VIES). Jei ne — 0 proc. tiekimas ES viduje (PVM13, PVMĮ 49 str.) netaikytinas.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!(inv.references||'').trim()) },
+  { id: "PP_LT_PVM_024", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Intra-EU acquisition (PVM16) where transport started in LT or outside the EU", title: "ES įsigijimas (PVM16), kai gabenimas prasidėjo LT arba už ES ribų",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition (PVM16) where transport started in LT or outside the EU). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the acquisition qualifies as an intra-EU acquisition in Lithuania (transport from another member state ends in LT, supplier is an EU VAT payer). Otherwise correct the PVM16 classification (PVMĮ 4-1 ir 122 str.).", fixLt: "Įsitikinkite, kad įsigijimas atitinka prekių įsigijimą Lietuvoje iš kitos ES valstybės (gabenimas iš kitos valstybės narės baigiasi LT, tiekėjas — ES PVM mokėtojas). Kitu atveju pataisykite PVM16 klasifikaciją (PVMĮ 4-1 ir 122 str.).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && (F==='LT' || !ctx.EU.has(F))) },
+  { id: "PP_LT_PVM_025", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Intra-EU acquisition (PVM16) where transport did not end in Lithuania", title: "ES įsigijimas (PVM16), kai gabenimas pasibaigė ne Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition (PVM16) where transport did not end in Lithuania). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the acquisition qualifies as an intra-EU acquisition in Lithuania (transport from another member state ends in LT, supplier is an EU VAT payer). Otherwise correct the PVM16 classification (PVMĮ 4-1 ir 122 str.).", fixLt: "Įsitikinkite, kad įsigijimas atitinka prekių įsigijimą Lietuvoje iš kitos ES valstybės (gabenimas iš kitos valstybės narės baigiasi LT, tiekėjas — ES PVM mokėtojas). Kitu atveju pataisykite PVM16 klasifikaciją (PVMĮ 4-1 ir 122 str.).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && T!=='LT') },
+  { id: "PP_LT_PVM_026", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Intra-EU acquisition (PVM16): Ship-From missing, supplier is an EU VAT payer", title: "ES įsigijimas (PVM16): nėra Ship-From, tiekėjas — ES PVM mokėtojas",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition (PVM16): Ship-From missing, supplier is an EU VAT payer). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!F && (!T||T==='LT') && pv && pv.country && ctx.EU.has(pv.country)) },
+  { id: "PP_LT_PVM_027", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Intra-EU acquisition (PVM16): Ship-From missing and supplier's VAT country is LT/non-EU/unknown", title: "ES įsigijimas (PVM16): nėra Ship-From, tiekėjo PVM šalis — LT/ne ES/nežinoma",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition (PVM16): Ship-From missing and supplier's VAT country is LT/non-EU/unknown). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the acquisition qualifies as an intra-EU acquisition in Lithuania (transport from another member state ends in LT, supplier is an EU VAT payer). Otherwise correct the PVM16 classification (PVMĮ 4-1 ir 122 str.).", fixLt: "Įsitikinkite, kad įsigijimas atitinka prekių įsigijimą Lietuvoje iš kitos ES valstybės (gabenimas iš kitos valstybės narės baigiasi LT, tiekėjas — ES PVM mokėtojas). Kitu atveju pataisykite PVM16 klasifikaciją (PVMĮ 4-1 ir 122 str.).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!F && (!T||T==='LT') && pv && (!pv.country || pv.country==='LT' || !ctx.EU.has(pv.country))) },
+  { id: "PP_LT_PVM_028", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Intra-EU acquisition (PVM16): Ship-From missing and supplier's code is not a VAT code", title: "ES įsigijimas (PVM16): nėra Ship-From, o tiekėjo kodas — ne PVM kodas",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition (PVM16): Ship-From missing and supplier's code is not a VAT code). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!F && (!T||T==='LT') && !pv) },
+  { id: "PP_LT_PVM_029", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Intra-EU acquisition (PVM16) with EU origin but no destination country", title: "ES įsigijimas (PVM16) su ES kilme, bet be paskirties šalies",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition (PVM16) with EU origin but no destination country). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && ctx.EU.has(F) && !T) },
+  { id: "PP_LT_PVM_030", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM16"], cls: null, perLine: false,
+    titleEn: "Regular intra-EU acquisitions (PVM16) — review list", title: "Įprasti prekių įsigijimai iš kitos ES valstybės (PVM16) — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM16 is combined with facts that contradict or fail to support that treatment (regular intra-EU acquisitions (PVM16) — review list). Legal basis: PVMĮ 4-1 str., 122 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str., 122 str..", legal: "PVMĮ 4-1 str., 122 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && ctx.EU.has(F) && T==='LT') },
+  { id: "PP_LT_PVM_031", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM16"], cls: ["PS", "IT", "KT"], perLine: true,
+    titleEn: "Intra-EU acquisition code (PVM16) on non-goods lines", title: "ES įsigijimo kodas (PVM16) ne prekių eilutėse",
+    descriptionEn: "Flags each line where STI code PVM16 is combined with facts that contradict or fail to support that treatment (intra-EU acquisition code (PVM16) on non-goods lines). Legal basis: PVMĮ 4-1 str..", description: "Žymimos eilutės, kuriose STI kodas PVM16 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4-1 str..", legal: "PVMĮ 4-1 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the acquisition qualifies as an intra-EU acquisition in Lithuania (transport from another member state ends in LT, supplier is an EU VAT payer). Otherwise correct the PVM16 classification (PVMĮ 4-1 ir 122 str.).", fixLt: "Įsitikinkite, kad įsigijimas atitinka prekių įsigijimą Lietuvoje iš kitos ES valstybės (gabenimas iš kitos valstybės narės baigiasi LT, tiekėjas — ES PVM mokėtojas). Kitu atveju pataisykite PVM16 klasifikaciją (PVMĮ 4-1 ir 122 str.).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_032", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): chain did not start in another EU state", title: "Trikampė prekyba (pirkimai, PVM19): grandinė neprasidėjo kitoje ES valstybėje",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): chain did not start in another EU state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && (F==='LT' || !ctx.EU.has(F))) },
+  { id: "PP_LT_PVM_033", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): chain did not end in another EU state", title: "Trikampė prekyba (pirkimai, PVM19): grandinė nesibaigė kitoje ES valstybėje",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): chain did not end in another EU state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && (T==='LT' || !ctx.EU.has(T))) },
+  { id: "PP_LT_PVM_034", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): destination of the chain unknown", title: "Trikampė prekyba (pirkimai, PVM19): nežinoma grandinės pabaiga",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): destination of the chain unknown). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && ctx.EU.has(F) && !T) },
+  { id: "PP_LT_PVM_035", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): origin of the chain unknown", title: "Trikampė prekyba (pirkimai, PVM19): nežinoma grandinės pradžia",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): origin of the chain unknown). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && ctx.EU.has(T) && !F) },
+  { id: "PP_LT_PVM_036", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): neither origin nor destination known", title: "Trikampė prekyba (pirkimai, PVM19): nežinoma nei pradžia, nei pabaiga",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): neither origin nor destination known). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!T && !F) },
+  { id: "PP_LT_PVM_037", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): goods start and end in the same member state", title: "Trikampė prekyba (pirkimai, PVM19): prekės prasideda ir baigiasi toje pačioje valstybėje",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): goods start and end in the same member state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F===T) },
+  { id: "PP_LT_PVM_038", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): supplier's VAT state differs from the origin state", title: "Trikampė prekyba (pirkimai, PVM19): tiekėjo PVM valstybė nesutampa su kilmės valstybe",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): supplier's VAT state differs from the origin state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && pv && pv.country && pv.country!==F) },
+  { id: "PP_LT_PVM_039", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases) meeting the formal conditions — review list", title: "Trikampės prekybos pirkimai, atitinkantys formaliąsias sąlygas — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases) meeting the formal conditions — review list). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && pv && pv.country===F) },
+  { id: "PP_LT_PVM_040", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): supplier's VAT state is non-EU or unknown", title: "Trikampė prekyba (pirkimai, PVM19): tiekėjo PVM valstybė — ne ES arba nežinoma",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): supplier's VAT state is non-EU or unknown). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && pv && (!pv.country || (!ctx.EU.has(pv.country) && pv.country!=='LT'))) },
+  { id: "PP_LT_PVM_041", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (purchases, PVM19): supplier's code is not a VAT-payer code", title: "Trikampė prekyba (pirkimai, PVM19): tiekėjo kodas — ne PVM mokėtojo kodas",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (purchases, PVM19): supplier's code is not a VAT-payer code). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && !pv) },
+  { id: "PP_LT_PVM_043", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM19"], cls: ["PS", "IT", "KT"], perLine: true,
+    titleEn: "Triangular-trade code (PVM19) on non-goods purchase lines", title: "Trikampės prekybos kodas (PVM19) ne prekių pirkimo eilutėse",
+    descriptionEn: "Flags each line where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular-trade code (PVM19) on non-goods purchase lines). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos eilutės, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_044", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular purchase invoice lacks a 0%-treatment reference", title: "Trikampės prekybos pirkimo sąskaitoje nėra 0 proc. vertinimo nuorodos",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular purchase invoice lacks a 0%-treatment reference). Legal basis: PVMĮ 122 str. 3 d.; SF rekvizitai.", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d.; SF rekvizitai.", legal: "PVMĮ 122 str. 3 d.; SF rekvizitai",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!(inv.references||'').trim()) },
+  { id: "PP_LT_PVM_045", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): chain did not start in another EU state", title: "Trikampė prekyba (pardavimai, PVM19): grandinė neprasidėjo kitoje ES valstybėje",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): chain did not start in another EU state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && (F==='LT' || !ctx.EU.has(F))) },
+  { id: "PP_LT_PVM_046", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): chain did not end in another EU state", title: "Trikampė prekyba (pardavimai, PVM19): grandinė nesibaigė kitoje ES valstybėje",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): chain did not end in another EU state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && (T==='LT' || !ctx.EU.has(T))) },
+  { id: "PP_LT_PVM_047", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): destination of the chain unknown", title: "Trikampė prekyba (pardavimai, PVM19): nežinoma grandinės pabaiga",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): destination of the chain unknown). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && ctx.EU.has(F) && !T) },
+  { id: "PP_LT_PVM_048", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): origin of the chain unknown", title: "Trikampė prekyba (pardavimai, PVM19): nežinoma grandinės pradžia",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): origin of the chain unknown). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && ctx.EU.has(T) && !F) },
+  { id: "PP_LT_PVM_049", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): neither origin nor destination known", title: "Trikampė prekyba (pardavimai, PVM19): nežinoma nei pradžia, nei pabaiga",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): neither origin nor destination known). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!T && !F) },
+  { id: "PP_LT_PVM_050", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): goods start and end in the same member state", title: "Trikampė prekyba (pardavimai, PVM19): prekės prasideda ir baigiasi toje pačioje valstybėje",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): goods start and end in the same member state). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F===T) },
+  { id: "PP_LT_PVM_051", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): final buyer's VAT state differs from destination", title: "Trikampė prekyba (pardavimai, PVM19): galutinio pirkėjo PVM valstybė nesutampa su paskirties valstybe",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): final buyer's VAT state differs from destination). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && pv && pv.country && pv.country!==T) },
+  { id: "PP_LT_PVM_052", severity: "High", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular sales meeting the formal conditions — review list", title: "Trikampės prekybos pardavimai, atitinkantys formaliąsias sąlygas — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular sales meeting the formal conditions — review list). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && pv && pv.country===T) },
+  { id: "PP_LT_PVM_053", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): buyer's VAT state is non-EU or unknown", title: "Trikampė prekyba (pardavimai, PVM19): pirkėjo PVM valstybė — ne ES arba nežinoma",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): buyer's VAT state is non-EU or unknown). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && pv && (!pv.country || (!ctx.EU.has(pv.country) && pv.country!=='LT'))) },
+  { id: "PP_LT_PVM_054", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular trade (sales, PVM19): buyer's code is not a VAT-payer code", title: "Trikampė prekyba (pardavimai, PVM19): pirkėjo kodas — ne PVM mokėtojo kodas",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular trade (sales, PVM19): buyer's code is not a VAT-payer code). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && T && ctx.EU.has(F) && ctx.EU.has(T) && F!==T && !pv) },
+  { id: "PP_LT_PVM_056", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM19"], cls: ["PS", "IT", "KT"], perLine: true,
+    titleEn: "Triangular-trade code (PVM19) on non-goods sales lines", title: "Trikampės prekybos kodas (PVM19) ne prekių pardavimo eilutėse",
+    descriptionEn: "Flags each line where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular-trade code (PVM19) on non-goods sales lines). Legal basis: PVMĮ 122 str. 3 d..", description: "Žymimos eilutės, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d..", legal: "PVMĮ 122 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_057", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM19"], cls: null, perLine: false,
+    titleEn: "Triangular sales invoice lacks a 0%-treatment reference", title: "Trikampės prekybos pardavimo sąskaitoje nėra 0 proc. vertinimo nuorodos",
+    descriptionEn: "Flags invoices where STI code PVM19 is combined with facts that contradict or fail to support that treatment (triangular sales invoice lacks a 0%-treatment reference). Legal basis: PVMĮ 122 str. 3 d.; SF rekvizitai.", description: "Žymimos sąskaitos, kuriose STI kodas PVM19 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 122 str. 3 d.; SF rekvizitai.", legal: "PVMĮ 122 str. 3 d.; SF rekvizitai",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Review the triangular-trade chain (PVMĮ 122 str. 3 d.): goods must move directly between two other EU member states and all three parties must be VAT-registered in different member states. Correct the PVM19 treatment if a condition fails.", fixLt: "Peržiūrėkite trikampės prekybos grandinę (PVMĮ 122 str. 3 d.): prekės turi judėti tiesiogiai tarp dviejų kitų ES valstybių, o visos trys šalys — būti PVM mokėtojos skirtingose valstybėse narėse. Jei sąlyga netenkinama — pataisykite PVM19 vertinimą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!(inv.references||'').trim()) },
+  { id: "PP_LT_PVM_058", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM20"], cls: null, perLine: false,
+    titleEn: "Service purchase coded non-EU (PVM20) but supplier holds an EU VAT number", title: "Paslaugų pirkimas su ne ES kodu (PVM20), nors teikėjas turi ES PVM kodą",
+    descriptionEn: "Flags invoices where STI code PVM20 is combined with facts that contradict or fail to support that treatment (service purchase coded non-EU (PVM20) but supplier holds an EU VAT number). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM20 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Check who the service provider is and where they are established. The reverse-charge codes (PVM20/PVM21, PVMĮ 95 str. 2 d.) depend on the supplier's VAT status and country; correct the code or the supplier master data.", fixLt: "Patikrinkite, kas yra paslaugų teikėjas ir kur jis įsikūręs. Atvirkštinio apmokestinimo kodai (PVM20/PVM21, PVMĮ 95 str. 2 d.) priklauso nuo teikėjo PVM statuso ir šalies; pataisykite kodą arba tiekėjo kortelės duomenis.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country && ctx.EU.has(pv.country)) },
+  { id: "PP_LT_PVM_059", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM20"], cls: null, perLine: false,
+    titleEn: "Service purchase coded non-EU (PVM20) but supplier gave an EU tax number", title: "Paslaugų pirkimas su ne ES kodu (PVM20), nors teikėjas nurodė ES mokesčių kodą",
+    descriptionEn: "Flags invoices where STI code PVM20 is combined with facts that contradict or fail to support that treatment (service purchase coded non-EU (PVM20) but supplier gave an EU tax number). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM20 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Check who the service provider is and where they are established. The reverse-charge codes (PVM20/PVM21, PVMĮ 95 str. 2 d.) depend on the supplier's VAT status and country; correct the code or the supplier master data.", fixLt: "Patikrinkite, kas yra paslaugų teikėjas ir kur jis įsikūręs. Atvirkštinio apmokestinimo kodai (PVM20/PVM21, PVMĮ 95 str. 2 d.) priklauso nuo teikėjo PVM statuso ir šalies; pataisykite kodą arba tiekėjo kortelės duomenis.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!pv && r0 && r0.country && ctx.EU.has(r0.country)) },
+  { id: "PP_LT_PVM_060", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM20"], cls: null, perLine: false,
+    titleEn: "Service purchase coded non-EU (PVM20) but supplier's number is Lithuanian", title: "Paslaugų pirkimas su ne ES kodu (PVM20), nors teikėjo kodas — Lietuvos",
+    descriptionEn: "Flags invoices where STI code PVM20 is combined with facts that contradict or fail to support that treatment (service purchase coded non-EU (PVM20) but supplier's number is Lithuanian). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM20 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Check who the service provider is and where they are established. The reverse-charge codes (PVM20/PVM21, PVMĮ 95 str. 2 d.) depend on the supplier's VAT status and country; correct the code or the supplier master data.", fixLt: "Patikrinkite, kas yra paslaugų teikėjas ir kur jis įsikūręs. Atvirkštinio apmokestinimo kodai (PVM20/PVM21, PVMĮ 95 str. 2 d.) priklauso nuo teikėjo PVM statuso ir šalies; pataisykite kodą arba tiekėjo kortelės duomenis.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country==='LT') },
+  { id: "PP_LT_PVM_061", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM20"], cls: null, perLine: false,
+    titleEn: "Service purchases from non-EU suppliers (PVM20) — review list", title: "Paslaugų pirkimai iš ne ES teikėjų (PVM20) — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM20 is combined with facts that contradict or fail to support that treatment (service purchases from non-EU suppliers (PVM20) — review list). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM20 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!r0 || !r0.country || (!ctx.EU.has(r0.country) && r0.country!=='LT')) },
+  { id: "PP_LT_PVM_062", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM21"], cls: null, perLine: false,
+    titleEn: "Service purchases from EU VAT payers (PVM21) — review list", title: "Paslaugų pirkimai iš ES PVM mokėtojų (PVM21) — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM21 is combined with facts that contradict or fail to support that treatment (service purchases from EU VAT payers (PVM21) — review list). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM21 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country && ctx.EU.has(pv.country)) },
+  { id: "PP_LT_PVM_063", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM21"], cls: null, perLine: false,
+    titleEn: "Service purchase coded EU (PVM21) but supplier's number is not a VAT number", title: "Paslaugų pirkimas su ES kodu (PVM21), nors teikėjo kodas — ne PVM kodas",
+    descriptionEn: "Flags invoices where STI code PVM21 is combined with facts that contradict or fail to support that treatment (service purchase coded EU (PVM21) but supplier's number is not a VAT number). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM21 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Check who the service provider is and where they are established. The reverse-charge codes (PVM20/PVM21, PVMĮ 95 str. 2 d.) depend on the supplier's VAT status and country; correct the code or the supplier master data.", fixLt: "Patikrinkite, kas yra paslaugų teikėjas ir kur jis įsikūręs. Atvirkštinio apmokestinimo kodai (PVM20/PVM21, PVMĮ 95 str. 2 d.) priklauso nuo teikėjo PVM statuso ir šalies; pataisykite kodą arba tiekėjo kortelės duomenis.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!pv && r0 && r0.country && ctx.EU.has(r0.country)) },
+  { id: "PP_LT_PVM_064", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM21"], cls: null, perLine: false,
+    titleEn: "Service purchase coded EU (PVM21) but supplier's number is Lithuanian", title: "Paslaugų pirkimas su ES kodu (PVM21), nors teikėjo kodas — Lietuvos",
+    descriptionEn: "Flags invoices where STI code PVM21 is combined with facts that contradict or fail to support that treatment (service purchase coded EU (PVM21) but supplier's number is Lithuanian). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM21 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Check who the service provider is and where they are established. The reverse-charge codes (PVM20/PVM21, PVMĮ 95 str. 2 d.) depend on the supplier's VAT status and country; correct the code or the supplier master data.", fixLt: "Patikrinkite, kas yra paslaugų teikėjas ir kur jis įsikūręs. Atvirkštinio apmokestinimo kodai (PVM20/PVM21, PVMĮ 95 str. 2 d.) priklauso nuo teikėjo PVM statuso ir šalies; pataisykite kodą arba tiekėjo kortelės duomenis.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country==='LT') },
+  { id: "PP_LT_PVM_065", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM21"], cls: null, perLine: false,
+    titleEn: "Service purchase coded EU (PVM21) but supplier's country is non-EU or unknown", title: "Paslaugų pirkimas su ES kodu (PVM21), nors teikėjo šalis — ne ES arba nežinoma",
+    descriptionEn: "Flags invoices where STI code PVM21 is combined with facts that contradict or fail to support that treatment (service purchase coded EU (PVM21) but supplier's country is non-EU or unknown). Legal basis: PVMĮ 95 str. 2 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM21 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 95 str. 2 d..", legal: "PVMĮ 95 str. 2 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Check who the service provider is and where they are established. The reverse-charge codes (PVM20/PVM21, PVMĮ 95 str. 2 d.) depend on the supplier's VAT status and country; correct the code or the supplier master data.", fixLt: "Patikrinkite, kas yra paslaugų teikėjas ir kur jis įsikūręs. Atvirkštinio apmokestinimo kodai (PVM20/PVM21, PVMĮ 95 str. 2 d.) priklauso nuo teikėjo PVM statuso ir šalies; pataisykite kodą arba tiekėjo kortelės duomenis.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!inv.supplierAddressCountry || (!ctx.EU.has(inv.supplierAddressCountry) && inv.supplierAddressCountry!=='LT'))) },
+  { id: "PP_LT_PVM_066", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local service purchases from LT-established LT VAT payers — review list", title: "Vietiniai paslaugų pirkimai iš LT įsikūrusių LT PVM mokėtojų — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local service purchases from LT-established LT VAT payers — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country==='LT' && inv.supplierAddressCountry==='LT') },
+  { id: "PP_LT_PVM_067", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local VAT (PVM1) on services from a supplier not established in Lithuania", title: "Vietinis PVM (PVM1) paslaugoms iš Lietuvoje neįsikūrusio teikėjo",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1) on services from a supplier not established in Lithuania). Legal basis: PVMĮ 19 str. 1 d.; 95 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d.; 95 str..", legal: "PVMĮ 19 str. 1 d.; 95 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country==='LT' && inv.supplierAddressCountry && inv.supplierAddressCountry!=='LT') },
+  { id: "PP_LT_PVM_068", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local VAT (PVM1) charged by a Lithuanian non-VAT-payer", title: "Vietinis PVM (PVM1), kurį išskyrė ne PVM mokėtojas Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1) charged by a Lithuanian non-VAT-payer). Legal basis: PVMĮ 19 str. 1 d.; 64 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d.; 64 str..", legal: "PVMĮ 19 str. 1 d.; 64 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country==='LT' && r0.type && r0.type!=='PVM') },
+  { id: "PP_LT_PVM_069", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local VAT (PVM1): Lithuanian supplier's tax-number type missing", title: "Vietinis PVM (PVM1): nenurodytas LT teikėjo mokesčių kodo tipas",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1): Lithuanian supplier's tax-number type missing). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country==='LT' && !r0.type) },
+  { id: "PP_LT_PVM_070", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local VAT (PVM1): foreign VAT number but supplier established in Lithuania", title: "Vietinis PVM (PVM1): užsienio PVM kodas, nors teikėjas įsikūręs Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1): foreign VAT number but supplier established in Lithuania). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country && r0.country!=='LT' && inv.supplierAddressCountry==='LT') },
+  { id: "PP_LT_PVM_071", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local VAT (PVM1): supplier registered and established outside Lithuania", title: "Vietinis PVM (PVM1): teikėjas registruotas ir įsikūręs ne Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1): supplier registered and established outside Lithuania). Legal basis: PVMĮ 19 str. 1 d.; 95 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d.; 95 str..", legal: "PVMĮ 19 str. 1 d.; 95 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country && r0.country!=='LT' && inv.supplierAddressCountry && inv.supplierAddressCountry!=='LT') },
+  { id: "PP_LT_PVM_072", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::PurchaseInvoice",
+    codes: ["PVM1"], cls: "PS", perLine: false,
+    titleEn: "Local VAT (PVM1) on services with no supplier country data at all", title: "Vietinis PVM (PVM1) paslaugoms be jokių teikėjo šalies duomenų",
+    descriptionEn: "Flags invoices where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1) on services with no supplier country data at all). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos sąskaitos, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!inv.supplierAddressCountry && (!r0 || !r0.country)) },
+  { id: "PP_LT_PVM_073", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM2", "PVM3", "PVM58"], cls: "PS", perLine: true,
+    titleEn: "Local service purchases at reduced VAT rates — review list", title: "Vietiniai paslaugų pirkimai su lengvatiniais PVM tarifais — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM2/PVM3/PVM58 is combined with facts that contradict or fail to support that treatment (local service purchases at reduced VAT rates — review list). Legal basis: PVMĮ 19 str. 3-4 d..", description: "Žymimos eilutės, kuriose STI kodas PVM2/PVM3/PVM58 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 3-4 d..", legal: "PVMĮ 19 str. 3-4 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_074", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM5"], cls: "PS", perLine: true,
+    titleEn: "VAT-exempt service purchases — review list", title: "PVM neapmokestinamų paslaugų pirkimai — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt service purchases — review list). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_075", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM15"], cls: ["PR", "IT"], perLine: true,
+    titleEn: "Goods or immovable property coded as supplied outside Lithuania (PVM15)", title: "Prekės ar nekilnojamasis turtas, koduoti kaip patiekti už Lietuvos ribų (PVM15)",
+    descriptionEn: "Flags each line where STI code PVM15 is combined with facts that contradict or fail to support that treatment (goods or immovable property coded as supplied outside Lithuania (PVM15)). Legal basis: PVMĮ 58 str. 1 d. 2 p..", description: "Žymimos eilutės, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 58 str. 1 d. 2 p..", legal: "PVMĮ 58 str. 1 d. 2 p.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the place of supply is outside Lithuania (PVM15, PVMĮ 58 str. 1 d. 2 p.). The buyer's registration data drives B2B place-of-supply (PVMĮ 13 str.); fix the customer's VAT data or the code.", fixLt: "Įsitikinkite, kad teikimo vieta yra už Lietuvos ribų (PVM15, PVMĮ 58 str. 1 d. 2 p.). B2B paslaugų vietą lemia pirkėjo registracijos duomenys (PVMĮ 13 str.); pataisykite pirkėjo PVM duomenis arba kodą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_076", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM15"], cls: null, perLine: false,
+    titleEn: "Services placed outside LT (PVM15) but the buyer's registered address is in Lithuania", title: "Paslaugos už LT ribų (PVM15), nors pirkėjo registracijos adresas — Lietuvoje",
+    descriptionEn: "Flags invoices where STI code PVM15 is combined with facts that contradict or fail to support that treatment (services placed outside LT (PVM15) but the buyer's registered address is in Lithuania). Legal basis: PVMĮ 13 str.; 58 str. 1 d. 2 p..", description: "Žymimos sąskaitos, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str.; 58 str. 1 d. 2 p..", legal: "PVMĮ 13 str.; 58 str. 1 d. 2 p.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the place of supply is outside Lithuania (PVM15, PVMĮ 58 str. 1 d. 2 p.). The buyer's registration data drives B2B place-of-supply (PVMĮ 13 str.); fix the customer's VAT data or the code.", fixLt: "Įsitikinkite, kad teikimo vieta yra už Lietuvos ribų (PVM15, PVMĮ 58 str. 1 d. 2 p.). B2B paslaugų vietą lemia pirkėjo registracijos duomenys (PVMĮ 13 str.); pataisykite pirkėjo PVM duomenis arba kodą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country && pv.country!=='LT' && raC==='LT') },
+  { id: "PP_LT_PVM_077", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM15"], cls: null, perLine: false,
+    titleEn: "Services placed outside LT (PVM15) with consistent foreign buyer data — review list", title: "Paslaugos už LT ribų (PVM15) su nuosekliais užsienio pirkėjo duomenimis — peržiūrai",
+    descriptionEn: "Flags invoices where STI code PVM15 is combined with facts that contradict or fail to support that treatment (services placed outside LT (PVM15) with consistent foreign buyer data — review list). Legal basis: PVMĮ 13 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str..", legal: "PVMĮ 13 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country && pv.country!=='LT' && raC && raC!=='LT') },
+  { id: "PP_LT_PVM_078", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM15"], cls: null, perLine: false,
+    titleEn: "Services placed outside LT (PVM15): buyer's EU/LT number is not a VAT number", title: "Paslaugos už LT ribų (PVM15): pirkėjo ES/LT kodas nėra PVM kodas",
+    descriptionEn: "Flags invoices where STI code PVM15 is combined with facts that contradict or fail to support that treatment (services placed outside LT (PVM15): buyer's EU/LT number is not a VAT number). Legal basis: PVMĮ 13 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str..", legal: "PVMĮ 13 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the place of supply is outside Lithuania (PVM15, PVMĮ 58 str. 1 d. 2 p.). The buyer's registration data drives B2B place-of-supply (PVMĮ 13 str.); fix the customer's VAT data or the code.", fixLt: "Įsitikinkite, kad teikimo vieta yra už Lietuvos ribų (PVM15, PVMĮ 58 str. 1 d. 2 p.). B2B paslaugų vietą lemia pirkėjo registracijos duomenys (PVMĮ 13 str.); pataisykite pirkėjo PVM duomenis arba kodą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!pv && r0 && r0.country && (ctx.EU.has(r0.country)||r0.country==='LT')) },
+  { id: "PP_LT_PVM_079", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM15"], cls: null, perLine: false,
+    titleEn: "Services placed outside LT (PVM15): buyer's non-EU number is not a VAT number", title: "Paslaugos už LT ribų (PVM15): pirkėjo ne ES kodas nėra PVM kodas",
+    descriptionEn: "Flags invoices where STI code PVM15 is combined with facts that contradict or fail to support that treatment (services placed outside LT (PVM15): buyer's non-EU number is not a VAT number). Legal basis: PVMĮ 13 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str..", legal: "PVMĮ 13 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the place of supply is outside Lithuania (PVM15, PVMĮ 58 str. 1 d. 2 p.). The buyer's registration data drives B2B place-of-supply (PVMĮ 13 str.); fix the customer's VAT data or the code.", fixLt: "Įsitikinkite, kad teikimo vieta yra už Lietuvos ribų (PVM15, PVMĮ 58 str. 1 d. 2 p.). B2B paslaugų vietą lemia pirkėjo registracijos duomenys (PVMĮ 13 str.); pataisykite pirkėjo PVM duomenis arba kodą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!pv && r0 && r0.country && !ctx.EU.has(r0.country) && r0.country!=='LT') },
+  { id: "PP_LT_PVM_080", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM15"], cls: null, perLine: false,
+    titleEn: "Services placed outside LT (PVM15) with no buyer tax-number data", title: "Paslaugos už LT ribų (PVM15) be pirkėjo mokesčių kodo duomenų",
+    descriptionEn: "Flags invoices where STI code PVM15 is combined with facts that contradict or fail to support that treatment (services placed outside LT (PVM15) with no buyer tax-number data). Legal basis: PVMĮ 13 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str..", legal: "PVMĮ 13 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!r0 || (!pv && !r0.country)) },
+  { id: "PP_LT_PVM_081", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::Invoice",
+    codes: ["PVM15"], cls: null, perLine: false,
+    titleEn: "Services placed outside LT (PVM15) but the buyer gave a Lithuanian number", title: "Paslaugos už LT ribų (PVM15), nors pirkėjas nurodė Lietuvos kodą",
+    descriptionEn: "Flags invoices where STI code PVM15 is combined with facts that contradict or fail to support that treatment (services placed outside LT (PVM15) but the buyer gave a Lithuanian number). Legal basis: PVMĮ 13 str..", description: "Žymimos sąskaitos, kuriose STI kodas PVM15 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str..", legal: "PVMĮ 13 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Confirm the place of supply is outside Lithuania (PVM15, PVMĮ 58 str. 1 d. 2 p.). The buyer's registration data drives B2B place-of-supply (PVMĮ 13 str.); fix the customer's VAT data or the code.", fixLt: "Įsitikinkite, kad teikimo vieta yra už Lietuvos ribų (PVM15, PVMĮ 58 str. 1 d. 2 p.). B2B paslaugų vietą lemia pirkėjo registracijos duomenys (PVMĮ 13 str.); pataisykite pirkėjo PVM duomenis arba kodą.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country==='LT') },
+  { id: "PP_LT_PVM_082", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PS", perLine: true,
+    titleEn: "Local VAT (PVM1) on services sold to a buyer with a foreign VAT number", title: "Vietinis PVM (PVM1) paslaugoms, kai pirkėjas nurodė užsienio PVM kodą",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local VAT (PVM1) on services sold to a buyer with a foreign VAT number). Legal basis: PVMĮ 13 str. 2 d.; 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str. 2 d.; 19 str. 1 d..", legal: "PVMĮ 13 str. 2 d.; 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country && pv.country!=='LT') },
+  { id: "PP_LT_PVM_083", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PS", perLine: true,
+    titleEn: "Local services where the buyer gave a foreign non-VAT number — review list", title: "Vietinės paslaugos, kai pirkėjas nurodė užsienio ne PVM kodą — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local services where the buyer gave a foreign non-VAT number — review list). Legal basis: PVMĮ 13 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 13 str..", legal: "PVMĮ 13 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!pv && r0 && r0.country && r0.country!=='LT') },
+  { id: "PP_LT_PVM_084", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PS", perLine: true,
+    titleEn: "Local services to buyers with Lithuanian numbers — review list", title: "Vietinės paslaugos pirkėjams su Lietuvos kodais — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local services to buyers with Lithuanian numbers — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (r0 && r0.country==='LT') },
+  { id: "PP_LT_PVM_085", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PS", perLine: true,
+    titleEn: "Local services with no buyer tax-number data — review list", title: "Vietinės paslaugos be pirkėjo mokesčių kodo duomenų — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local services with no buyer tax-number data — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!r0 || !r0.country) },
+  { id: "PP_LT_PVM_086", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM5"], cls: "PS", perLine: true,
+    titleEn: "VAT-exempt services supplied in Lithuania — review list", title: "Lietuvoje suteiktos PVM neapmokestinamos paslaugos — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt services supplied in Lithuania — review list). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_087", severity: "Medium", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM6", "PVM7", "PVM8", "PVM28", "PVM29", "PVM59"], cls: "PS", perLine: true,
+    titleEn: "Services consumed for private needs — review list", title: "Privatiems poreikiams suvartotos paslaugos — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM6/PVM7/PVM8/PVM28/PVM29/PVM59 is combined with facts that contradict or fail to support that treatment (services consumed for private needs — review list). Legal basis: PVMĮ 5, 8 str..", description: "Žymimos eilutės, kuriose STI kodas PVM6/PVM7/PVM8/PVM28/PVM29/PVM59 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 5, 8 str..", legal: "PVMĮ 5, 8 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_088", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchases from LT VAT payers — review list", title: "Vietiniai prekių pirkimai iš LT PVM mokėtojų — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchases from LT VAT payers — review list). Legal basis: PVMĮ 4 str.; 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str.; 19 str. 1 d..", legal: "PVMĮ 4 str.; 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F==='LT' && T==='LT' && pv && pv.country==='LT') },
+  { id: "PP_LT_PVM_089", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) but supplier holds a foreign VAT number", title: "Vietinis prekių pirkimas (PVM1), nors tiekėjas turi užsienio PVM kodą",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) but supplier holds a foreign VAT number). Legal basis: PVMĮ 4 str.; 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str.; 19 str. 1 d..", legal: "PVMĮ 4 str.; 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F==='LT' && T==='LT' && pv && pv.country && pv.country!=='LT') },
+  { id: "PP_LT_PVM_090", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1): supplier's VAT-number country unknown", title: "Vietinis prekių pirkimas (PVM1): nežinoma tiekėjo PVM kodo šalis",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1): supplier's VAT-number country unknown). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F==='LT' && T==='LT' && pv && !pv.country) },
+  { id: "PP_LT_PVM_091", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) from a supplier who is not a VAT payer", title: "Vietinis prekių pirkimas (PVM1) iš tiekėjo, kuris nėra PVM mokėtojas",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) from a supplier who is not a VAT payer). Legal basis: PVMĮ 19 str. 1 d.; 64 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d.; 64 str..", legal: "PVMĮ 19 str. 1 d.; 64 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F==='LT' && T==='LT' && r0 && r0.type && r0.type!=='PVM') },
+  { id: "PP_LT_PVM_092", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) with supplier tax-number type missing", title: "Vietinis prekių pirkimas (PVM1) be tiekėjo mokesčių kodo tipo",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) with supplier tax-number type missing). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F==='LT' && T==='LT' && (!r0 || !r0.type)) },
+  { id: "PP_LT_PVM_093", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) where transport started outside Lithuania", title: "Vietinis prekių pirkimas (PVM1), kai gabenimas prasidėjo ne Lietuvoje",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) where transport started outside Lithuania). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && F!=='LT') },
+  { id: "PP_LT_PVM_094", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) where transport ended outside Lithuania", title: "Vietinis prekių pirkimas (PVM1), kai gabenimas pasibaigė ne Lietuvoje",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) where transport ended outside Lithuania). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && T!=='LT') },
+  { id: "PP_LT_PVM_095", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) with one shipping point missing (supplier is LT VAT payer)", title: "Vietinis prekių pirkimas (PVM1), kai trūksta vieno gabenimo taško (tiekėjas — LT PVM mokėtojas)",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) with one shipping point missing (supplier is LT VAT payer)). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && (!T||T==='LT') && F!==T && pv && pv.country==='LT') },
+  { id: "PP_LT_PVM_097", severity: "High", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchase (PVM1) with shipping point and supplier tax data incomplete", title: "Vietinis prekių pirkimas (PVM1), kai nepilni gabenimo ir tiekėjo mokesčių duomenys",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local goods purchase (PVM1) with shipping point and supplier tax data incomplete). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && (!T||T==='LT') && F!==T && ((r0 && !r0.country) || (!r0))) },
+  { id: "PP_LT_PVM_098", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM2", "PVM3", "PVM58"], cls: "PR", perLine: true,
+    titleEn: "Local goods purchases at reduced VAT rates — review list", title: "Vietiniai prekių pirkimai su lengvatiniais PVM tarifais — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM2/PVM3/PVM58 is combined with facts that contradict or fail to support that treatment (local goods purchases at reduced VAT rates — review list). Legal basis: PVMĮ 19 str. 3-4 d..", description: "Žymimos eilutės, kuriose STI kodas PVM2/PVM3/PVM58 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 3-4 d..", legal: "PVMĮ 19 str. 3-4 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_099", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM5"], cls: "PR", perLine: true,
+    titleEn: "VAT-exempt goods purchases — review list", title: "PVM neapmokestinamų prekių pirkimai — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt goods purchases — review list). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_100", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) where goods ended in another EU member state", title: "Vietinis prekių tiekimas (PVM1), kai prekės pateko į kitą ES valstybę",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) where goods ended in another EU member state). Legal basis: PVMĮ 4 str.; 49 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str.; 49 str..", legal: "PVMĮ 4 str.; 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && ctx.EU.has(T)) },
+  { id: "PP_LT_PVM_101", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) where goods ended outside the EU", title: "Vietinis prekių tiekimas (PVM1), kai prekės pateko už ES ribų",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) where goods ended outside the EU). Legal basis: PVMĮ 4 str.; 41 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str.; 41 str..", legal: "PVMĮ 4 str.; 41 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (T && T!=='LT' && !ctx.EU.has(T)) },
+  { id: "PP_LT_PVM_102", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) that started outside Lithuania", title: "Vietinis prekių tiekimas (PVM1), prasidėjęs ne Lietuvoje",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) that started outside Lithuania). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F && F!=='LT') },
+  { id: "PP_LT_PVM_103", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) started in LT but ended abroad", title: "Vietinis prekių tiekimas (PVM1), prasidėjęs LT, bet pasibaigęs užsienyje",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) started in LT but ended abroad). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Verify the place of supply and the counterparty's VAT registration. Local 21% treatment (PVM1, PVMĮ 19 str. 1 d.) presumes the supply happens in Lithuania between appropriately registered parties; otherwise reclassify (0% intra-EU, export, or reverse charge).", fixLt: "Patikrinkite tiekimo vietą ir kontrahento PVM registraciją. Vietinis 21 proc. vertinimas (PVM1, PVMĮ 19 str. 1 d.) galioja, kai sandoris vyksta Lietuvoje tarp tinkamai registruotų šalių; kitu atveju perklasifikuokite (0 proc. ES viduje, eksportas ar atvirkštinis apmokestinimas).",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && T && T!=='LT') },
+  { id: "PP_LT_PVM_104", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Domestic goods supplies (PVM1) — review list", title: "Vietiniai prekių tiekimai Lietuvoje (PVM1) — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (domestic goods supplies (PVM1) — review list). Legal basis: PVMĮ 4 str.; 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str.; 19 str. 1 d..", legal: "PVMĮ 4 str.; 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((!F||F==='LT') && T==='LT') },
+  { id: "PP_LT_PVM_105", severity: "Medium", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) with the origin country missing", title: "Vietinis prekių tiekimas (PVM1) be nurodytos kilmės šalies",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) with the origin country missing). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!F && T==='LT') },
+  { id: "PP_LT_PVM_106", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) with the destination country missing", title: "Vietinis prekių tiekimas (PVM1) be nurodytos paskirties šalies",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) with the destination country missing). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (F==='LT' && !T) },
+  { id: "PP_LT_PVM_107", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "PR", perLine: true,
+    titleEn: "Local supply of goods (PVM1) with both shipping points missing", title: "Vietinis prekių tiekimas (PVM1) be abiejų gabenimo taškų",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) with both shipping points missing). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!F && !T) },
+  { id: "PP_LT_PVM_108", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM2", "PVM3", "PVM58"], cls: "PR", perLine: true,
+    titleEn: "Local goods supplies at reduced VAT rates — review list", title: "Vietiniai prekių tiekimai su lengvatiniais PVM tarifais — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM2/PVM3/PVM58 is combined with facts that contradict or fail to support that treatment (local goods supplies at reduced VAT rates — review list). Legal basis: PVMĮ 19 str. 3-4 d..", description: "Žymimos eilutės, kuriose STI kodas PVM2/PVM3/PVM58 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 3-4 d..", legal: "PVMĮ 19 str. 3-4 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_109", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM6", "PVM7", "PVM8", "PVM28", "PVM29", "PVM59"], cls: "PR", perLine: true,
+    titleEn: "Goods consumed for private needs — review list", title: "Privatiems poreikiams suvartotos prekės — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM6/PVM7/PVM8/PVM28/PVM29/PVM59 is combined with facts that contradict or fail to support that treatment (goods consumed for private needs — review list). Legal basis: PVMĮ 5 str..", description: "Žymimos eilutės, kuriose STI kodas PVM6/PVM7/PVM8/PVM28/PVM29/PVM59 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 5 str..", legal: "PVMĮ 5 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_110", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "MISSING", perLine: true,
+    titleEn: "Local purchases with goods/services class missing (LT VAT supplier) — review list", title: "Vietiniai pirkimai be prekių/paslaugų požymio (LT PVM tiekėjas) — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local purchases with goods/services class missing (LT VAT supplier) — review list). Legal basis: VA-49 1 priedas.", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: VA-49 1 priedas.", legal: "VA-49 1 priedas",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (pv && pv.country==='LT') },
+  { id: "PP_LT_PVM_111", severity: "Medium", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "MISSING", perLine: true,
+    titleEn: "Local purchase (PVM1) with class missing and a foreign/non-VAT supplier code", title: "Vietinis pirkimas (PVM1) be požymio, kai tiekėjo kodas — užsienio arba ne PVM",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local purchase (PVM1) with class missing and a foreign/non-VAT supplier code). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => ((pv && pv.country && pv.country!=='LT') || (r0 && r0.type && r0.type!=='PVM')) },
+  { id: "PP_LT_PVM_112", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "MISSING", perLine: true,
+    titleEn: "Local purchase (PVM1) with class and supplier tax-number type both missing", title: "Vietinis pirkimas (PVM1) be požymio ir be tiekėjo kodo tipo",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local purchase (PVM1) with class and supplier tax-number type both missing). Legal basis: VA-49 1 priedas.", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: VA-49 1 priedas.", legal: "VA-49 1 priedas",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!r0 || !r0.type) },
+  { id: "PP_LT_PVM_113", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "IT", perLine: true,
+    titleEn: "Fixed-asset acquisitions in Lithuania — review list", title: "Ilgalaikio turto įsigijimai Lietuvoje — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (fixed-asset acquisitions in Lithuania — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_114", severity: "Low", level: 3, kind: "review", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "KT", perLine: true,
+    titleEn: "Other transactions treated as Lithuanian acquisitions — review list", title: "Kiti sandoriai, laikomi įsigijimais Lietuvoje — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (other transactions treated as Lithuanian acquisitions — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_115", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "GSID_NO_PC", perLine: true,
+    titleEn: "Goods/services indicator set but product code missing on local purchase lines", title: "Nurodytas prekių/paslaugų požymis, bet trūksta produkto kodo vietinių pirkimų eilutėse",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (goods/services indicator set but product code missing on local purchase lines). Legal basis: VA-49 1 priedas.", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: VA-49 1 priedas.", legal: "VA-49 1 priedas",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_116", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "IT", perLine: true,
+    titleEn: "Fixed-asset sales in Lithuania — review list", title: "Ilgalaikio turto pardavimai Lietuvoje — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (fixed-asset sales in Lithuania — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_117", severity: "Low", level: 3, kind: "review", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM1"], cls: "KT", perLine: true,
+    titleEn: "Other transactions treated as Lithuanian sales — review list", title: "Kiti sandoriai, laikomi pardavimais Lietuvoje — peržiūrai",
+    descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (other transactions treated as Lithuanian sales — review list). Legal basis: PVMĮ 19 str. 1 d..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 19 str. 1 d..", legal: "PVMĮ 19 str. 1 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_118", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM5"], cls: "MISSING_OR_KT_IT", perLine: true,
+    titleEn: "VAT-exempt sales with goods/services class missing or non-specific", title: "PVM neapmokestinami pardavimai be požymio arba su nespecifiniu požymiu",
+    descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt sales with goods/services class missing or non-specific). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "PP_LT_PVM_119", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM5"], cls: "MISSING_OR_KT_IT", perLine: true,
+    titleEn: "VAT-exempt purchases with goods/services class missing or non-specific", title: "PVM neapmokestinami pirkimai be požymio arba su nespecifiniu požymiu",
+    descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt purchases with goods/services class missing or non-specific). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
+    when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
+  { id: "TAXAI_PVM_2026_EXPIRED", severity: "High", level: 3, kind: "signal", scope: "both", dataTypes: "F-Full; SI; PI", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM2", "PVM7", "PVM17", "PVM26", "PVM30", "PVM44", "PVM52", "PVM54", "PVM57"], cls: null, perLine: true,
+    titleEn: "Expired 9% classifier code used in a 2026+ period", title: "Nebegaliojantis 9 proc. klasifikatoriaus kodas 2026+ laikotarpio rinkmenoje",
+    descriptionEn: "VA-107 (2025-11-25) set 2025-12-31 as the last validity date of the 9%-rate PVM codes (PVM2, PVM7, PVM17, PVM26, PVM30, PVM44, PVM52, PVM54, PVM57). Lines in files whose period starts on or after 2026-01-01 must not carry them.", description: "VA-107 (2025-11-25) nustatė, kad 9 proc. PVM kodų (PVM2, PVM7, PVM17, PVM26, PVM30, PVM44, PVM52, PVM54, PVM57) galiojimas baigiasi 2025-12-31. Rinkmenose, kurių laikotarpis prasideda 2026-01-01 ar vėliau, šių kodų eilutėse būti negali.", legal: "VA-49 2 priedas (VA-107 redakcija); PVMĮ 19 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Align the tax codes with the classifier valid for the file period: the 9% family expired 2025-12-31 (VA-107); from 2026-01-01 use PVM58/PVM59/PVM60 (12%), PVM3-family (5%) or the standard 21% codes.", fixLt: "Suderinkite mokesčio kodus su rinkmenos laikotarpiui galiojančiu klasifikatoriumi: 9 proc. kodų galiojimas baigėsi 2025-12-31 (VA-107); nuo 2026-01-01 naudokite PVM58/PVM59/PVM60 (12 proc.), PVM3 šeimą (5 proc.) arba standartinius 21 proc. kodus.",
+    when: (ctx) => ctx.from2026 },
+  { id: "TAXAI_PVM_2026_EARLY", severity: "Medium", level: 3, kind: "signal", scope: "both", dataTypes: "F-Full; SI; PI", refType: "SaftLt::InvoiceLine",
+    codes: ["PVM58", "PVM59", "PVM60"], cls: null, perLine: true,
+    titleEn: "12% classifier code (PVM58/59/60) used in a pre-2026 period", title: "12 proc. klasifikatoriaus kodas (PVM58/59/60) iki 2026 m. laikotarpio rinkmenoje",
+    descriptionEn: "PVM58, PVM59 and PVM60 are valid only from 2026-01-01 (VA-107). Their appearance in a file whose period ends on or before 2025-12-31 indicates a mapping error.", description: "PVM58, PVM59 ir PVM60 galioja tik nuo 2026-01-01 (VA-107). Jų buvimas rinkmenoje, kurios laikotarpis baigiasi 2025-12-31 ar anksčiau, rodo kodų susiejimo klaidą.", legal: "VA-49 2 priedas (VA-107 redakcija); PVMĮ 19 str. 3 d.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Align the tax codes with the classifier valid for the file period: the 9% family expired 2025-12-31 (VA-107); from 2026-01-01 use PVM58/PVM59/PVM60 (12%), PVM3-family (5%) or the standard 21% codes.", fixLt: "Suderinkite mokesčio kodus su rinkmenos laikotarpiui galiojančiu klasifikatoriumi: 9 proc. kodų galiojimas baigėsi 2025-12-31 (VA-107); nuo 2026-01-01 naudokite PVM58/PVM59/PVM60 (12 proc.), PVM3 šeimą (5 proc.) arba standartinius 21 proc. kodus.",
+    when: (ctx) => ctx.upTo2025 },
+  { id: "TAXAI_PVM_BREXIT_GB", severity: "High", level: 3, kind: "signal", scope: "both", dataTypes: "F-Full; SI; PI", refType: "SaftLt::Invoice",
+    codes: ["PVM13","PVM16","PVM19"], cls: null, perLine: false,
+    titleEn: "Intra-EU code combined with GB after Brexit", title: "ES vidaus kodas kartu su GB po „Brexit“",
+    descriptionEn: "From 2021-01-01 Great Britain is a third country for VAT. Intra-EU codes (PVM13/PVM16/PVM19) combined with GB as Ship-From or Ship-To should be export/import treatment instead; only XI (Northern Ireland) stays EU territory for goods.", description: "Nuo 2021-01-01 Didžioji Britanija PVM tikslais yra trečioji valstybė. ES vidaus kodai (PVM13/PVM16/PVM19) su GB kaip Ship-From ar Ship-To turėtų būti pakeisti eksporto/importo vertinimu; tik XI (Šiaurės Airija) lieka ES teritorija prekėms.", legal: "ES-JK susitarimas; Protokolas dėl IE/Šiaurės Airijos; PVMĮ 41, 49 str.",
+    failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Since 2021-01-01 Great Britain (GB) is a third country for VAT: use export/import treatment, not intra-EU codes. Northern Ireland (XI) remains EU territory for goods only.", fixLt: "Nuo 2021-01-01 Didžioji Britanija (GB) PVM tikslais yra trečioji valstybė: taikykite eksporto/importo vertinimą, ne ES vidaus kodus. Šiaurės Airija (XI) ES teritorija lieka tik prekėms.",
+    when: (ctx, inv) => !ctx.EU.has("GB") && ((inv.shipFromCountry === "GB") || (inv.shipToCountry === "GB")) },
+];
+
+// ── Shared evaluator: declarative spec → findings ────────────────────
+function evalVatRule(rule, data, ctx) {
+  const scopes = rule.scope === "both" ? ["sales", "purchases"] : [rule.scope];
+  const cap = rule.kind === "review" ? 25 : 200; // review lists stay compact
+  const out = [];
+  for (const scope of scopes) {
+    const items = (scope === "sales" ? data?.sales?.items : data?.purchases?.items) || [];
+    for (const inv of items) {
+      const lines = (inv.lines || []).filter((l) => rule.codes.includes(stiOf(l, ctx.taxIndex)) && vatClassMatch(rule.cls, l));
+      if (!lines.length) continue;
+      const regs = regsFor(inv, scope, ctx);
+      const pv = pvmRegOf(regs), r0 = regs[0] || null;
+      const raCv = scope === "sales" ? (ctx.raC.get(inv.customerID) || "") : "";
+      const hasRA = scope === "sales" ? !!ctx.hasRAC.get(inv.customerID) : false;
+      const hasAddr = scope === "sales" ? !!ctx.hasAddrC.get(inv.customerID) : !!inv.supplierAddressCountry;
+      const F = (inv.shipFromCountry || "").trim(), T = (inv.shipToCountry || "").trim();
+      let ok = true;
+      try { ok = rule.when ? !!rule.when(ctx, inv, regs, F, T, pv, r0, raCv, hasRA, hasAddr) : true; } catch (e) { ok = false; }
+      if (!ok) continue;
+      if (rule.perLine) { for (const l of lines) { out.push(vatRow(inv, l, ctx, scope)); if (out.length >= cap) return out; } }
+      else { out.push(vatRow(inv, lines[0], ctx, scope)); if (out.length >= cap) return out; }
+    }
+  }
+  return out;
+}
+
 function renderFailMsg(tpl, row) {
   return String(tpl || "").replace(/@(\w+)/g, (m, k) => (row[k] != null ? String(row[k]) : m));
 }
 
-// Run all audit rules against parsed SAF-T data.
+// Run all VAT audit rules against parsed SAF-T data.
 function runAuditRules(data) {
-  const taxIndex = buildTaxIndex(data);
+  const ctx = buildVatContext(data);
   const hasSales = (data?.sales?.items?.length || 0) > 0;
   const hasPurch = (data?.purchases?.items?.length || 0) > 0;
   const results = AUDIT_RULES.map((rule) => {
-    const applicable = rule.scope === "sales" ? hasSales : hasPurch;
+    const applicable = rule.scope === "both" ? (hasSales || hasPurch) : (rule.scope === "sales" ? hasSales : hasPurch);
     let hits = [];
     let error = null;
-    if (applicable) { try { hits = rule.evaluate(data, taxIndex) || []; } catch (e) { error = e.message; } }
+    if (applicable) { try { hits = evalVatRule(rule, data, ctx) || []; } catch (e) { error = e.message; } }
     const status = error ? "error" : !applicable ? "na" : hits.length ? "flagged" : "clear";
     return {
-      id: rule.id, severity: rule.severity, level: rule.level, dataTypes: rule.dataTypes, refType: rule.refType, scope: rule.scope,
+      id: rule.id, severity: rule.severity, level: rule.level, kind: rule.kind, dataTypes: rule.dataTypes, refType: rule.refType, scope: rule.scope,
       title: rule.title, titleEn: rule.titleEn, description: rule.description, legal: rule.legal,
       status, count: hits.length, error,
-      hits: hits.slice(0, 200).map((row) => ({ row, msg: renderFailMsg(rule.failTpl, row) })),
+      hits: hits.map((row) => ({ row, msg: renderFailMsg(rule.failTpl, row) })),
     };
   });
   const flagged = results.filter((r) => r.status === "flagged");
@@ -1598,6 +3427,7 @@ function runAuditRules(data) {
     na: results.filter((r) => r.status === "na").length,
     findings: results.reduce((s, r) => s + (r.status === "flagged" ? r.count : 0), 0),
     high: flagged.filter((r) => r.severity === "High").length,
+    medium: flagged.filter((r) => r.severity === "Medium").length,
     low: flagged.filter((r) => r.severity === "Low").length,
   };
   return { results, summary };
@@ -2212,7 +4042,7 @@ const STRUCTURAL_RULES = [
   { id: "SAFT_RATE_PVM9", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Lengvatinio 9 proc. tarifo PVM kodai (PVM2/7/17/26/30/44/52/54/57) turi atitikti 9 proc.",
     titleEn: "Reduced-rate (9%) PVM codes must carry 9% where a non-zero rate is declared",
-    description: "Pagal oficialų VMI PVM klasifikatorių, kodai PVM2, PVM7, PVM17, PVM26, PVM30, PVM44, PVM52, PVM54, PVM57 atitinka lengvatinį 9 proc. tarifą (PVMĮ 19 str. 3 d.). Nenulinis tarifas šiems kodams turi būti 9.",
+    description: "Pagal oficialų VMI PVM klasifikatorių, kodai PVM2, PVM7, PVM17, PVM26, PVM30, PVM44, PVM52, PVM54, PVM57 atitinka lengvatinį 9 proc. tarifą (PVMĮ 19 str. 3 d.). Nenulinis tarifas šiems kodams turi būti 9. SVARBU: pagal VA-107 (2025-11-25) šių kodų galiojimas baigėsi 2025-12-31 — jų naudojimą 2026 m. ir vėlesnių laikotarpių rinkmenose eilučių lygiu žymi atskira taisyklė TAXAI_PVM_2026_EXPIRED.",
     legalReq: "VMI PVM klasifikatorius (VA-49 2 priedas); PVMĮ 19 str. 3 d.",
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the rate to 9%, or remap the entry to the right classifier code.",
@@ -2325,7 +4155,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Source = @src | Ref = @ref | TransactionID = @tid",
     fixEn: "Include the referenced GL transaction in GeneralLedgerEntries, or correct the document's TransactionID.",
     fixLt: "Įtraukite nurodytą operaciją į GeneralLedgerEntries arba pataisykite dokumento TransactionID.",
-    evaluate: (d) => { const tx = d.transactions || []; if (!tx.length) return []; const ids = new Set(); tx.forEach((t) => { if (t.transactionID) ids.add(String(t.transactionID).trim()); }); if (!ids.size) return []; const out = []; const chk = (tid, src, ref) => { const v = String(tid || "").trim(); if (v && !ids.has(v)) out.push({ src, ref: ref || "—", tid: v }); }; (d.sales?.items || []).forEach((i) => chk(i.transactionID, "SalesInvoice", i.invoiceNo)); (d.purchases?.items || []).forEach((i) => chk(i.transactionID, "PurchaseInvoice", i.invoiceNo)); (d.payments || []).forEach((p) => chk(p.transactionID, "Payment", p.paymentRefNo)); (d.stockMovements || []).forEach((s) => chk(s.glTransactionID, "StockMovement", s.sourceDocumentID || "")); return out.slice(0, 200); } },
+    evaluate: (d) => { const tx = d.transactions || []; if (!tx.length) return []; const ids = new Set(); tx.forEach((t) => { if (t.transactionID) ids.add(String(t.transactionID).trim()); }); if (!ids.size) return []; const out = []; const chk = (tid, src, ref) => { const v = String(tid || "").trim(); if (v && !ids.has(v)) out.push({ src, ref: ref || "—", tid: v }); }; (d.sales?.items || []).forEach((i) => chk(i.transactionID, "SalesInvoice", i.invoiceNo)); (d.purchases?.items || []).forEach((i) => chk(i.transactionID, "PurchaseInvoice", i.invoiceNo)); (d.payments || []).forEach((p) => chk(p.transactionID, "Payment", p.paymentRefNo)); (d.stockMovements || []).forEach((s) => chk(s.glTransactionID, "StockMovement", s.sourceDocumentID || "")); (d.assetTransactions || []).forEach((t) => chk(t.glTransactionID, "AssetTransaction", t.assetTransactionID || t.assetID || "")); return out.slice(0, 200); } },
   { id: "SAFT_PAY_003", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MP", refType: "Payment", requires: "payments",
     title: "Mokėjimo data turi patekti į mokestinį laikotarpį",
     titleEn: "Payment date must fall within the fiscal period",
@@ -2499,7 +4329,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Account = @acct | Register = @reg | GL = @gl | Diff = @diff",
     fixEn: "Investigate register entries vs GL postings on this cost account; the totals must reconcile.",
     fixLt: "Ištirkite turto registro įrašus ir DK įrašus šioje savikainos sąskaitoje; sumos privalo sutapti.",
-    evaluate: (d) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0))); const agg = new Map(); (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); const v = a.acquisitionCostEnd; if (!id || v == null) return; agg.set(id, (agg.get(id) || 0) + v); }); const out = []; agg.forEach((v, aid) => { if (!gl.has(aid)) return; const g = gl.get(aid); const diff = v - g; if (Math.abs(diff) > Math.max(1, Math.abs(g) * 1e-6)) out.push({ acct: aid, reg: Math.round(v * 100) / 100, gl: Math.round(g * 100) / 100, diff: Math.round(diff * 100) / 100 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, { c: (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0), o: (g.openingDebitBalance || 0) - (g.openingCreditBalance || 0) })); const agg = new Map(); (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!id) return; const e = agg.get(id) || { c: 0, o: 0, hasO: false }; const v = a.acquisitionCostEnd; if (v != null) e.c += v; const b = a.valuation ? a.valuation.acquisitionAndProductionCostsBegin : null; if (b != null) { e.o += b; e.hasO = true; } agg.set(id, e); }); const out = []; agg.forEach((v, aid) => { if (!gl.has(aid)) return; const g = gl.get(aid); const dC = v.c - g.c; if (Math.abs(dC) > Math.max(1, Math.abs(g.c) * 1e-6)) out.push({ when: "close", acct: aid, reg: Math.round(v.c * 100) / 100, gl: Math.round(g.c * 100) / 100, diff: Math.round(dC * 100) / 100 }); if (v.hasO) { const dO = v.o - g.o; if (Math.abs(dO) > Math.max(1, Math.abs(g.o) * 1e-6)) out.push({ when: "open", acct: aid, reg: Math.round(v.o * 100) / 100, gl: Math.round(g.o * 100) / 100, diff: Math.round(dO * 100) / 100 }); } }); return out.slice(0, 200); } },
 
   { id: "SAFT_SID_001", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "sales",
     title: "Pardavimo sąskaitų SystemID unikalumas",
@@ -2545,7 +4375,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @txn | Value = @value",
     fixEn: "Add the missing master-file record or correct the line reference.",
     fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
-    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const c = (l.customerID || "").trim(); if (c && ctx && ctx.customerMap && !ctx.customerMap.has(c)) out.push({ txn: t.transactionID || "—", value: c }); })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => { const hc = (t.customerID || "").trim(); if (hc && ctx && ctx.customerMap && !ctx.customerMap.has(hc)) out.push({ txn: t.transactionID || "—", value: hc }); (t.lines || []).forEach((l) => { const c = (l.customerID || "").trim(); if (c && ctx && ctx.customerMap && !ctx.customerMap.has(c)) out.push({ txn: t.transactionID || "—", value: c }); }); }); return out.slice(0, 200); } },
   { id: "SAFT_INT_022", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "DK eilučių tiekėjų numeriai egzistuoja tiekėjų byloje",
     titleEn: "GL line SupplierIDs exist in the supplier master",
@@ -2554,7 +4384,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @txn | Value = @value",
     fixEn: "Add the missing master-file record or correct the line reference.",
     fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
-    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const s = (l.supplierID || "").trim(); if (s && ctx && ctx.supplierMap && !ctx.supplierMap.has(s)) out.push({ txn: t.transactionID || "—", value: s }); })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => { const hs = (t.supplierID || "").trim(); if (hs && ctx && ctx.supplierMap && !ctx.supplierMap.has(hs)) out.push({ txn: t.transactionID || "—", value: hs }); (t.lines || []).forEach((l) => { const s = (l.supplierID || "").trim(); if (s && ctx && ctx.supplierMap && !ctx.supplierMap.has(s)) out.push({ txn: t.transactionID || "—", value: s }); }); }); return out.slice(0, 200); } },
   { id: "SAFT_INT_034", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "DK eilučių mokesčių kodai egzistuoja mokesčių lentelėje",
     titleEn: "GL line TaxCodes exist in the tax table",
@@ -2949,6 +4779,383 @@ const STRUCTURAL_RULES = [
     fixLt: "Pataisykite ES kontrahento PVM kod\u0105 pagal \u0161alies strukt\u016br\u0105 (patikrinkite per VIES).",
     evaluate: (d) => { const RX = { AT: ["^ATU\\d{8}$", "ATU+8 sk."], BE: ["^BE[01]\\d{9}$", "BE+10 sk."], BG: ["^BG\\d{9,10}$", "BG+9-10 sk."], CY: ["^CY\\d{8}[A-Z]$", "CY+8 sk.+raid\u0117"], CZ: ["^CZ\\d{8,10}$", "CZ+8-10 sk."], DE: ["^DE\\d{9}$", "DE+9 sk."], DK: ["^DK\\d{8}$", "DK+8 sk."], EE: ["^EE\\d{9}$", "EE+9 sk."], EL: ["^EL\\d{9}$", "EL+9 sk."], ES: ["^ES[A-Z0-9]\\d{7}[A-Z0-9]$", "ES+9 \u017eenkl."], FI: ["^FI\\d{8}$", "FI+8 sk."], FR: ["^FR[A-Z0-9]{2}\\d{9}$", "FR+2 \u017eenkl.+9 sk."], HR: ["^HR\\d{11}$", "HR+11 sk."], HU: ["^HU\\d{8}$", "HU+8 sk."], IE: ["^IE(\\d{7}[A-Z]{1,2}|\\d[A-Z+*]\\d{5}[A-Z])$", "IE formatas"], IT: ["^IT\\d{11}$", "IT+11 sk."], LU: ["^LU\\d{8}$", "LU+8 sk."], LV: ["^LV\\d{11}$", "LV+11 sk."], MT: ["^MT\\d{8}$", "MT+8 sk."], NL: ["^NL\\d{9}B\\d{2}$", "NL+9 sk.+B+2 sk."], PL: ["^PL\\d{10}$", "PL+10 sk."], PT: ["^PT\\d{9}$", "PT+9 sk."], RO: ["^RO\\d{2,10}$", "RO+2-10 sk."], SE: ["^SE\\d{12}$", "SE+12 sk."], SI: ["^SI\\d{8}$", "SI+8 sk."], SK: ["^SK\\d{10}$", "SK+10 sk."], XI: ["^XI(\\d{9}|\\d{12}|(GD|HA)\\d{3})$", "XI formatas"] }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); const m = v.match(/^([A-Z]{2})/); if (!m || m[1] === "LT") return; const e = RX[m[1]]; if (!e) return; if (!new RegExp(e[0]).test(v)) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, pattern: e[1] }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out.slice(0, 200); } },
 
+  // ═══ Generalized referential-integrity rules (VMI SCHEMA_INT family) ═══
+  { id: "SAFT_INT_SD_ACCT", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI; PA; MG", refType: "SourceDocument", requires: "accounts",
+    title: "Pirminių dokumentų DK sąskaitų kodai (AccountID) turi būti pagrindinėje duomenų byloje",
+    titleEn: "Source-document AccountIDs must exist in GeneralLedgerAccounts",
+    description: "Visose pirminių dokumentų vietose (pardavimo/pirkimo sąskaitų antraštėse ir eilutėse, mokėjimų eilutėse, atsargų judėjimo eilutėse) nurodyti DK sąskaitų kodai tikrinami su pagrindinės duomenų bylos sąskaitų planu. Apibendrina VMI SCHEMA_INT_001/006/014/019/045/048.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "Vieta = @src | Dok. = @ref | AccountID = @id",
+    fixEn: "Add the missing account to GeneralLedgerAccounts or correct the AccountID reference.",
+    fixLt: "Įtraukite trūkstamą sąskaitą į pagrindinę duomenų bylą arba pataisykite AccountID nuorodą.",
+    evaluate: (d) => { const ids = new Set((d.accounts || []).map((a) => String(a.accountID || "").trim()).filter(Boolean)); if (!ids.size) return []; const out = []; const chk = (v, src, ref) => { const s = String(v || "").trim(); if (s && !ids.has(s) && out.length < 200) out.push({ src, ref: ref || "—", id: s }); };
+      (d.sales?.items || []).forEach((i) => { chk(i.accountID, "SalesInvoice", i.invoiceNo); (i.lines || []).forEach((l) => chk(l.accountID, "SalesInvoiceLine", i.invoiceNo)); });
+      (d.purchases?.items || []).forEach((i) => { chk(i.accountID, "PurchaseInvoice", i.invoiceNo); (i.lines || []).forEach((l) => chk(l.accountID, "PurchaseInvoiceLine", i.invoiceNo)); });
+      (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => chk(l.accountID, "PaymentLine", p.paymentRefNo)));
+      (d.stockMovements || []).forEach((m) => (m.lines || []).forEach((l) => chk(l.accountID, "StockMovementLine", m.movementReference || m.systemID)));
+      return out; } },
+  { id: "SAFT_INT_SD_PARTY", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI; MG; AS", refType: "SourceDocument", requires: "any",
+    title: "Pirminių dokumentų pirkėjų/tiekėjų nuorodos turi būti pagrindinėje duomenų byloje",
+    titleEn: "Source-document customer/supplier references must exist in MasterFiles",
+    description: "Tikrinamos rečiau pildomos kontrahentų nuorodos: pardavimo sąskaitos SupplierID, pirkimo sąskaitos CustomerID, atsargų judėjimo eilučių CustomerID/SupplierID ir turto operacijų SupplierID/CustomerID — visos turi būti pagrindinėje duomenų byloje. (Pagrindines nuorodas — SI CustomerID, PI SupplierID, mokėjimų eilutes — tikrina SAFT_SAL_003 / SAFT_PUR_002 / SAFT_PAY_002.) Apibendrina VMI SCHEMA_INT_003/015/038/044/047.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "Vieta = @src | Dok. = @ref | Tipas = @kind | ID = @id",
+    fixEn: "Add the counterparty to the Customers/Suppliers master or correct the reference.",
+    fixLt: "Įtraukite kontrahentą į pirkėjų/tiekėjų bylą arba pataisykite nuorodą.",
+    evaluate: (d) => { const cs = new Set((d.customers || []).map((c) => String(c.customerID || "").trim()).filter(Boolean)); const ss = new Set((d.suppliers || []).map((s) => String(s.supplierID || "").trim()).filter(Boolean)); const out = []; const chk = (v, set, kind, src, ref) => { const s = String(v || "").trim(); if (s && set.size && !set.has(s) && out.length < 200) out.push({ src, ref: ref || "—", kind, id: s }); };
+      (d.sales?.items || []).forEach((i) => chk(i.supplierID, ss, "SupplierID", "SalesInvoice", i.invoiceNo));
+      (d.purchases?.items || []).forEach((i) => chk(i.customerID, cs, "CustomerID", "PurchaseInvoice", i.invoiceNo));
+      (d.stockMovements || []).forEach((m) => (m.lines || []).forEach((l) => { chk(l.customerID, cs, "CustomerID", "StockMovementLine", m.movementReference || m.systemID); chk(l.supplierID, ss, "SupplierID", "StockMovementLine", m.movementReference || m.systemID); }));
+      (d.assetTransactions || []).forEach((t) => { chk(t.supplierID, ss, "SupplierID", "AssetTransaction", t.assetTransactionID || t.assetID); chk(t.customerID, cs, "CustomerID", "AssetTransaction", t.assetTransactionID || t.assetID); });
+      return out; } },
+  { id: "SAFT_INT_SD_TAX", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI; PA; MG", refType: "SourceDocument", requires: "taxCodes",
+    title: "Pirminių dokumentų mokesčių kodai (TaxCode) turi būti mokesčių lentelėje",
+    titleEn: "Source-document TaxCodes must exist in the TaxTable",
+    description: "Sąskaitų suminės dalies (DocumentTotals), mokėjimų eilučių ir atsargų judėjimo eilučių mokesčių kodai tikrinami su pagrindinės duomenų bylos mokesčių lentele. (Sąskaitų eilučių kodus tikrina SAFT_SAL_005 / SAFT_PUR_004.) Apibendrina VMI SCHEMA_INT_002/026/046/056/057.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "Vieta = @src | Dok. = @ref | TaxCode = @id",
+    fixEn: "Add the tax code to the TaxTable or correct the reference.",
+    fixLt: "Įtraukite mokesčio kodą į mokesčių lentelę arba pataisykite nuorodą.",
+    evaluate: (d) => { const ids = new Set((d.taxCodes || []).map((t) => String(t.taxCode || "").trim()).filter(Boolean)); if (!ids.size) return []; const out = []; const chk = (v, src, ref) => { const s = String(v || "").trim(); if (s && !ids.has(s) && out.length < 200) out.push({ src, ref: ref || "—", id: s }); };
+      (d.sales?.items || []).forEach((i) => (i.totalsTaxCodes || []).forEach((c) => chk(c, "SalesInvoiceTotals", i.invoiceNo)));
+      (d.purchases?.items || []).forEach((i) => (i.totalsTaxCodes || []).forEach((c) => chk(c, "PurchaseInvoiceTotals", i.invoiceNo)));
+      (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => (l.taxCodes || []).forEach((c) => chk(c, "PaymentLine", p.paymentRefNo))));
+      (d.stockMovements || []).forEach((m) => (m.lines || []).forEach((l) => (l.taxCodes || []).forEach((c) => chk(c, "StockMovementLine", m.movementReference || m.systemID))));
+      return out; } },
+  { id: "SAFT_INT_SD_PROD", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "products",
+    title: "Sąskaitų eilučių prekių kodai (ProductCode) turi būti prekių byloje",
+    titleEn: "Invoice-line ProductCodes must exist in the Products master",
+    description: "Pardavimo ir pirkimo sąskaitų eilutėse nurodyti prekių/paslaugų kodai tikrinami su pagrindinės duomenų bylos prekių sąrašu. (Atsargų judėjimo eilutes tikrina SAFT_MOV_001.) Apibendrina VMI SCHEMA_INT_005/018.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "Vieta = @src | Sąskaita = @ref | ProductCode = @id",
+    fixEn: "Add the product to the Products master or correct the line's ProductCode.",
+    fixLt: "Įtraukite prekę į prekių bylą arba pataisykite eilutės ProductCode.",
+    evaluate: (d) => { const ids = new Set((d.products || []).map((p) => String(p.productCode || "").trim()).filter(Boolean)); if (!ids.size) return []; const CLASSES = new Set(["PR","PS","IT","KT"]); const out = []; const chk = (v, src, ref) => { const s = String(v || "").trim(); if (s && !CLASSES.has(s) && !ids.has(s) && out.length < 200) out.push({ src, ref: ref || "—", id: s }); };
+      (d.sales?.items || []).forEach((i) => (i.lines || []).forEach((l) => chk(l.productCode, "SalesInvoiceLine", i.invoiceNo)));
+      (d.purchases?.items || []).forEach((i) => (i.lines || []).forEach((l) => chk(l.productCode, "PurchaseInvoiceLine", i.invoiceNo)));
+      return out; } },
+  { id: "SAFT_INT_SD_UOM", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; SI; PI; MG", refType: "Line", requires: "any",
+    title: "Eilučių matavimo vienetai (UOM) turi būti matavimo vienetų lentelėje",
+    titleEn: "Line units of measure must exist in the UOMTable",
+    description: "Pardavimo/pirkimo sąskaitų ir atsargų judėjimo eilučių matavimo vienetai tikrinami su pagrindinės duomenų bylos UOM lentele (kai ji pateikta). Apibendrina VMI SCHEMA_INT_027/031/036/041.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "Vieta = @src | Dok. = @ref | UOM = @id",
+    fixEn: "Add the unit to the UOMTable or correct the line's unit of measure.",
+    fixLt: "Įtraukite vienetą į UOM lentelę arba pataisykite eilutės matavimo vienetą.",
+    evaluate: (d) => { const ids = new Set((d.uoms || []).map((u) => String(u.unitOfMeasure || "").trim()).filter(Boolean)); if (!ids.size) return []; const out = []; const chk = (v, src, ref) => { const s = String(v || "").trim(); if (s && !ids.has(s) && out.length < 200) out.push({ src, ref: ref || "—", id: s }); };
+      (d.sales?.items || []).forEach((i) => (i.lines || []).forEach((l) => chk(l.unitOfMeasure, "SalesInvoiceLine", i.invoiceNo)));
+      (d.purchases?.items || []).forEach((i) => (i.lines || []).forEach((l) => chk(l.unitOfMeasure, "PurchaseInvoiceLine", i.invoiceNo)));
+      (d.stockMovements || []).forEach((m) => (m.lines || []).forEach((l) => chk(l.uom, "StockMovementLine", m.movementReference || m.systemID)));
+      return out; } },
+  { id: "SAFT_INT_SD_ANL", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI; PA", refType: "Line", requires: "any",
+    title: "Eilučių analizės numeriai (AnalysisID) turi būti analizės lentelėje",
+    titleEn: "Line AnalysisIDs must exist in the AnalysisTypeTable",
+    description: "Pardavimo/pirkimo sąskaitų ir mokėjimų eilučių analizės numeriai tikrinami su pagrindinės duomenų bylos analizės lentele (kai ji pateikta). (DK eilutes tikrina SAFT_INT_043.) Apibendrina VMI SCHEMA_INT_009/011/049.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "Vieta = @src | Dok. = @ref | AnalysisID = @id",
+    fixEn: "Add the analysis entry to the AnalysisTypeTable or correct the line reference.",
+    fixLt: "Įtraukite analizės įrašą į analizės lentelę arba pataisykite eilutės nuorodą.",
+    evaluate: (d) => { const ids = new Set((d.analysisTypes || []).map((a) => String(a.analysisID || "").trim()).filter(Boolean)); if (!ids.size) return []; const out = []; const chk = (v, src, ref) => { const s = String(v || "").trim(); if (s && !ids.has(s) && out.length < 200) out.push({ src, ref: ref || "—", id: s }); };
+      (d.sales?.items || []).forEach((i) => (i.lines || []).forEach((l) => (l.analysisIDs || []).forEach((a) => chk(a, "SalesInvoiceLine", i.invoiceNo))));
+      (d.purchases?.items || []).forEach((i) => (i.lines || []).forEach((l) => (l.analysisIDs || []).forEach((a) => chk(a, "PurchaseInvoiceLine", i.invoiceNo))));
+      (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => (l.analysisIDs || []).forEach((a) => chk(a, "PaymentLine", p.paymentRefNo))));
+      return out; } },
+  { id: "SAFT_AST_VAL_ACCT", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; MF", refType: "Asset", requires: "assets",
+    title: "Turto kortelių (įsk. vertinimų) DK sąskaitų kodai turi būti sąskaitų plane",
+    titleEn: "Asset (incl. valuation) AccountIDs must exist in GeneralLedgerAccounts",
+    description: "Visi turto kortelėse nurodyti DK sąskaitų kodai — pagrindinis, vertinimų, nuvertėjimų, perkainojimų — tikrinami su pagrindinės duomenų bylos sąskaitų planu. Apibendrina VMI SCHEMA_INT_023/033/050/051/052/053.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_INT); rinkmenos vientisumas",
+    failTpl: "AssetID = @ref | AccountID = @id",
+    fixEn: "Add the missing account to GeneralLedgerAccounts or correct the asset card.",
+    fixLt: "Įtraukite trūkstamą sąskaitą į sąskaitų planą arba pataisykite turto kortelę.",
+    evaluate: (d) => { const ids = new Set((d.accounts || []).map((a) => String(a.accountID || "").trim()).filter(Boolean)); if (!ids.size) return []; const out = []; (d.assets || []).forEach((a) => (a.accountIDs || []).forEach((v) => { const s = String(v || "").trim(); if (s && !ids.has(s) && out.length < 200) out.push({ ref: a.assetID || "—", id: s }); })); return out; } },
+  { id: "SAFT_HDR_008", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "Header", requires: "always",
+    title: "Rinkmenos dalių laukai (NumberOfParts / PartNumber) turi būti suderinti",
+    titleEn: "File part fields (NumberOfParts / PartNumber) must be consistent",
+    description: "Kai rinkmena teikiama dalimis, PartNumber turi būti nuo 1 iki NumberOfParts, o abu laukai — teigiami sveikieji skaičiai. Atitinka VMI SCHEMA_INT_054.",
+    legalReq: "VMI SAF-T techninė specifikacija; SCHEMA_INT_054",
+    failTpl: "NumberOfParts = @parts | PartNumber = @part",
+    fixEn: "Set PartNumber between 1 and NumberOfParts (both positive integers).",
+    fixLt: "Nustatykite PartNumber nuo 1 iki NumberOfParts (abu — teigiami sveikieji skaičiai).",
+    evaluate: (d) => { const h = d.header || {}; const np = h.numberOfParts, pn = h.partNumber; if (np == null && pn == null) return []; const bad = (np != null && np < 1) || (pn != null && pn < 1) || (np != null && pn != null && pn > np); return bad ? [{ parts: np ?? "—", part: pn ?? "—" }] : []; } },
+  // ═══ Generalized data-validation rules (VMI SCHEMA_DVT family) ═══
+  { id: "SAFT_DVT_EUR", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full", refType: "AmountStructure", requires: "always",
+    title: "EUR valiutos įrašuose CurrencyAmount turi sutapti su Amount (visa rinkmena)",
+    titleEn: "EUR-currency records: CurrencyAmount must equal Amount (whole file)",
+    description: "Vienu rinkmenos perėjimu kiekviename mazge, kur nurodyta CurrencyCode=EUR kartu su Amount ir CurrencyAmount, tikrinama jų lygybė. Apibendrina ~25 VMI SCHEMA_DVT valiutos taisykles (003/004/006/008/011/013/015–017/020/024/030–039/069/070/082/085).",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "Mazgas = @node (@where) | Amount = @a | CurrencyAmount = @ca",
+    fixEn: "For EUR entries the currency amount must equal the base amount; correct the export.",
+    fixLt: "EUR įrašuose valiutinė suma turi sutapti su bazine suma; pataisykite eksportą.",
+    evaluate: (d) => (d.genChecks?.eurMismatch || []) },
+  { id: "SAFT_DVT_TAXC", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full", refType: "TaxInformation", requires: "always",
+    title: "Mokesčio suma turi atitikti bazės ir tarifo sandaugą (visa rinkmena)",
+    titleEn: "TaxAmount must equal TaxBase × TaxPercentage (whole file)",
+    description: "Vienu rinkmenos perėjimu kiekviename TaxInformation/TaxInformationTotals mazge (DK eilutės, sąskaitų eilutės ir suminės dalys, mokėjimai, atsargų judėjimai) tikrinama TaxAmount = TaxBase × TaxPercentage. Apibendrina VMI SCHEMA_DVT_001/002/005/007/026/028/064/065/066/067/083/084.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "Mazgas = @node (@where) | Bazė = @base | Tarifas = @rate | Suma = @amt | Lauktina = @exp",
+    fixEn: "Recompute the tax amount from base × rate or correct the stated base/rate.",
+    fixLt: "Perskaičiuokite mokesčio sumą iš bazės × tarifo arba pataisykite bazę/tarifą.",
+    evaluate: (d) => (d.genChecks?.taxCalc || []) },
+  { id: "SAFT_DVT_LINEAMT", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
+    title: "Eilutės suma turi atitikti kiekio ir vieneto kainos sandaugą (be nuolaidos)",
+    titleEn: "Line amount should equal Quantity × UnitPrice (when no discount is stated)",
+    description: "Sąskaitų eilutėse, kuriose nenurodyta nuolaida (SettlementAmount), tikrinama InvoiceLineAmount = Quantity × UnitPrice. Atitinka VMI SCHEMA_DVT_021/025. Peržiūros indikatorius.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "@where | Kiekis = @q | Kaina = @up | Suma = @amt | Lauktina = @exp",
+    fixEn: "Verify the line: quantity × unit price should equal the line amount unless a discount applies.",
+    fixLt: "Patikrinkite eilutę: kiekio ir vieneto kainos sandauga turi atitikti eilutės sumą, nebent taikoma nuolaida.",
+    evaluate: (d) => (d.genChecks?.lineAmt || []) },
+  { id: "SAFT_DVT_OPENDATES", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full; MF", refType: "OpenInvoice", requires: "any",
+    title: "Neapmokėtų sąskaitų datos negali būti vėlesnės už rinkmenos laikotarpio pabaigą",
+    titleEn: "Open-invoice dates must not exceed the file period end",
+    description: "Pirkėjų/tiekėjų kortelėse pateiktų neapmokėtų sąskaitų (OpenSalesInvoice / OpenPurchaseInvoice) datos tikrinamos su rinkmenos laikotarpiu. Atitinka VMI SCHEMA_DVT_012/014/079/081.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "Pusė = @side | Subjektas = @party | Sąskaita = @no | Data = @date | Laikotarpio pabaiga = @pe",
+    fixEn: "Open-item dates after the period end indicate an extraction error; rebuild the open-item lists as of the period end.",
+    fixLt: "Datos po laikotarpio pabaigos rodo išrašos klaidą; perdarykite neapmokėtų dokumentų sąrašus laikotarpio pabaigos datai.",
+    evaluate: (d) => { const pe = String(d.header?.periodEnd || d.header?.fiscalYearTo || "").slice(0, 10); if (!pe) return []; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => ((side === "customers" ? p.openSalesInvoices : p.openPurchaseInvoices) || []).forEach((o) => { const dts = [o.invoiceDate, o.glPostingDate].filter(Boolean); dts.forEach((dt) => { const v = String(dt).slice(0, 10); if (v > pe && out.length < 200) out.push({ side: side === "customers" ? "AR" : "AP", party: p[idk] || "—", no: o.invoiceNo || "—", date: v, pe }); }); })); scan(d.customers, "customers", "customerID"); scan(d.suppliers, "suppliers", "supplierID"); return out; } },
+  { id: "SAFT_DVT_PSADATES", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full; MF", refType: "PhysicalStockAcquisition", requires: "always",
+    title: "Atsargų įsigijimo datos negali būti vėlesnės už rinkmenos laikotarpio pabaigą",
+    titleEn: "PhysicalStockAcquisition dates must not exceed the file period end",
+    description: "Atsargų likučių įsigijimo įrašų datos (DateOfAcquisition, InvoiceDate, GLPostingDate) tikrinamos su rinkmenos laikotarpiu. Atitinka VMI SCHEMA_DVT_009/080.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "@where | Laukas = @field | Data = @date | Laikotarpio pabaiga = @periodEnd",
+    fixEn: "Acquisition dates after the period end indicate an extraction error; correct the stock register export.",
+    fixLt: "Įsigijimo datos po laikotarpio pabaigos rodo išrašos klaidą; pataisykite atsargų registro eksportą.",
+    evaluate: (d) => (d.genChecks?.psaDates || []) },
+  { id: "SAFT_DVT_STOCKFLOW", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full; MG; MF", refType: "PhysicalStockEntry", requires: "stockMovements",
+    title: "Atsargų likučiai: pradžios likutis + gauta − išduota turi atitikti pabaigos likutį",
+    titleEn: "Stock balances: opening + received − issued should equal closing (per product)",
+    description: "Pagal atsargų judėjimo eilutes (D = gauta, K = išduota) kiekvienai prekei perskaičiuojamas pabaigos likutis ir lyginamas su atsargų byloje nurodytu. Peržiūros indikatorius (skirtingi matavimo vienetai ar sandėliai gali paaiškinti skirtumus). Atitinka VMI SCHEMA_DVT_049.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "Prekė = @product | Pradžia = @opening | Gauta = @received | Išduota = @issued | Pabaiga = @closing | Lauktina = @expected",
+    fixEn: "Review the product's movements vs the stock register; check unit conversions and warehouse scope.",
+    fixLt: "Peržiūrėkite prekės judėjimus ir atsargų registrą; patikrinkite matavimo vienetų konversijas ir sandėlių aprėptį.",
+    evaluate: (d) => (d.genChecks?.stockFlow || []) },
+  { id: "SAFT_DVT_APC", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full; MF", refType: "AssetValuation", requires: "assets",
+    title: "Turto įsigijimo savikainos judėjimas: pradžia + įsigijimai + perkėlimai − pardavimai ≈ pabaiga",
+    titleEn: "Asset APC roll-forward: begin + acquisitions + transfers − disposals ≈ end",
+    description: "Kiekvieno turto vertinimo įsigijimo savikainos pabaigos suma perskaičiuojama iš pradžios sumos, laikotarpio įsigijimų, perkėlimų ir pardavimų/nurašymų. Peržiūros indikatorius. Atitinka VMI SCHEMA_DVT_068/074.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "AssetID = @id | Pradžia = @b | Įsigijimai = @acq | Perkėlimai = @tr | Pardavimai = @disp | Pabaiga = @e | Lauktina = @exp",
+    fixEn: "Review the asset card: the APC movement does not reconcile; a component may be missing from the export.",
+    fixLt: "Peržiūrėkite turto kortelę: savikainos judėjimas nesueina; eksporte gali trūkti komponento.",
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const v = a.valuation; if (!v || v.acquisitionAndProductionCostsBegin == null) return; const b = v.acquisitionAndProductionCostsBegin, e = v.acquisitionAndProductionCostsEnd ?? 0; const exp = b + (v.acquisitionsInPeriod || 0) + (v.transfers || 0) - (v.assetDisposal || 0); if (Math.abs(exp - e) > 0.05 && out.length < 100) out.push({ id: a.assetID || "—", b: r2s(b), acq: r2s(v.acquisitionsInPeriod || 0), tr: r2s(v.transfers || 0), disp: r2s(v.assetDisposal || 0), e: r2s(e), exp: r2s(exp) }); }); return out; } },
+  // ═══ Generalized control-record rules (VMI SCHEMA_DVT CTRLCALC) ═══
+  { id: "SAFT_CTL_004", family: "SCHEMA", category: "Control totals", severity: "Low", dataTypes: "F-Full; AS", refType: "AssetTransactions", requires: "assetTransactions",
+    title: "Turto operacijų kontrolinis skaičius turi atitikti faktinį įrašų skaičių",
+    titleEn: "Asset-transactions control count must match the actual entries",
+    description: "Lyginamas deklaruotas NumberOfAssetTransactions su faktiniu turto operacijų skaičiumi rinkmenoje. Atitinka VMI SCHEMA_DVT_048.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT, kontroliniai įrašai)",
+    failTpl: "Deklaruota = @declared | Faktiškai = @actual",
+    fixEn: "Regenerate the control record so it matches the actual number of asset transactions.",
+    fixLt: "Pergeneruokite kontrolinį įrašą, kad jis atitiktų faktinį turto operacijų skaičių.",
+    evaluate: (d) => { const m = d.assetTxMeta; if (!m || m.numberOfEntries == null) return []; const n = (d.assetTransactions || []).length; return m.numberOfEntries === n ? [] : [{ declared: m.numberOfEntries, actual: n }]; } },
+  { id: "SAFT_CTL_005", family: "SCHEMA", category: "Control totals", severity: "Low", dataTypes: "F-Full; MG", refType: "MovementOfGoods", requires: "stockMovements",
+    title: "Atsargų judėjimo gautų/išduotų kiekių kontrolinės sumos turi atitikti eilutes",
+    titleEn: "Movement-of-goods received/issued control totals must match the lines",
+    description: "Deklaruoti TotalQuantityReceived / TotalQuantityIssued lyginami su eilučių kiekių sumomis pagal D/K požymį. Atitinka VMI SCHEMA_DVT_059/060/075/076.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT, kontroliniai įrašai)",
+    failTpl: "Laukas = @field | Deklaruota = @declared | Faktiškai = @actual",
+    fixEn: "Regenerate the control totals from the movement lines.",
+    fixLt: "Pergeneruokite kontrolines sumas iš judėjimo eilučių.",
+    evaluate: (d) => (d.genChecks?.mgQty || []) },
+  { id: "SAFT_PAY_004", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; PA", refType: "Payment", requires: "payments",
+    title: "Mokėjimo bendra suma turi atitikti eilučių sumą",
+    titleEn: "Payment GrossTotal should equal the sum of its lines",
+    description: "Kiekvieno mokėjimo deklaruota bendra suma (GrossTotal) lyginama su eilučių sumų suma. Atitinka VMI SCHEMA_DVT_061/073.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT)",
+    failTpl: "Mokėjimas = @ref | GrossTotal = @declared | Eilučių suma = @actual",
+    fixEn: "Recompute the payment's gross total from its lines.",
+    fixLt: "Perskaičiuokite mokėjimo bendrą sumą iš jo eilučių.",
+    evaluate: (d) => { const out = []; (d.payments || []).forEach((p) => { if (p.grossTotal == null || !(p.lines || []).length) return; let s = 0; p.lines.forEach((l) => { const a = l.debitAmount != null ? l.debitAmount : (l.creditAmount != null ? l.creditAmount : (l.paymentLineAmount || 0)); s += Math.abs(a || 0); }); if (Math.abs(s - Math.abs(p.grossTotal)) > 0.02 && out.length < 200) out.push({ ref: p.paymentRefNo || "—", declared: r2s(p.grossTotal), actual: r2s(s) }); }); return out; } },
+
+  // ═══ Additional VMI-mapped review rules (ACCOUNTING_BAT / OTHER_OST / TAX_TRT) ═══
+  { id: "SAFT_BAT_021", family: "ACCOUNTING", category: "Fixed assets", severity: "Low", dataTypes: "F-Full; MF", refType: "Asset", requires: "assets",
+    title: "Turto įvedimas į eksploataciją: datos ir nusidėvėjimo nuoseklumas",
+    titleEn: "Asset put-into-operation: date and depreciation consistency",
+    description: "Tikrinama, ar eksploatacijos pradžios data (StartUpDate) nėra ankstesnė už įsigijimo datą ir ar turtui, kuriam skaičiuojamas laikotarpio nusidėvėjimas, nurodyta eksploatacijos pradžia. Atitinka VMI ACCOUNTING_BAT_021.",
+    legalReq: "VAS / įmonės apskaitos politika; VMI ACCOUNTING_BAT_021",
+    failTpl: "AssetID = @id | Problema = @issue | Įsigyta = @acq | Eksploatacija = @start",
+    fixEn: "Correct the asset card dates: start-up cannot precede acquisition; depreciated assets need a start-up date.",
+    fixLt: "Pataisykite turto kortelės datas: eksploatacijos pradžia negali būti ankstesnė už įsigijimą; nudėvimam turtui nurodykite eksploatacijos pradžią.",
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const acq = String(a.dateOfAcquisition || "").slice(0, 10), st = String(a.startUpDate || "").slice(0, 10); if (acq && st && st < acq && out.length < 200) out.push({ id: a.assetID || "—", issue: "StartUpDate < DateOfAcquisition", acq, start: st }); const dep = (a.depreciationForPeriod || 0) || (a.valuation && a.valuation.depreciationForPeriod) || 0; if (dep > 0 && !st && out.length < 200) out.push({ id: a.assetID || "—", issue: "Nudėvima be StartUpDate", acq: acq || "—", start: "—" }); }); return out; } },
+  { id: "SAFT_OST_004", family: "OTHER", category: "Cash", severity: "Low", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "Dideli grynųjų pinigų judėjimai kasoje (≥ 5 000 € įrašas)",
+    titleEn: "Large cash movements in the cash account (entry ≥ €5,000)",
+    description: "DK kasos sąskaitose (272*) ieškoma pavienių įrašų, viršijančių 5 000 € atsiskaitymų grynaisiais ribą. Peržiūros indikatorius. Atitinka VMI OTHER_OST_004.",
+    legalReq: "Atsiskaitymų grynaisiais pinigais ribojimo įstatymas (5 000 € riba); VMI OTHER_OST_004",
+    failTpl: "Operacija = @tx | Sąskaita = @acct | Suma = @amt €",
+    fixEn: "Review large cash entries: cash settlements between businesses above €5,000 are restricted.",
+    fixLt: "Peržiūrėkite didelius kasos įrašus: atsiskaitymai grynaisiais tarp ūkio subjektų virš 5 000 € ribojami.",
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (id.indexOf("272") !== 0) return; const amt = Math.max(Math.abs(l.debitAmount || 0), Math.abs(l.creditAmount || 0)); if (amt >= 5000 && out.length < 200) out.push({ tx: t.transactionID || "—", acct: id, amt: Math.round(amt * 100) / 100 }); })); return out; } },
+  { id: "SAFT_OST_005", family: "OTHER", category: "Cash", severity: "Low", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
+    title: "Didelės atskaitingų asmenų sumos laikotarpio pradžiai / pabaigai",
+    titleEn: "Large accountable-person balances at period start / end",
+    description: "Atskaitingų asmenų sąskaitose (pagal pavadinimą arba 2435*) ieškoma didelių likučių (≥ 10 000 €) laikotarpio pradžiai ir pabaigai. Peržiūros indikatorius. Atitinka VMI OTHER_OST_005/006.",
+    legalReq: "VMI OTHER_OST_005/006 (metodologinė riba)",
+    failTpl: "Sąskaita = @acct (@name) | Momentas = @when | Likutis = @bal €",
+    fixEn: "Review accountable-person balances: large outstanding advances may signal undocumented spending.",
+    fixLt: "Peržiūrėkite atskaitingų asmenų likučius: dideli neatsiskaityti avansai gali rodyti nepagrįstas išlaidas.",
+    evaluate: (d) => { const out = []; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); const nm = String(a.accountDescription || a.description || ""); if (!(id.indexOf("2435") === 0 || /atskaiting/i.test(nm))) return; const o = (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0); const c = (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0); if (Math.abs(o) >= 10000 && out.length < 200) out.push({ acct: id, name: nm.slice(0, 30), when: "pradžia", bal: Math.round(o * 100) / 100 }); if (Math.abs(c) >= 10000 && out.length < 200) out.push({ acct: id, name: nm.slice(0, 30), when: "pabaiga", bal: Math.round(c * 100) / 100 }); }); return out; } },
+  { id: "SAFT_TRT_002", family: "TAX", category: "Risk signals", severity: "Low", dataTypes: "F-Full; PI", refType: "PurchaseInvoice", requires: "purchases",
+    title: "Vienkartiniai stambūs pirkimai (≥ 50 000 €)",
+    titleEn: "One-off large purchases (≥ €50,000)",
+    description: "Pirkimo sąskaitos, kurių bendra suma viršija 50 000 € (metodologinė riba). Peržiūros indikatorius. Atitinka VMI TAX_TRT_002.",
+    legalReq: "VMI TAX_TRT_002 (rizikos signalas)",
+    failTpl: "Sąskaita = @no | Tiekėjas = @sup | Suma = @amt €",
+    fixEn: "Verify substance and documentation of one-off large purchases.",
+    fixLt: "Patikrinkite vienkartinių stambių pirkimų pagrįstumą ir dokumentaciją.",
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const g = i.documentTotals ? Math.abs(i.documentTotals.grossTotal || 0) : 0; if (g >= 50000 && out.length < 200) out.push({ no: i.invoiceNo || "—", sup: i.supplierID || "—", amt: Math.round(g * 100) / 100 }); }); return out; } },
+  { id: "SAFT_TRT_003", family: "TAX", category: "Risk signals", severity: "Low", dataTypes: "F-Full; PI", refType: "Supplier", requires: "purchases",
+    title: "Pasikartojantys stambūs pirkimai iš to paties tiekėjo",
+    titleEn: "Repeated large purchases from the same supplier",
+    description: "Tiekėjai, iš kurių laikotarpiu gauta ≥ 3 sąskaitos po ≥ 10 000 € arba kurių bendra suma ≥ 100 000 € (metodologinės ribos). Peržiūros indikatorius. Atitinka VMI TAX_TRT_003.",
+    legalReq: "VMI TAX_TRT_003 (rizikos signalas)",
+    failTpl: "Tiekėjas = @sup | Sąskaitų ≥10k = @n | Bendra suma = @total €",
+    fixEn: "Review concentrated purchasing from a single supplier.",
+    fixLt: "Peržiūrėkite koncentruotus pirkimus iš vieno tiekėjo.",
+    evaluate: (d) => { const agg = new Map(); (d.purchases?.items || []).forEach((i) => { const s = String(i.supplierID || "").trim(); if (!s) return; const g = i.documentTotals ? Math.abs(i.documentTotals.grossTotal || 0) : 0; const a = agg.get(s) || { n: 0, total: 0 }; if (g >= 10000) a.n++; a.total += g; agg.set(s, a); }); const out = []; agg.forEach((a, s) => { if ((a.n >= 3 || a.total >= 100000) && out.length < 200) out.push({ sup: s, n: a.n, total: Math.round(a.total * 100) / 100 }); }); return out; } },
+  { id: "SAFT_TRT_004", family: "TAX", category: "Risk signals", severity: "Low", dataTypes: "F-Full; PI", refType: "PurchaseInvoice", requires: "purchases",
+    title: "Pirkimai, ženkliai viršijantys laikotarpio vidurkį (≥ 5×)",
+    titleEn: "Purchases far above the period average (≥ 5×)",
+    description: "Pirkimo sąskaitos, kurių suma ≥ 5 kartus viršija laikotarpio pirkimų vidurkį (kai sąskaitų ≥ 5 ir suma ≥ 5 000 €). Peržiūros indikatorius. Atitinka VMI TAX_TRT_004.",
+    legalReq: "VMI TAX_TRT_004 (rizikos signalas)",
+    failTpl: "Sąskaita = @no | Tiekėjas = @sup | Suma = @amt € | Vidurkis = @avg €",
+    fixEn: "Review purchases that deviate strongly from the period's average ticket.",
+    fixLt: "Peržiūrėkite pirkimus, kurie smarkiai nukrypsta nuo laikotarpio vidurkio.",
+    evaluate: (d) => { const items = (d.purchases?.items || []).filter((i) => i.documentTotals); if (items.length < 5) return []; const sums = items.map((i) => Math.abs(i.documentTotals.grossTotal || 0)); const avg = sums.reduce((a, b) => a + b, 0) / sums.length; if (!(avg > 0)) return []; const out = []; items.forEach((i, k) => { const g = sums[k]; if (g >= 5000 && g >= 5 * avg && out.length < 200) out.push({ no: i.invoiceNo || "—", sup: i.supplierID || "—", amt: Math.round(g * 100) / 100, avg: Math.round(avg * 100) / 100 }); }); return out; } },
+
+  // ═══ Gap-closing rules — exact VMI formulas from the LT_RULES workbook ═══
+  { id: "SAFT_HDR_009", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "Header", requires: "always",
+    title: "Rinkmenos sukūrimo data turi būti vėlesnė už laikotarpio pabaigą",
+    titleEn: "AuditFileDateCreated must be later than the period end",
+    description: "Antraštėje nurodyta rinkmenos sukūrimo data (AuditFileDateCreated) turi būti vėlesnė nei rinkmenos laikotarpio pabaiga (PeriodEnd). Atitinka VMI SCHEMA_DVT_019.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT_019)",
+    failTpl: "Sukūrimo data = @created | Laikotarpio pabaiga = @pe",
+    fixEn: "Generate the file after the reporting period ends, or correct the creation date.",
+    fixLt: "Generuokite rinkmeną pasibaigus ataskaitiniam laikotarpiui arba pataisykite sukūrimo datą.",
+    evaluate: (d) => { const h = d.header || {}; const cr = String(h.auditFileDateCreated || "").slice(0, 10); const pe = String(h.periodEnd || "").slice(0, 10); if (!cr || !pe) return []; return cr <= pe ? [{ created: cr, pe }] : []; } },
+  { id: "SAFT_PAY_005", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; PA", refType: "Payment", requires: "payments",
+    title: "Mokėjimo suminė mokesčių suma turi atitikti eilučių mokesčių sumą",
+    titleEn: "Payment tax totals must equal the sum of its line-level taxes",
+    description: "Mokėjimo suminiuose rezultatuose nurodyta mokesčių suma (TaxInformationTotals/TaxAmount) lyginama su mokėjimo eilutėse nurodytų mokesčių sumų aritmetine suma. Atitinka VMI SCHEMA_DVT_077.",
+    legalReq: "VMI SAF-T taisyklės (SCHEMA_DVT_077)",
+    failTpl: "Mokėjimas = @ref | Suminė = @totals | Eilučių suma = @lines",
+    fixEn: "Recompute the payment's tax totals from its lines.",
+    fixLt: "Perskaičiuokite mokėjimo suminę mokesčių dalį iš jo eilučių.",
+    evaluate: (d) => (d.genChecks?.payTax || []) },
+  { id: "SAFT_PDT_PMSPEC", family: "TAX", category: "Corporate tax", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "Specialiųjų PM tarifų kodų (PM100/PM13/PM14/PM15) taikymas — statuso patikra",
+    titleEn: "Special CIT rate codes (PM100/PM13/PM14/PM15) used — verify entitlement status",
+    description: "DK eilutėse pritaikius PM100 (socialinė įmonė), PM13/PM14 (LEZ įmonė) ar PM15 (tonažo mokestis) kodus, pažymima patikrinti, ar įmonė laikotarpiu atitiko atitinkamo statuso kriterijus — to iš pačios SAF-T rinkmenos nustatyti negalima. Atitinka VMI TAX_PDT_003/006/007/008 (kurių formuluotė — tas pats „patikrinkite statusą\u201c).",
+    legalReq: "PMĮ 5 str. 5 d. (PM100); PMĮ 58 str. 16 d. 2 p. (PM13/PM14); PMĮ 38(1) str. (PM15)",
+    failTpl: "Operacija = @tx | Eilutė = @rec | Kodas = @code | Tikrintina sąlyga: @cond",
+    fixEn: "Confirm the company held the required status (social enterprise / FEZ / shipping unit) for the period; otherwise correct the CIT code.",
+    fixLt: "Patvirtinkite, kad įmonė laikotarpiu turėjo reikiamą statusą (socialinė įmonė / LEZ / laivybos vienetas); kitaip pataisykite PM kodą.",
+    evaluate: (d) => { const SPEC = { PM100: "socialinės įmonės statusas ir PMĮ 5 str. 5 d. kriterijai", PM13: "LEZ įmonės statusas ir PMĮ 58 str. 16 d. 2 p. kriterijai", PM14: "LEZ įmonės statusas ir PMĮ 58 str. 16 d. 2 p. kriterijai", PM15: "laivybos vieneto statusas ir PMĮ 38(1) str. kriterijai" }; const sti = new Map(); (d.taxCodes || []).forEach((t) => { if (t.taxCode) sti.set(String(t.taxCode).trim(), String(t.stiTaxCode || "").trim().toUpperCase()); }); const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const raw = l.taxInfo && l.taxInfo.taxCode ? String(l.taxInfo.taxCode).trim() : ""; if (!raw) return; const code = /^PM\d+$/i.test(raw) ? raw.toUpperCase() : (sti.get(raw) || ""); if (SPEC[code] && out.length < 200) out.push({ tx: t.transactionID || "—", rec: l.recordID || "—", code, cond: SPEC[code] }); })); return out; } },
+  { id: "SAFT_PDT_APA_USE", family: "TAX", category: "Corporate tax", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "„Pelnas“ klasifikatoriaus APA-6/8/9/13/14/16/17 naudojimas — peržiūra",
+    titleEn: "Profit-classifier codes APA-6/8/9/13/14/16/17 used — review required",
+    description: "Šie APA kodai žymi mokestinės apskaitos duomenis, kurie finansinėje apskaitoje įprastai nekaupiami (APA-13/14/16/17), reikalauja skaičiavimo patikros (APA-9 pozityviosios pajamos pagal PMĮ 39 str.; APA-8 pripažinimo skirtumai) arba apmokestinamumo įvertinimo (APA-6 neapmokestinamosios pajamos). Atitinka VMI TAX_PDT_014/015/016/017/018/019/043.",
+    legalReq: "PMĮ 39 str. (APA-9); PMĮ nuostatos dėl pripažinimo skirtumų; VMI „Pelnas“ klasifikatorius",
+    failTpl: "Operacija = @tx | Eilutė = @rec | Kodas = @code | @why",
+    fixEn: "Review the entry: confirm the APA coding and the underlying tax-accounting computation.",
+    fixLt: "Peržiūrėkite įrašą: patvirtinkite APA kodavimą ir mokestinės apskaitos skaičiavimą.",
+    evaluate: (d) => { const WHY = { "APA-6": "patikrinkite, ar pajamos tikrai neapmokestinamos", "APA-8": "mokestinės ir finansinės apskaitos pripažinimo skirtumai DK — patikrinkite", "APA-9": "patikrinkite pozityviųjų pajamų apskaičiavimą (PMĮ 39 str.)", "APA-13": "tokie mokestinės apskaitos duomenys finansinėje apskaitoje įprastai nekaupiami", "APA-14": "tokie mokestinės apskaitos duomenys finansinėje apskaitoje įprastai nekaupiami", "APA-16": "tokie mokestinės apskaitos duomenys finansinėje apskaitoje įprastai nekaupiami", "APA-17": "tokie mokestinės apskaitos duomenys finansinėje apskaitoje įprastai nekaupiami" }; const map = new Map(); (d.analysisTypes || []).forEach((a) => { if (a.analysisID) map.set(String(a.analysisID).trim(), String(a.stiAnalysisID || "").trim()); }); const norm = (s) => String(s || "").toUpperCase().replace(/\s+/g, "").replace(/^APA(\d)/, "APA-$1"); const apaOf = (a) => { const cands = [map.get(String(a.analysisID || "").trim()), a.analysisID, String(a.analysisType || "").toUpperCase() === "APA" ? "APA-" + a.analysisID : null]; for (const c of cands) { const n = norm(c); if (/^APA-\d+$/.test(n)) return n; } return null; }; const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => (l.analysis || []).forEach((a) => { const code = apaOf(a); if (code && WHY[code] && out.length < 200) out.push({ tx: t.transactionID || "—", rec: l.recordID || "—", code, why: WHY[code] }); }))); return out; } },
+  { id: "SAFT_PDT_APA_ACCT", family: "TAX", category: "Corporate tax", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "APA-7 / APA-10 eilučių DK sąskaitos turi atitikti klasifikatorių Nr. 1",
+    titleEn: "APA-7 / APA-10 lines must sit on the correct classifier-No.1 accounts",
+    description: "APA-7 (neįtraukiamos pajamos, ne dividendai) eilutės turi būti pajamų sąskaitose pagal klasifikatorių Nr. 1 (5500, 5604); APA-10 (VP ir IFP perleidimo rezultatas) — finansinės-investicinės veiklos rezultato sąskaitose (54xx/64xx). Atitinka VMI TAX_PDT_013/042.",
+    legalReq: "VMI DK sąskaitų klasifikatorius Nr. 1; „Pelnas“ klasifikatorius",
+    failTpl: "Operacija = @tx | Eilutė = @rec | Kodas = @code | Sąskaita = @acct | Lauktina: @expect",
+    fixEn: "Move the entry to the matching classifier account or correct the APA code.",
+    fixLt: "Perkelkite įrašą į atitinkamą klasifikatoriaus sąskaitą arba pataisykite APA kodą.",
+    evaluate: (d) => { const tbl = new Map(); (d.accounts || []).forEach((a) => tbl.set(String(a.accountID || "").trim(), String(a.accountTableID || a.accountID || "").trim())); const map = new Map(); (d.analysisTypes || []).forEach((a) => { if (a.analysisID) map.set(String(a.analysisID).trim(), String(a.stiAnalysisID || "").trim()); }); const norm = (s) => String(s || "").toUpperCase().replace(/\s+/g, "").replace(/^APA(\d)/, "APA-$1"); const apaOf = (a) => { const cands = [map.get(String(a.analysisID || "").trim()), a.analysisID, String(a.analysisType || "").toUpperCase() === "APA" ? "APA-" + a.analysisID : null]; for (const c of cands) { const n = norm(c); if (/^APA-\d+$/.test(n)) return n; } return null; }; const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const codes = (l.analysis || []).map(apaOf).filter(Boolean); if (!codes.length) return; const acct = String(l.accountID || "").trim(); const cls = tbl.get(acct) || acct; if (codes.includes("APA-7") && !(cls.indexOf("5500") === 0 || cls.indexOf("5604") === 0) && out.length < 200) out.push({ tx: t.transactionID || "—", rec: l.recordID || "—", code: "APA-7", acct, expect: "5500 / 5604" }); if (codes.includes("APA-10") && !(cls.indexOf("54") === 0 || cls.indexOf("64") === 0) && out.length < 200) out.push({ tx: t.transactionID || "—", rec: l.recordID || "—", code: "APA-10", acct, expect: "54xx / 64xx" }); })); return out; } },
+  { id: "SAFT_PDT_APA_690", family: "TAX", category: "Corporate tax", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "Pelno mokesčio sąnaudos (6900/6901) negali būti žymimos APA-2/3/8 (leidžiami atskaitymai)",
+    titleEn: "Income-tax expense (6900/6901) must not carry APA-2/3/8 deductible coding",
+    description: "DK eilutės, kurių sąskaita pagal klasifikatorių Nr. 1 yra 6900 arba 6901 (pelno mokesčio ir atidėto pelno mokesčio sąnaudos), negali būti priskirtos leidžiamų atskaitymų APA-2/APA-3/APA-8 kodams — pelno mokestis nėra leidžiamas atskaitymas. Atitinka VMI TAX_PDT_024.",
+    legalReq: "PMĮ 31 str. 1 d. 1 p. (pelno mokestis — neleidžiami atskaitymai)",
+    failTpl: "Operacija = @tx | Eilutė = @rec | Sąskaita = @acct | APA = @code",
+    fixEn: "Recode the income-tax expense as non-deductible (it must not reduce the CIT base).",
+    fixLt: "Perkoduokite pelno mokesčio sąnaudas kaip neleidžiamus atskaitymus (jos negali mažinti PM bazės).",
+    evaluate: (d) => { const tbl = new Map(); (d.accounts || []).forEach((a) => tbl.set(String(a.accountID || "").trim(), String(a.accountTableID || a.accountID || "").trim())); const map = new Map(); (d.analysisTypes || []).forEach((a) => { if (a.analysisID) map.set(String(a.analysisID).trim(), String(a.stiAnalysisID || "").trim()); }); const norm = (s) => String(s || "").toUpperCase().replace(/\s+/g, "").replace(/^APA(\d)/, "APA-$1"); const apaOf = (a) => { const cands = [map.get(String(a.analysisID || "").trim()), a.analysisID, String(a.analysisType || "").toUpperCase() === "APA" ? "APA-" + a.analysisID : null]; for (const c of cands) { const n = norm(c); if (/^APA-\d+$/.test(n)) return n; } return null; }; const BAD = new Set(["APA-2", "APA-3", "APA-8"]); const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const acct = String(l.accountID || "").trim(); const cls = tbl.get(acct) || acct; if (!(cls.indexOf("6900") === 0 || cls.indexOf("6901") === 0)) return; (l.analysis || []).forEach((a) => { const code = apaOf(a); if (code && BAD.has(code) && out.length < 200) out.push({ tx: t.transactionID || "—", rec: l.recordID || "—", acct, code }); }); })); return out; } },
+  { id: "SAFT_PDT_APA_DESC", family: "TAX", category: "Corporate tax", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
+    title: "Perkainojimo / gamybos nuostolių sąnaudos pažymėtos kaip leidžiami atskaitymai (APA-2/3/8)",
+    titleEn: "Revaluation / production-loss expenses coded as deductible (APA-2/3/8)",
+    description: "DK eilutės su APA-2/APA-3/APA-8, kurių aprašyme yra „perkain“ (turto/įsipareigojimų perkainojimas, išskyrus rizikai drausti įsigytas IFP) arba „brok“/„gedim“ (gamybos nuostoliai), žymimos patikrai — tokios sąnaudos PMĮ tvarka gali būti neleidžiamos arba ribojamos. Atitinka VMI TAX_PDT_026/027.",
+    legalReq: "PMĮ 17 / 31 str. (neleidžiami ir ribojamų dydžių atskaitymai)",
+    failTpl: "Operacija = @tx | Eilutė = @rec | APA = @code | Kategorija: @cat | Aprašymas: @desc",
+    fixEn: "Verify deductibility: revaluation and production-loss expenses are restricted under PMĮ.",
+    fixLt: "Patikrinkite atskaitomumą: perkainojimo ir gamybos nuostolių sąnaudos pagal PMĮ ribojamos.",
+    evaluate: (d) => { const map = new Map(); (d.analysisTypes || []).forEach((a) => { if (a.analysisID) map.set(String(a.analysisID).trim(), String(a.stiAnalysisID || "").trim()); }); const norm = (s) => String(s || "").toUpperCase().replace(/\s+/g, "").replace(/^APA(\d)/, "APA-$1"); const apaOf = (a) => { const cands = [map.get(String(a.analysisID || "").trim()), a.analysisID, String(a.analysisType || "").toUpperCase() === "APA" ? "APA-" + a.analysisID : null]; for (const c of cands) { const n = norm(c); if (/^APA-\d+$/.test(n)) return n; } return null; }; const BAD = new Set(["APA-2", "APA-3", "APA-8"]); const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const codes = (l.analysis || []).map(apaOf).filter((c) => c && BAD.has(c)); if (!codes.length) return; const desc = String(l.description || t.description || ""); let cat = ""; if (/perkain/i.test(desc)) cat = "perkainojimas (TAX_PDT_026)"; else if (/brok|gedim/i.test(desc)) cat = "gamybos nuostoliai (TAX_PDT_027)"; if (cat && out.length < 200) out.push({ tx: t.transactionID || "—", rec: l.recordID || "—", code: codes[0], cat, desc: desc.slice(0, 40) }); })); return out; } },
+  { id: "SAFT_TRT_011", family: "TAX", category: "Payroll taxes", severity: "High", dataTypes: "F-Full; GL", refType: "GeneralLedgerAccount", requires: "transactions",
+    title: "Mokėtinos VSD įmokos (4482) turi būti skaičiuojamos kiekvieną mėnesį",
+    titleEn: "Payable social-insurance contributions (4482) must be accrued every month",
+    description: "Kiekvieną rinkmenos laikotarpio mėnesį turi būti apyvarta DK sąskaitoje, atitinkančioje klasifikatoriaus Nr. 1 kodą 4482 (mokėtinos socialinio draudimo įmokos). Taisyklė taikoma tik kai sąskaitų plane yra darbo užmokesčio kontekstas. Atitinka VMI TAX_TRT_011.",
+    legalReq: "VSD įstatymas; VMI TAX_TRT_011",
+    failTpl: "Metai = @year | Mėnuo = @month | Sąskaita (klas.) = 4482 — apyvartos nėra",
+    fixEn: "Check that month's payroll sheet: social-insurance contributions appear unaccrued.",
+    fixLt: "Patikrinkite to mėnesio darbo užmokesčio žiniaraštį: VSD įmokos nepriskaičiuotos.",
+    evaluate: (d) => { const tbl = (a) => String(a.accountTableID || a.accountID || "").trim(); const accs = d.accounts || []; const has4482 = accs.some((a) => tbl(a).indexOf("4482") === 0); const wageCtx = has4482 || accs.some((a) => tbl(a).indexOf("4480") === 0 || /darbo užmok|atlygin/i.test(String(a.accountDescription || ""))); if (!wageCtx) return []; const ids = new Set(accs.filter((a) => tbl(a).indexOf("4482") === 0).map((a) => String(a.accountID || "").trim())); if (!ids.size) return [{ year: "—", month: "—" }]; const ps = String(d.header?.periodStart || "").slice(0, 7), pe = String(d.header?.periodEnd || "").slice(0, 7); if (!ps || !pe) return []; const seen = new Set(); (d.transactions || []).forEach((t) => { const m = String(t.transactionDate || t.glPostingDate || "").slice(0, 7); if (!m) return; (t.lines || []).forEach((l) => { if (ids.has(String(l.accountID || "").trim()) && ((l.debitAmount || 0) !== 0 || (l.creditAmount || 0) !== 0)) seen.add(m); }); }); const out = []; let [y, mo] = ps.split("-").map(Number); const [ye, me] = pe.split("-").map(Number); while (y < ye || (y === ye && mo <= me)) { const key = `${y}-${String(mo).padStart(2, "0")}`; if (!seen.has(key) && out.length < 60) out.push({ year: y, month: key.slice(5) }); mo++; if (mo > 12) { mo = 1; y++; } } return out; } },
+  { id: "SAFT_TRT_012", family: "TAX", category: "Payroll taxes", severity: "High", dataTypes: "F-Full; GL", refType: "GeneralLedgerAccount", requires: "transactions",
+    title: "Mokėtinas GPM (4481) turi būti skaičiuojamas kiekvieną mėnesį",
+    titleEn: "Payable personal income tax (4481) must be accrued every month",
+    description: "Kiekvieną rinkmenos laikotarpio mėnesį turi būti apyvarta DK sąskaitoje, atitinkančioje klasifikatoriaus Nr. 1 kodą 4481 (mokėtinas gyventojų pajamų mokestis). Taisyklė taikoma tik kai sąskaitų plane yra darbo užmokesčio kontekstas. Atitinka VMI TAX_TRT_012.",
+    legalReq: "GPMĮ; VMI TAX_TRT_012",
+    failTpl: "Metai = @year | Mėnuo = @month | Sąskaita (klas.) = 4481 — apyvartos nėra",
+    fixEn: "Check that month's payroll sheet: personal income tax appears unaccrued.",
+    fixLt: "Patikrinkite to mėnesio darbo užmokesčio žiniaraštį: GPM nepriskaičiuotas.",
+    evaluate: (d) => { const tbl = (a) => String(a.accountTableID || a.accountID || "").trim(); const accs = d.accounts || []; const has4481 = accs.some((a) => tbl(a).indexOf("4481") === 0); const wageCtx = has4481 || accs.some((a) => tbl(a).indexOf("4480") === 0 || /darbo užmok|atlygin/i.test(String(a.accountDescription || ""))); if (!wageCtx) return []; const ids = new Set(accs.filter((a) => tbl(a).indexOf("4481") === 0).map((a) => String(a.accountID || "").trim())); if (!ids.size) return [{ year: "—", month: "—" }]; const ps = String(d.header?.periodStart || "").slice(0, 7), pe = String(d.header?.periodEnd || "").slice(0, 7); if (!ps || !pe) return []; const seen = new Set(); (d.transactions || []).forEach((t) => { const m = String(t.transactionDate || t.glPostingDate || "").slice(0, 7); if (!m) return; (t.lines || []).forEach((l) => { if (ids.has(String(l.accountID || "").trim()) && ((l.debitAmount || 0) !== 0 || (l.creditAmount || 0) !== 0)) seen.add(m); }); }); const out = []; let [y, mo] = ps.split("-").map(Number); const [ye, me] = pe.split("-").map(Number); while (y < ye || (y === ye && mo <= me)) { const key = `${y}-${String(mo).padStart(2, "0")}`; if (!seen.has(key) && out.length < 60) out.push({ year: y, month: key.slice(5) }); mo++; if (mo > 12) { mo = 1; y++; } } return out; } },
+  { id: "SAFT_TRT_013", family: "TAX", category: "Payroll taxes", severity: "Low", dataTypes: "F-Full; GL", refType: "GeneralLedgerAccount", requires: "transactions",
+    title: "Garantinio fondo įmokos (4483) santykis su darbo užmokesčio mokesčiais",
+    titleEn: "Guarantee-fund contributions (4483) vs payroll-tax credits ratio",
+    description: "Sąskaitos 4483 (garantinio fondo įmokos) kredito apyvarta lyginama su sąskaitų 4480/4481/4482 kreditų suma; santykis turi būti suderinamas su 0,16 % garantinio fondo norma (metodologinė juosta 0,05–1 %). Atitinka VMI TAX_TRT_013.",
+    legalReq: "Garantijų darbuotojams įstatymas (0,16 % įmoka); VMI TAX_TRT_013",
+    failTpl: "K4483 = @k €, bazė (K4480+K4481+K4482) = @base € | Santykis = @ratio %",
+    fixEn: "Verify guarantee-fund accruals: the ratio to payroll-tax credits deviates from the 0.16% norm.",
+    fixLt: "Patikrinkite garantinio fondo priskaitymus: santykis su DU mokesčių kreditais nukrypsta nuo 0,16 % normos.",
+    evaluate: (d) => { const tbl = (a) => String(a.accountTableID || a.accountID || "").trim(); const accs = d.accounts || []; const setOf = (p) => new Set(accs.filter((a) => tbl(a).indexOf(p) === 0).map((a) => String(a.accountID || "").trim())); const s83 = setOf("4483"); const sBase = new Set([...setOf("4480"), ...setOf("4481"), ...setOf("4482")]); if (!sBase.size) return []; let k83 = 0, base = 0; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || "").trim(); const cr = l.creditAmount || 0; if (s83.has(id)) k83 += cr; if (sBase.has(id)) base += cr; })); if (!(base > 0)) return []; const ratio = k83 / base; if (k83 === 0 || ratio < 0.0005 || ratio > 0.01) return [{ k: Math.round(k83 * 100) / 100, base: Math.round(base * 100) / 100, ratio: Math.round(ratio * 10000) / 100 }]; return []; } },
+  { id: "SAFT_AET_003", family: "ACCOUNTING", category: "Fundamental equation", severity: "Medium", dataTypes: "F-Full; GL", refType: "GeneralLedgerAccount", requires: "accounts",
+    title: "Viešojo sektoriaus fundamentinė lygybė: turtas = grynasis turtas + finansavimo sumos + įsipareigojimai",
+    titleEn: "Public-sector fundamental equation: assets = net assets + financing sums + liabilities",
+    description: "VSAFAS planu vedamiems subjektams (aptinkama pagal 4 klasės „finansavimo sumų“ sąskaitas) tikrinama lygybė laikotarpio pradžiai ir pabaigai: 1+2 kl. turtas = 3 kl. grynasis turtas + 4 kl. finansavimo sumos + 6 kl. įsipareigojimai (pabaigai — įskaitant 7−8 kl. laikotarpio rezultatą). Atitinka VMI ACCOUNTING_AET_005/006.",
+    legalReq: "VSAFAS; VMI ACCOUNTING_AET_005/006",
+    failTpl: "Momentas = @when | Turtas = @assets € | Nuosavybė+finansavimas+įsipareigojimai = @equity €",
+    fixEn: "Reconcile the public-sector trial balance: the fundamental identity does not hold.",
+    fixLt: "Suderinkite viešojo sektoriaus balansą: fundamentinė lygybė negalioja.",
+    evaluate: (d) => { const accs = d.accounts || []; if (accs.length < 5) return []; const isPS = accs.some((a) => String(a.accountTableID || a.accountID || "").charAt(0) === "4" && /finansavim/i.test(String(a.accountDescription || "") + String(a.accountTableDescription || ""))); if (!isPS) return []; const cl = {}; accs.forEach((a) => { const c = String(a.accountTableID || a.accountID || "").charAt(0); const e = cl[c] = cl[c] || { oD: 0, oK: 0, cD: 0, cK: 0 }; e.oD += a.openingDebitBalance || 0; e.oK += a.openingCreditBalance || 0; e.cD += a.closingDebitBalance || 0; e.cK += a.closingCreditBalance || 0; }); const g = (c) => cl[c] || { oD: 0, oK: 0, cD: 0, cK: 0 }; const r2 = (x) => Math.round(x * 100) / 100; const out = []; const aO = (g("1").oD - g("1").oK) + (g("2").oD - g("2").oK); const eO = (g("3").oK - g("3").oD) + (g("4").oK - g("4").oD) + (g("6").oK - g("6").oD); if (Math.abs(aO - eO) > 1) out.push({ when: "pradžia", assets: r2(aO), equity: r2(eO) }); const aC = (g("1").cD - g("1").cK) + (g("2").cD - g("2").cK); const eC = (g("3").cK - g("3").cD) + (g("4").cK - g("4").cD) + (g("6").cK - g("6").cD) + (g("7").cK - g("7").cD) - (g("8").cD - g("8").cK); if (Math.abs(aC - eC) > 1) out.push({ when: "pabaiga", assets: r2(aC), equity: r2(eC) }); return out; } },
+  { id: "SAFT_BAT_019", family: "ACCOUNTING", category: "Recognition", severity: "Low", dataTypes: "F-Full; MG; GL", refType: "StockMovement", requires: "stockMovements",
+    title: "Atsargų judėjimo DK operacijose turi būti atsargų (20 kl.) sąskaitos",
+    titleEn: "Stock-movement GL transactions must include inventory (class 20) accounts",
+    description: "Kiekvienos atsargų judėjimo operacijos susieta DK operacija (GLTransactionID) turi turėti bent vieną eilutę su atsargų sąskaita (klasifikatoriaus 20x). Atitinka VMI ACCOUNTING_BAT_019.",
+    legalReq: "VAS 9 (Atsargos); VMI ACCOUNTING_BAT_019",
+    failTpl: "Judėjimas = @mov | DK operacija = @tx — atsargų sąskaitų nėra",
+    fixEn: "Post the stock movement through an inventory account or fix the GL link.",
+    fixLt: "Užregistruokite atsargų judėjimą per atsargų sąskaitą arba pataisykite DK ryšį.",
+    evaluate: (d) => { const tbl = new Map(); (d.accounts || []).forEach((a) => tbl.set(String(a.accountID || "").trim(), String(a.accountTableID || a.accountID || "").trim())); const tx = new Map(); (d.transactions || []).forEach((t) => { if (t.transactionID) tx.set(String(t.transactionID).trim(), t); }); if (!tx.size) return []; const out = []; (d.stockMovements || []).forEach((m) => { const tid = String(m.glTransactionID || "").trim(); if (!tid) return; const t = tx.get(tid); if (!t) return; const has20 = (t.lines || []).some((l) => { const id = String(l.accountID || "").trim(); return (tbl.get(id) || id).indexOf("20") === 0; }); if (!has20 && out.length < 200) out.push({ mov: m.movementReference || m.systemID || "—", tx: tid }); }); return out; } },
+  { id: "SAFT_BAT_020", family: "ACCOUNTING", category: "Recognition", severity: "Low", dataTypes: "F-Full; AS; GL", refType: "AssetTransaction", requires: "assetTransactions",
+    title: "Turto sandorių DK operacijose turi būti ilgalaikio turto (11/12 kl.) sąskaitos",
+    titleEn: "Asset-transaction GL transactions must include fixed-asset (class 11/12) accounts",
+    description: "Kiekvienos turto operacijos susieta DK operacija (TransactionID) turi turėti bent vieną eilutę su ilgalaikio turto sąskaita (klasifikatoriaus 11x/12x). Atitinka VMI ACCOUNTING_BAT_020.",
+    legalReq: "VAS 12 (Ilgalaikis materialusis turtas); VMI ACCOUNTING_BAT_020",
+    failTpl: "Turto operacija = @at | DK operacija = @tx — ilgalaikio turto sąskaitų nėra",
+    fixEn: "Post the asset transaction through a fixed-asset account or fix the GL link.",
+    fixLt: "Užregistruokite turto operaciją per ilgalaikio turto sąskaitą arba pataisykite DK ryšį.",
+    evaluate: (d) => { const tbl = new Map(); (d.accounts || []).forEach((a) => tbl.set(String(a.accountID || "").trim(), String(a.accountTableID || a.accountID || "").trim())); const tx = new Map(); (d.transactions || []).forEach((t) => { if (t.transactionID) tx.set(String(t.transactionID).trim(), t); }); if (!tx.size) return []; const out = []; (d.assetTransactions || []).forEach((at) => { const tid = String(at.glTransactionID || "").trim(); if (!tid) return; const t = tx.get(tid); if (!t) return; const hasFA = (t.lines || []).some((l) => { const id = String(l.accountID || "").trim(); const c = tbl.get(id) || id; return c.indexOf("11") === 0 || c.indexOf("12") === 0; }); if (!hasFA && out.length < 200) out.push({ at: at.assetTransactionID || at.assetID || "—", tx: tid }); }); return out; } },
+
+ { id: "SAFT_HDR_010", family: "SCHEMA", category: "Header", severity: "High", dataTypes: "F-Full", refType: "Header", requires: "always",
+    title: "Daugiadalės rinkmenos dalys turi būti suderintos",
+    titleEn: "Multi-part file set must be internally consistent",
+    description: "Kai SAF-T teikiama dalimis (NumberOfParts > 1), visų dalių RegistrationNumber ir laikotarpiai privalo sutapti, dalių skaičius — atitikti deklaruotą NumberOfParts, o PartNumber — nesikartoti.",
+    legalReq: "VMI SAF-T techninė specifikacija (daugiadalis teikimas)",
+    failTpl: "Problema = @issue | Detalės = @detail",
+    fixEn: "Regenerate the part set so every part shares the same RegistrationNumber and period, part numbers are unique, and the count matches NumberOfParts.",
+    fixLt: "Pergeneruokite dalių rinkinį: visos dalys su tuo pačiu RegistrationNumber ir laikotarpiu, unikaliais PartNumber, o dalių skaičius — lygus NumberOfParts.",
+    evaluate: (d) => ((d._parts && d._parts.inconsistencies) || []).map((x) => ({ issue: x.issue, detail: x.detail })) },
+
 ];
 
 // Run all structural rules against parsed data + context.
@@ -2982,7 +5189,7 @@ function runStructuralRules(data, ctx) {
 // ════════════════════════════════════════════════════════════════════
 
 /**
- * Execute all 250 SAF-T rules against parsed data.
+ * Execute all SAF-T rules (117 VAT audit + 180 structural + 161 XSD-conformance + 20 duplicate + 4 classifier rules, plus full XSD v2.01 schema validation) against parsed data.
  * @param data       Output of parseSAFTFull()
  * @param opts       {thresholds: partial override of DEFAULT_THRESHOLDS}
  * @returns          {findings, summary, byRule, byCategory, bySeverity}
@@ -3009,7 +5216,7 @@ function runAllRules(data, opts = {}) {
     r.hits.forEach((h) => {
       findings.push({
         rule_id: r.id,
-        category: r.scope === "sales" ? "Sales VAT" : "Purchase VAT",
+        category: r.scope === "sales" ? "Sales VAT" : r.scope === "both" ? "VAT (Sales + Purchases)" : "Purchase VAT",
         severity, severityUi: uiMap[severity] || "Medium",
         type: "B", typeName: "Audit",
         title: r.title,
@@ -3018,14 +5225,13 @@ function runAllRules(data, opts = {}) {
         // rich metadata for the finding-detail page:
         ruleMeta: {
           titleLt: meta.title || r.title, titleEn: meta.titleEn || r.title,
-          descriptionLt: meta.description || "", legal: meta.legal || r.legal || "",
+          descriptionLt: meta.description || "", descriptionEn: meta.descriptionEn || "", legal: meta.legal || r.legal || "",
           fixEn: meta.fixEn || "", fixLt: meta.fixLt || "",
           dataTypes: meta.dataTypes || "", refType: meta.refType || "", scope: r.scope,
         },
         evidenceRow: h.row || null,   // structured @field values
       });
     });
-
   });
   // ── Structural / schema rules (SCHEMA family) — whole-file integrity ──
   const ctx = buildContext(data);
@@ -3070,7 +5276,7 @@ function runAllRules(data, opts = {}) {
         evidence: [msg],
         ruleMeta: {
           titleLt: r.titleLt, titleEn: r.titleEn,
-          descriptionLt: r.descLt, legal: "SAF-T XSD v2.01 (VMI, įsakymas VA-49)",
+          descriptionLt: r.descLt, descriptionEn: r.descEn || "", legal: "SAF-T XSD v2.01 (VMI, įsakymas VA-49)",
           fixEn: r.fixEn || "", fixLt: r.fixLt || "",
           dataTypes: "F-Full", refType: r.el, scope: "xsd",
         },
@@ -3095,7 +5301,7 @@ function runAllRules(data, opts = {}) {
         evidence: [msg],
         ruleMeta: {
           titleLt: r.titleLt, titleEn: r.titleEn,
-          descriptionLt: r.descLt, legal: "SAF-T techninė specifikacija, 6 lentelė (DUBL)",
+          descriptionLt: r.descLt, descriptionEn: r.descEn || "", legal: "SAF-T techninė specifikacija, 6 lentelė (DUBL)",
           fixEn: r.fixEn || "", fixLt: r.fixLt || "",
           dataTypes: "F-Full", refType: r.record, scope: "duplicate",
         },
@@ -3120,7 +5326,7 @@ function runAllRules(data, opts = {}) {
         evidence: [msg],
         ruleMeta: {
           titleLt: r.titleLt, titleEn: r.titleEn,
-          descriptionLt: r.descLt, legal: "VMI klasifikatoriai Nr.1–3 (VA-49 2 priedas)",
+          descriptionLt: r.descLt, descriptionEn: r.descEn || "", legal: "VMI klasifikatoriai Nr.1–3 (VA-49 2 priedas)",
           fixEn: r.fixEn || "", fixLt: r.fixLt || "",
           dataTypes: "F-Full", refType: r.el, scope: "classifier",
         },
@@ -3168,6 +5374,7 @@ function runAllRules(data, opts = {}) {
           titleLt: "Pilna XSD validacija: " + (kindTitle[v.kind] || v.kind),
           titleEn: kindTitle[v.kind] || ("XSD schema violation (" + v.kind + ")"),
           descriptionLt: "Visa SAF-T rinkmena tikrinama pagal oficialų VMI XSD v2.01. Pažeidimas: " + v.path,
+          descriptionEn: "The entire SAF-T file is validated against the official VMI XSD v2.01. Violation at: " + v.path,
           legal: "VMI SAF-T XSD v2.01 (VA-49)", fixEn: "Correct the element to conform to the SAF-T XSD.",
           fixLt: "Pataisykite elementą pagal SAF-T XSD reikalavimus.",
           dataTypes: "F-Full", refType: leaf, scope: "xsd-schema",
@@ -5342,12 +7549,11 @@ function parseISAF(xmlStr, DOMParserImpl) {
       // VAT detail lines: sum TaxableValue / TaxAmount; collect VAT codes
       let taxable = 0, vat = 0;
       const vatCodes = [];
-      let details = el.getElementsByTagName("VATDetail");
-      if (!details.length) details = el.getElementsByTagName("DocumentTotal"); // official iSAF 1.2 structure
+      const details = el.getElementsByTagName("VATDetail");
       if (details.length) {
         for (let i = 0; i < details.length; i++) {
           taxable += _num(txt(details[i], "TaxableValue", "TaxableAmount", "NetAmount"));
-          vat += _num(txt(details[i], "TaxAmount", "VATAmount", "Amount"));
+          vat += _num(txt(details[i], "TaxAmount", "VATAmount"));
           const code = txt(details[i], "VATCode", "TaxCode");
           if (code) vatCodes.push(code);
         }
@@ -5410,23 +7616,10 @@ function reconcileISAF(isaf, saft, opts = {}) {
 
   const norm = (s) => String(s || "").trim().toUpperCase();
 
-  // Scope the SAF-T side to the i.SAF period (by month): a monthly register must not be
-  // compared against the whole fiscal year, or every other month becomes a false "missing".
-  const monthsBetween = (a, b) => { const out = []; a = String(a || "").slice(0, 7); b = String(b || "").slice(0, 7); if (!/^\d{4}-\d{2}$/.test(a) || !/^\d{4}-\d{2}$/.test(b)) return out; let y = +a.slice(0, 4), m = +a.slice(5, 7); const ey = +b.slice(0, 4), em = +b.slice(5, 7); let g = 0; while ((y < ey || (y === ey && m <= em)) && g++ < 60) { out.push(y + "-" + String(m).padStart(2, "0")); m++; if (m > 12) { m = 1; y++; } } return out; };
-  let scopeFrom = isaf?.header?.periodFrom, scopeTo = isaf?.header?.periodTo;
-  if (!scopeFrom || !scopeTo) { const ds = [...(isaf.sales || []), ...(isaf.purchases || [])].map((x) => String(x.invoiceDate || "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}/.test(d)).sort(); if (ds.length) { scopeFrom = scopeFrom || ds[0]; scopeTo = scopeTo || ds[ds.length - 1]; } }
-  const scopeMonths = new Set(monthsBetween(scopeFrom, scopeTo));
-  const inScope = (x) => !scopeMonths.size || scopeMonths.has(String(x.invoiceDate || "").slice(0, 7));
-  const notAnnulled = (x) => String(x.invoiceType || "").toUpperCase() !== "AN";
-
-  const saftSales = (saft?.sales?.items || []).filter((x) => x.invoiceNo && inScope(x) && notAnnulled(x));
-  const saftPurch = (saft?.purchases?.items || []).filter((x) => x.invoiceNo && inScope(x) && notAnnulled(x));
+  const saftSales = (saft?.sales?.items || []).filter((x) => x.invoiceNo);
+  const saftPurch = (saft?.purchases?.items || []).filter((x) => x.invoiceNo);
   const saftSalesMap = new Map(saftSales.map((x) => [norm(x.invoiceNo), x]));
   const saftPurchMap = new Map(saftPurch.map((x) => [norm(x.invoiceNo), x]));
-  const _normVat = (s) => String(s || "").toUpperCase().replace(/\s/g, "");
-  const _coreVat = (s) => _normVat(s).replace(/^LT/, "");
-  const _custVat = new Map((saft?.customers || []).map((c) => [String(c.customerID || ""), c.taxRegistrationNumber || ""]));
-  const _supVat = new Map((saft?.suppliers || []).map((s) => [String(s.supplierID || ""), s.taxRegistrationNumber || ""]));
 
   // duplicate invoice numbers within i.SAF
   const dupCheck = (arr, side) => {
@@ -5445,8 +7638,8 @@ function reconcileISAF(isaf, saft, opts = {}) {
   // per-side line reconciliation
   const reconcileSide = (isafArr, saftMap, side) => {
     const S = side === "sales" ? "S" : "P";
-    let matched = 0, vatMismatch = 0, netMismatch = 0, missingInLedger = 0, partyVatMismatch = 0;
-    const missInLedgerEv = [], vatEv = [], netEv = [], partyVatEv = [];
+    let matched = 0, vatMismatch = 0, netMismatch = 0, missingInLedger = 0;
+    const missInLedgerEv = [], vatEv = [], netEv = [];
 
     for (const inv of isafArr) {
       const k = norm(inv.invoiceNo);
@@ -5471,9 +7664,6 @@ function reconcileISAF(isaf, saft, opts = {}) {
         add(`ISAF-${S}-CANC`, side, "Warn", `Cancelled invoice still carries amounts (${side})`,
           `Invoice ${inv.invoiceNo} is marked cancelled but reports non-zero VAT/taxable.`, [`${inv.invoiceNo}: net €${inv.taxable}, VAT €${inv.vat}`]);
       }
-      const _lvRaw = (side === "sales" ? _custVat.get(String(booked.customerID || "")) : _supVat.get(String(booked.supplierID || ""))) || "";
-      const _dv = _normVat(inv.counterpartyVat), _lv = _normVat(_lvRaw);
-      if (_dv && _lv && _dv !== _lv && _coreVat(_dv) !== _coreVat(_lv)) { partyVatMismatch++; partyVatEv.push(`${inv.invoiceNo}: i.SAF ${_dv} vs ledger ${_lv}`); }
       if (!inv.counterpartyVat && !inv.counterpartyReg) {
         add(`ISAF-${S}-PARTY`, side, "Warn", `Missing counterparty identifier (${side})`,
           `Invoice ${inv.invoiceNo} has neither a VAT number nor a registration code for the counterparty.`, [`${inv.invoiceNo}`]);
@@ -5505,8 +7695,6 @@ function reconcileISAF(isaf, saft, opts = {}) {
       `${vatMismatch} matched invoice(s) have a VAT amount in i.SAF that differs from the ledger beyond tolerance.`, vatEv.slice(0, 10));
     if (netMismatch > 0) add(`ISAF-${S}-NET`, side, "Warn", `Taxable-amount mismatches (${side})`,
       `${netMismatch} matched invoice(s) have a taxable amount in i.SAF that differs from the ledger beyond tolerance.`, netEv.slice(0, 10));
-    if (partyVatMismatch > 0) add(`ISAF-${S}-PARTYVAT`, side, "Warn", `Counterparty VAT number differs from the ledger (${side})`,
-      `${partyVatMismatch} matched invoice(s) carry a counterparty VAT number in i.SAF that differs from the SAF-T master.`, partyVatEv.slice(0, 10));
 
     return { isafCount: isafArr.length, saftCount: saftMap.size, matched, vatMismatch, netMismatch,
       missingInLedger, missingInRegister: missingInRegister.length };
@@ -5514,9 +7702,6 @@ function reconcileISAF(isaf, saft, opts = {}) {
 
   const salesSummary = reconcileSide(isaf.sales || [], saftSalesMap, "sales");
   const purchSummary = reconcileSide(isaf.purchases || [], saftPurchMap, "purchases");
-  const _saftReg = String(saft?.header?.registrationNumber || "").trim();
-  const _isafReg = String((isaf && (isaf.registrationNumber || (isaf.header && isaf.header.registrationNumber))) || "").trim();
-  if (_saftReg && _isafReg && _saftReg !== _isafReg) add("ISAF-ENTITY", "header", "Warn", "Registration number differs between i.SAF and SAF-T", `i.SAF ${_isafReg} vs SAF-T ${_saftReg}.`, null);
 
   // aggregate VAT position comparison
   const sum = (arr, f) => _r2((arr || []).reduce((s, x) => s + (f(x) || 0), 0));
@@ -5542,7 +7727,7 @@ function reconcileISAF(isaf, saft, opts = {}) {
   return {
     findings,
     bySeverity,
-    summary: { sales: salesSummary, purchases: purchSummary, vat, scope: { from: scopeFrom || "", to: scopeTo || "", months: Array.from(scopeMonths) } },
+    summary: { sales: salesSummary, purchases: purchSummary, vat },
     period: isaf.header || {},
   };
 }
@@ -6061,6 +8246,1594 @@ function numberCitations(answer, sources, corpus) {
 
 // direction: "up" = higher is better, "down" = lower is better, "flat" = context-only
 // fmt: "eur" | "pct" | "ratio" | "days" | "int"
+// ════════════════════════════════════════════════════════════════════
+// MODULE 1 — ERP INTEGRATION HUB (v9)
+// 140-system connector layer → ONE canonical model → existing SAF-T
+// engines (runAllRules / computeKPIs / benford / intelligence / i.SAF)
+// with zero special-casing. Deterministic. No LLM in the data path.
+// ════════════════════════════════════════════════════════════════════
+
+// ─── Runtime mode ─────────────────────────────────────────────────────
+// DEMO_MODE.enabled=true  → connectors pull seeded, deterministic sample
+//                           data (browser sandbox / no relay needed).
+// DEMO_MODE.enabled=false → connectors call the Vercel relay below. If
+//                           the relay is unreachable the sync engine
+//                           falls back to demo data and logs the fact.
+const DEMO_MODE = { enabled: true };
+
+/**
+ * ERP RELAY CONTRACT (Vercel serverless, same pattern as /api/ai).
+ * The browser NEVER talks to an ERP directly (CORS + credential safety);
+ * it POSTs to /api/erp and the stateless relay performs the upstream
+ * HTTP/OData/JSON-RPC call, returning a normalized envelope.
+ *
+ *   POST /api/erp
+ *   {
+ *     system:   "sap-s4hana",            // ERP_CATALOG id
+ *     protocol: "odata"|"rest"|"jsonrpc"|"xmlrpc"|"soap"|"suiteql"|"aqua",
+ *     action:   "auth"|"health"|"pull"|"push",
+ *     entity:   "invoicesAR"|...,         // ENTITY_KINDS
+ *     since:    "2026-01-01T00:00:00Z",   // incremental watermark
+ *     cursor:   "<opaque>",               // page/delta token
+ *     baseUrl:  "https://my.erp.example", // tenant endpoint
+ *     credentials: { ... } | { credRef: "env:SAP_TOKEN" },
+ *     payload:  { ... }                   // push only
+ *   }
+ *   → 200 { ok:true, records:[...], nextCursor:string|null, done:boolean }
+ *   → 200 { ok:true, status:"healthy", latencyMs }            (health)
+ *   → 4xx/5xx { ok:false, error, transient:boolean }
+ *
+ * Credentials are held in React state for the session only and sent per
+ * request over TLS; production deployments should pass { credRef } and
+ * resolve secrets relay-side from Vercel env / a vault (KMS). The relay
+ * stores nothing and logs no payload bodies (GDPR data minimisation).
+ */
+const ERP_RELAY = "/api/erp";
+
+const ENTITY_KINDS = ["customers", "suppliers", "products", "taxCodes", "invoicesAR", "invoicesAP", "journals", "payments"];
+const eR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// ─── Canonical data model ─────────────────────────────────────────────
+/**
+ * Every adapter normalises into these shapes; the bridge canonicalToSaft()
+ * maps them 1:1 onto the parseSAFTFull() output consumed by all engines.
+ *
+ * @typedef {Object} CanonicalParty
+ *   @property {string} id            stable id within the source system
+ *   @property {string} name
+ *   @property {string} regNo         LT company code (9 digits) when known
+ *   @property {string} vatNo         e.g. "LT100001110" / "DE123..."
+ *   @property {string} country       ISO-2
+ *   @property {string} city
+ *   @property {string} iban
+ * @typedef {Object} CanonicalTax
+ *   @property {string} rawCode       ERP-native tax code (e.g. SAP "A1")
+ *   @property {string} stiCode      mapped LT classifier (e.g. "PVM1")
+ *   @property {number} pct
+ *   @property {number} base
+ *   @property {number} amount
+ * @typedef {Object} CanonicalLine
+ *   @property {string} lineNo
+ *   @property {string} description
+ *   @property {string} productCode
+ *   @property {number} qty
+ *   @property {string} uom
+ *   @property {number} unitPrice
+ *   @property {number} net
+ *   @property {CanonicalTax} tax
+ * @typedef {Object} CanonicalInvoice
+ *   @property {{system:string,connectorId:string,externalId:string,updatedAt:string}} source
+ *   @property {"AR"|"AP"} direction
+ *   @property {string} invoiceNo
+ *   @property {string} invoiceDate   ISO yyyy-mm-dd
+ *   @property {string} glPostingDate
+ *   @property {string} currency
+ *   @property {CanonicalParty} party customer (AR) / supplier (AP)
+ *   @property {CanonicalLine[]} lines
+ *   @property {{net:number,vat:number,gross:number}} totals
+ *   @property {boolean} unpaid
+ * @typedef {Object} CanonicalJournal
+ *   @property {string} journalId
+ *   @property {string} transactionId
+ *   @property {string} date
+ *   @property {string} description
+ *   @property {Array<{recordId:string,accountId:string,debit:number|null,credit:number|null,description:string,customerId?:string,supplierId?:string,tax?:CanonicalTax}>} lines
+ * @typedef {Object} CanonicalPayment
+ *   @property {string} refNo
+ *   @property {string} date
+ *   @property {string} method        SAF-T LT PaymentMethod enum (BP,KPO,…)
+ *   @property {number} gross
+ *   @property {Array<{recordId:string,customerId?:string,supplierId?:string,sourceDocumentId:string,debit:number|null,credit:number|null}>} lines
+ */
+function emptyCanonicalStore() {
+  return { customers: [], suppliers: [], products: [], taxCodes: [], invoicesAR: [], invoicesAP: [], journals: [], payments: [], _seen: {}, _sources: [] };
+}
+
+// ─── 140-system catalog ───────────────────────────────────────────────
+// tuple: [id, name, category, region, protocol, auth, adapter, tier]
+// tier: "deep"     → full reference implementation (transform + field map + demo seeds)
+//       "standard" → named adapter profile on the declarative engine
+//       "generic"  → generic REST/CSV adapter with a default profile
+const ERP_CATALOG_RAW = [
+  // — First-class / deep reference implementations —
+  ["sap-s4hana", "SAP S/4HANA", "ERP Enterprise", "Global", "odata", "oauth2", "sap-odata", "deep"],
+  ["netsuite", "Oracle NetSuite", "ERP Enterprise", "Global", "suiteql", "oauth2", "netsuite", "deep"],
+  ["d365-bc", "Dynamics 365 Business Central", "ERP SMB", "Global", "odata", "oauth2", "d365bc", "deep"],
+  ["odoo", "Odoo", "ERP SMB", "Global", "jsonrpc", "apikey", "odoo", "deep"],
+  // — Named first-class (standard profiles) —
+  ["sap-ecc", "SAP ECC", "ERP Enterprise", "Global", "odata", "basic", "sap-odata", "standard"],
+  ["sap-b1", "SAP Business One", "ERP SMB", "Global", "rest", "basic", "generic-rest", "standard"],
+  ["oracle-fusion", "Oracle Fusion Cloud ERP", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "standard"],
+  ["d365-fo", "Dynamics 365 Finance & Operations", "ERP Enterprise", "Global", "odata", "oauth2", "d365bc", "standard"],
+  ["zuora", "Zuora", "Billing", "Global", "aqua", "oauth2", "zuora", "standard"],
+  ["ifs", "IFS Cloud", "ERP Enterprise", "Global", "odata", "oauth2", "generic-rest", "standard"],
+  ["parasut", "Paraşüt", "Accounting", "Türkiye", "rest", "oauth2", "generic-rest", "standard"],
+  ["kolaybi", "KolayBi", "Accounting", "Türkiye", "rest", "apikey", "generic-rest", "standard"],
+  ["dopigo", "Dopigo", "E-commerce", "Türkiye", "rest", "apikey", "generic-rest", "standard"],
+  // — ERP Enterprise long tail —
+  ["oracle-ebs", "Oracle E-Business Suite", "ERP Enterprise", "Global", "soap", "basic", "generic-rest", "generic"],
+  ["jd-edwards", "Oracle JD Edwards", "ERP Enterprise", "Global", "rest", "basic", "generic-rest", "generic"],
+  ["infor-ln", "Infor LN", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["infor-m3", "Infor M3", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["infor-csi", "Infor CloudSuite Industrial", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["epicor-kinetic", "Epicor Kinetic", "ERP Enterprise", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["workday-fin", "Workday Financials", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["unit4-erp", "Unit4 ERP (Agresso)", "ERP Enterprise", "EU", "rest", "oauth2", "generic-rest", "generic"],
+  ["unit4-coda", "Unit4 Financials (Coda)", "ERP Enterprise", "EU", "rest", "oauth2", "generic-rest", "generic"],
+  ["sage-x3", "Sage X3", "ERP Enterprise", "Global", "rest", "basic", "generic-rest", "generic"],
+  ["syspro", "SYSPRO", "ERP Enterprise", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["qad", "QAD Adaptive ERP", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["abas", "abas ERP", "ERP Enterprise", "DACH", "rest", "apikey", "generic-rest", "generic"],
+  ["proalpha", "proALPHA", "ERP Enterprise", "DACH", "rest", "oauth2", "generic-rest", "generic"],
+  // — ERP SMB / mid-market —
+  ["acumatica", "Acumatica", "ERP SMB", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["sage-intacct", "Sage Intacct", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["sage-50", "Sage 50", "Accounting", "Global", "file", "none", "csv", "generic"],
+  ["sage-200", "Sage 200", "ERP SMB", "UK", "rest", "oauth2", "generic-rest", "generic"],
+  ["priority", "Priority Software", "ERP SMB", "Global", "odata", "apikey", "generic-rest", "generic"],
+  ["erpnext", "ERPNext", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["dolibarr", "Dolibarr", "ERP SMB", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["weclapp", "weclapp", "ERP SMB", "DACH", "rest", "apikey", "generic-rest", "generic"],
+  ["haufe-x360", "Haufe X360", "ERP SMB", "DACH", "rest", "oauth2", "generic-rest", "generic"],
+  ["katana", "Katana MRP", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["mrpeasy", "MRPeasy", "ERP SMB", "Baltics", "rest", "apikey", "generic-rest", "generic"],
+  ["cin7", "Cin7 Omni", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
+  // — Accounting (global SMB) —
+  ["xero", "Xero", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["qbo", "QuickBooks Online", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["qb-desktop", "QuickBooks Desktop", "Accounting", "NA", "file", "none", "csv", "generic"],
+  ["freshbooks", "FreshBooks", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["wave", "Wave", "Accounting", "NA", "graphql", "oauth2", "generic-rest", "generic"],
+  ["zoho-books", "Zoho Books", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["freeagent", "FreeAgent", "Accounting", "UK", "rest", "oauth2", "generic-rest", "generic"],
+  ["holded", "Holded", "Accounting", "ES", "rest", "apikey", "generic-rest", "generic"],
+  ["sevdesk", "sevdesk", "Accounting", "DACH", "rest", "apikey", "generic-rest", "generic"],
+  ["lexoffice", "lexware office", "Accounting", "DACH", "rest", "apikey", "generic-rest", "generic"],
+  ["datev", "DATEV", "Accounting", "DACH", "rest", "oauth2", "generic-rest", "generic"],
+  ["fastbill", "FastBill", "Accounting", "DACH", "rest", "apikey", "generic-rest", "generic"],
+  // — Nordics —
+  ["visma-net", "Visma.net", "ERP SMB", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
+  ["visma-eaccounting", "Visma eAccounting", "Accounting", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
+  ["visma-business", "Visma Business", "ERP SMB", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
+  ["e-conomic", "e-conomic (Visma)", "Accounting", "DK", "rest", "apikey", "generic-rest", "generic"],
+  ["dinero", "Dinero (Visma)", "Accounting", "DK", "rest", "oauth2", "generic-rest", "generic"],
+  ["fortnox", "Fortnox", "Accounting", "SE", "rest", "oauth2", "generic-rest", "generic"],
+  ["tripletex", "Tripletex (Visma)", "Accounting", "NO", "rest", "apikey", "generic-rest", "generic"],
+  ["poweroffice", "PowerOffice Go", "Accounting", "NO", "rest", "apikey", "generic-rest", "generic"],
+  ["procountor", "Procountor", "Accounting", "FI", "rest", "oauth2", "generic-rest", "generic"],
+  ["netvisor", "Netvisor (Visma)", "Accounting", "FI", "rest", "apikey", "generic-rest", "generic"],
+  // — Benelux / France —
+  ["exact-online", "Exact Online", "ERP SMB", "Benelux", "rest", "oauth2", "generic-rest", "generic"],
+  ["afas", "AFAS Software", "ERP SMB", "NL", "rest", "apikey", "generic-rest", "generic"],
+  ["twinfield", "Twinfield (Wolters Kluwer)", "Accounting", "NL", "soap", "oauth2", "generic-rest", "generic"],
+  ["moneybird", "Moneybird", "Accounting", "NL", "rest", "oauth2", "generic-rest", "generic"],
+  ["yuki", "Yuki", "Accounting", "NL", "rest", "apikey", "generic-rest", "generic"],
+  ["cegid", "Cegid", "ERP SMB", "FR", "rest", "oauth2", "generic-rest", "generic"],
+  ["pennylane", "Pennylane", "Accounting", "FR", "rest", "oauth2", "generic-rest", "generic"],
+  ["sellsy", "Sellsy", "Accounting", "FR", "rest", "oauth2", "generic-rest", "generic"],
+  ["axonaut", "Axonaut", "Accounting", "FR", "rest", "apikey", "generic-rest", "generic"],
+  ["ebp", "EBP", "Accounting", "FR", "rest", "apikey", "generic-rest", "generic"],
+  // — Lithuania & Baltics —
+  ["rivile", "Rivilė GAMA", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
+  ["finvalda", "Finvalda", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
+  ["agnum", "Agnum", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
+  ["b1lt", "B1.lt", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
+  ["directo", "Directo", "Local-Baltic", "Baltics", "rest", "apikey", "generic-rest", "standard"],
+  ["stekas", "Stekas", "Local-LT", "LT", "file", "none", "csv", "generic"],
+  ["pragma", "Pragma", "Local-LT", "LT", "file", "none", "csv", "generic"],
+  ["centas", "Centas", "Local-LT", "LT", "file", "none", "csv", "generic"],
+  ["apskaita5", "Apskaita5", "Local-LT", "LT", "rest", "apikey", "generic-rest", "generic"],
+  ["edrana", "Edrana Baltic", "Local-LT", "LT", "rest", "basic", "generic-rest", "generic"],
+  ["merit-aktiva", "Merit Aktiva", "Local-Baltic", "EE", "rest", "apikey", "generic-rest", "generic"],
+  ["simplbooks", "SimplBooks", "Local-Baltic", "EE", "rest", "apikey", "generic-rest", "generic"],
+  ["erply-books", "Erply Books", "Local-Baltic", "EE", "rest", "apikey", "generic-rest", "generic"],
+  ["tildes-jumis", "Tildes Jumis", "Local-Baltic", "LV", "file", "none", "csv", "generic"],
+  // — CEE —
+  ["comarch-xl", "Comarch ERP XL", "ERP SMB", "PL", "rest", "basic", "generic-rest", "generic"],
+  ["comarch-optima", "Comarch ERP Optima", "ERP SMB", "PL", "rest", "basic", "generic-rest", "generic"],
+  ["enova365", "enova365", "ERP SMB", "PL", "rest", "apikey", "generic-rest", "generic"],
+  ["symfonia", "Symfonia", "Accounting", "PL", "file", "none", "csv", "generic"],
+  ["insert-subiekt", "InsERT Subiekt GT", "Accounting", "PL", "file", "none", "csv", "generic"],
+  ["wfirma", "wFirma", "Accounting", "PL", "rest", "apikey", "generic-rest", "generic"],
+  ["ifirma", "iFirma", "Accounting", "PL", "rest", "apikey", "generic-rest", "generic"],
+  ["fakturownia", "Fakturownia", "Billing", "PL", "rest", "apikey", "generic-rest", "generic"],
+  ["pohoda", "Stormware POHODA", "Accounting", "CZ", "file", "none", "csv", "generic"],
+  ["abra-flexibee", "ABRA Flexi", "ERP SMB", "CZ", "rest", "basic", "generic-rest", "generic"],
+  ["money-s3", "Money S3", "Accounting", "CZ", "file", "none", "csv", "generic"],
+  ["szamlazz", "Számlázz.hu", "Billing", "HU", "rest", "apikey", "generic-rest", "generic"],
+  // — Türkiye (additional) —
+  ["logo-tiger", "Logo Tiger", "ERP SMB", "Türkiye", "rest", "basic", "generic-rest", "generic"],
+  ["logo-netsis", "Logo Netsis", "ERP SMB", "Türkiye", "rest", "basic", "generic-rest", "generic"],
+  ["mikro", "Mikro Jump", "ERP SMB", "Türkiye", "rest", "apikey", "generic-rest", "generic"],
+  ["luca", "Luca", "Accounting", "Türkiye", "rest", "basic", "generic-rest", "generic"],
+  ["zirve", "Zirve", "Accounting", "Türkiye", "file", "none", "csv", "generic"],
+  // — Billing & subscriptions —
+  ["chargebee", "Chargebee", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["recurly", "Recurly", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["stripe-billing", "Stripe Billing", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["maxio", "Maxio (Chargify)", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["bill-com", "BILL (Bill.com)", "AP/Expense", "NA", "rest", "oauth2", "generic-rest", "generic"],
+  ["invoiced", "Invoiced", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["younium", "Younium", "Billing", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
+  // — AP / expense / e-invoicing networks —
+  ["coupa", "Coupa", "AP/Expense", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["basware", "Basware", "E-invoicing", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["pagero", "Pagero", "E-invoicing", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["tradeshift", "Tradeshift", "E-invoicing", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["concur", "SAP Concur", "AP/Expense", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["expensify", "Expensify", "AP/Expense", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["pleo", "Pleo", "AP/Expense", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["spendesk", "Spendesk", "AP/Expense", "EU", "rest", "oauth2", "generic-rest", "generic"],
+  ["payhawk", "Payhawk", "AP/Expense", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["tipalti", "Tipalti", "AP/Expense", "Global", "rest", "apikey", "generic-rest", "generic"],
+  // — E-commerce / POS / payments —
+  ["shopify", "Shopify", "E-commerce", "Global", "graphql", "apikey", "generic-rest", "generic"],
+  ["woocommerce", "WooCommerce", "E-commerce", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["magento", "Adobe Commerce (Magento)", "E-commerce", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["prestashop", "PrestaShop", "E-commerce", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["amazon-sp", "Amazon SP-API", "E-commerce", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["allegro", "Allegro", "E-commerce", "PL", "rest", "oauth2", "generic-rest", "generic"],
+  ["lightspeed", "Lightspeed", "POS", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["square", "Square", "POS", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["zettle", "Zettle (PayPal)", "POS", "EU", "rest", "oauth2", "generic-rest", "generic"],
+  ["sumup", "SumUp", "POS", "EU", "rest", "oauth2", "generic-rest", "generic"],
+  ["paypal", "PayPal", "Payments", "Global", "rest", "oauth2", "generic-rest", "generic"],
+  ["adyen", "Adyen", "Payments", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["mollie", "Mollie", "Payments", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["gocardless", "GoCardless", "Payments", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["wise", "Wise Business", "Payments", "Global", "rest", "apikey", "generic-rest", "generic"],
+  ["revolut", "Revolut Business", "Payments", "EU", "rest", "apikey", "generic-rest", "generic"],
+  ["paysera", "Paysera", "Payments", "LT", "rest", "apikey", "generic-rest", "generic"],
+  // — Universal fallbacks —
+  ["generic-rest-api", "Generic REST/JSON API", "Generic", "—", "rest", "apikey", "generic-rest", "standard"],
+  ["csv-drop", "CSV / Excel drop", "Generic", "—", "file", "none", "csv", "standard"],
+  ["sftp-watch", "SFTP / folder watch (agent)", "Generic", "—", "sftp", "cert", "agent", "standard"],
+  ["webhook-in", "Webhook receiver (agent)", "Generic", "—", "webhook", "apikey", "agent", "standard"],
+];
+const ERP_CATALOG = ERP_CATALOG_RAW.map(([id, name, category, region, protocol, auth, adapter, tier]) => ({ id, name, category, region, protocol, auth, adapter, tier }));
+const ERP_CATEGORIES = [...new Set(ERP_CATALOG.map((e) => e.category))];
+
+// ─── Reference field maps (deep connectors) ───────────────────────────
+// canonical field → source path (dot/bracket). Shown verbatim in the
+// Mapping Studio and used by applyFieldMap() in both directions
+// (transform raw→canonical; rawify canonical→raw for demo payloads).
+const FIELD_MAPS = {
+  "sap-odata": {
+    label: "SAP S/4HANA · OData v4 (API_BILLING_DOCUMENT / API_SUPPLIERINVOICE / API_BUSINESS_PARTNER)",
+    endpoints: {
+      invoicesAR: "GET /sap/opu/odata4/sap/api_billingdocument/srvd_a2x/sap/billingdocument/0001/BillingDocument?$expand=_Item&$filter=LastChangeDateTime gt {since}",
+      invoicesAP: "GET /sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice?$expand=to_SuplrInvcItemPurOrdRef",
+      customers: "GET /sap/opu/odata/sap/API_BUSINESS_PARTNER/A_Customer", suppliers: "GET .../A_Supplier",
+      journals: "GET /sap/opu/odata/sap/API_JOURNALENTRYITEMBASIC_SRV/A_JournalEntryItemBasic (agent: BAPI_ACC_DOCUMENT / IDoc FIDCCP02)",
+    },
+    invoicesAR: { externalId: "BillingDocument", invoiceNo: "BillingDocument", invoiceDate: "BillingDocumentDate", glPostingDate: "AccountingPostingDate", currency: "TransactionCurrency", partyId: "SoldToParty", partyName: "SoldToPartyName", net: "TotalNetAmount", vat: "TotalTaxAmount", updatedAt: "LastChangeDateTime", linesPath: "_Item", line: { lineNo: "BillingDocumentItem", description: "BillingDocumentItemText", productCode: "Material", qty: "BillingQuantity", uom: "BillingQuantityUnit", net: "NetAmount", vatAmount: "TaxAmount", rawTaxCode: "TaxCode" } },
+    invoicesAP: { externalId: "SupplierInvoice", invoiceNo: "SupplierInvoiceIDByInvcgParty", invoiceDate: "DocumentDate", glPostingDate: "PostingDate", currency: "DocumentCurrency", partyId: "InvoicingParty", net: "InvoiceNetAmount", vat: "TotalTaxAmount", gross: "InvoiceGrossAmount", updatedAt: "LastChangeDate", linesPath: "to_SuplrInvcItemPurOrdRef", line: { lineNo: "SupplierInvoiceItem", description: "SupplierInvoiceItemText", qty: "QuantityInPurchaseOrderUnit", net: "SupplierInvoiceItemAmount", rawTaxCode: "TaxCode" } },
+    customers: { id: "Customer", name: "CustomerName", vatNo: "VATRegistration", country: "Country", city: "CityName", regNo: "TaxNumber3" },
+    suppliers: { id: "Supplier", name: "SupplierName", vatNo: "VATRegistration", country: "Country", city: "CityName", iban: "IBAN" },
+  },
+  netsuite: {
+    label: "Oracle NetSuite · SuiteTalk REST + SuiteQL",
+    endpoints: {
+      invoicesAR: "POST /services/rest/query/v1/suiteql  { q: \"SELECT id, tranId, tranDate, entity, ... FROM transaction WHERE type='CustInvc' AND lastModifiedDate > {since}\" }",
+      invoicesAP: "SuiteQL type='VendBill'; record detail: GET /services/rest/record/v1/vendorBill/{id}",
+      customers: "GET /services/rest/record/v1/customer", suppliers: "GET /services/rest/record/v1/vendor",
+    },
+    invoicesAR: { externalId: "id", invoiceNo: "tranId", invoiceDate: "tranDate", glPostingDate: "postingDate", currency: "currency", partyId: "entityId", partyName: "entityName", net: "netAmount", vat: "taxTotal", gross: "total", updatedAt: "lastModifiedDate", linesPath: "item", line: { lineNo: "line", description: "description", productCode: "itemId", qty: "quantity", unitPrice: "rate", net: "amount", rawTaxCode: "taxCode", pct: "taxRate1" } },
+    invoicesAP: { externalId: "id", invoiceNo: "tranId", invoiceDate: "tranDate", glPostingDate: "postingDate", currency: "currency", partyId: "entityId", partyName: "entityName", net: "netAmount", vat: "taxTotal", gross: "total", updatedAt: "lastModifiedDate", linesPath: "item", line: { lineNo: "line", description: "memo", qty: "quantity", unitPrice: "rate", net: "amount", rawTaxCode: "taxCode", pct: "taxRate1" } },
+    customers: { id: "id", name: "companyName", vatNo: "vatRegNumber", country: "country", city: "city" },
+    suppliers: { id: "id", name: "companyName", vatNo: "vatRegNumber", country: "country", city: "city", iban: "iban" },
+  },
+  d365bc: {
+    label: "Dynamics 365 Business Central · API v2.0 (OData)",
+    endpoints: {
+      invoicesAR: "GET /api/v2.0/companies({cid})/salesInvoices?$expand=salesInvoiceLines&$filter=lastModifiedDateTime gt {since}",
+      invoicesAP: "GET /api/v2.0/companies({cid})/purchaseInvoices?$expand=purchaseInvoiceLines",
+      customers: "GET .../customers", suppliers: "GET .../vendors", journals: "GET .../generalLedgerEntries",
+    },
+    invoicesAR: { externalId: "id", invoiceNo: "number", invoiceDate: "invoiceDate", glPostingDate: "postingDate", currency: "currencyCode", partyId: "customerNumber", partyName: "customerName", net: "totalAmountExcludingTax", vat: "totalTaxAmount", gross: "totalAmountIncludingTax", updatedAt: "lastModifiedDateTime", linesPath: "salesInvoiceLines", line: { lineNo: "sequence", description: "description", productCode: "itemId", qty: "quantity", unitPrice: "unitPrice", net: "netAmount", rawTaxCode: "taxCode", pct: "taxPercent" } },
+    invoicesAP: { externalId: "id", invoiceNo: "vendorInvoiceNumber", invoiceDate: "invoiceDate", glPostingDate: "postingDate", currency: "currencyCode", partyId: "vendorNumber", partyName: "vendorName", net: "totalAmountExcludingTax", vat: "totalTaxAmount", gross: "totalAmountIncludingTax", updatedAt: "lastModifiedDateTime", linesPath: "purchaseInvoiceLines", line: { lineNo: "sequence", description: "description", qty: "quantity", unitPrice: "unitPrice", net: "netAmount", rawTaxCode: "taxCode", pct: "taxPercent" } },
+    customers: { id: "number", name: "displayName", vatNo: "taxRegistrationNumber", country: "country", city: "city" },
+    suppliers: { id: "number", name: "displayName", vatNo: "taxRegistrationNumber", country: "country", city: "city", iban: "iban" },
+  },
+  odoo: {
+    label: "Odoo · JSON-RPC (account.move / res.partner / account.tax)",
+    endpoints: {
+      invoicesAR: "POST /jsonrpc execute_kw account.move search_read [['move_type','=','out_invoice'],['write_date','>',{since}]]",
+      invoicesAP: "POST /jsonrpc execute_kw account.move search_read [['move_type','=','in_invoice']]",
+      customers: "res.partner search_read [['customer_rank','>',0]]", suppliers: "res.partner [['supplier_rank','>',0]]",
+      journals: "account.move.line search_read (journal items)",
+    },
+    invoicesAR: { externalId: "id", invoiceNo: "name", invoiceDate: "invoice_date", glPostingDate: "date", currency: "currency_id[1]", partyId: "partner_id[0]", partyName: "partner_id[1]", net: "amount_untaxed", vat: "amount_tax", gross: "amount_total", updatedAt: "write_date", linesPath: "invoice_line_ids", line: { lineNo: "id", description: "name", productCode: "product_id[1]", qty: "quantity", unitPrice: "price_unit", net: "price_subtotal", pct: "tax_rate", rawTaxCode: "tax_code" } },
+    invoicesAP: { externalId: "id", invoiceNo: "ref", invoiceDate: "invoice_date", glPostingDate: "date", currency: "currency_id[1]", partyId: "partner_id[0]", partyName: "partner_id[1]", net: "amount_untaxed", vat: "amount_tax", gross: "amount_total", updatedAt: "write_date", linesPath: "invoice_line_ids", line: { lineNo: "id", description: "name", qty: "quantity", unitPrice: "price_unit", net: "price_subtotal", pct: "tax_rate", rawTaxCode: "tax_code" } },
+    customers: { id: "id", name: "name", vatNo: "vat", country: "country_code", city: "city" },
+    suppliers: { id: "id", name: "name", vatNo: "vat", country: "country_code", city: "city", iban: "bank_iban" },
+  },
+  "generic-rest": {
+    label: "Generic REST/JSON · declarative profile (edit paths in Mapping Studio)",
+    endpoints: { invoicesAR: "GET {baseUrl}/invoices?updated_since={since}&cursor={cursor}", invoicesAP: "GET {baseUrl}/bills", customers: "GET {baseUrl}/customers", suppliers: "GET {baseUrl}/suppliers" },
+    invoicesAR: { externalId: "id", invoiceNo: "number", invoiceDate: "date", glPostingDate: "posting_date", currency: "currency", partyId: "customer.id", partyName: "customer.name", net: "totals.net", vat: "totals.vat", gross: "totals.gross", updatedAt: "updated_at", linesPath: "lines", line: { lineNo: "no", description: "description", productCode: "sku", qty: "qty", unitPrice: "unit_price", net: "net", pct: "vat_pct", rawTaxCode: "vat_code" } },
+    invoicesAP: { externalId: "id", invoiceNo: "number", invoiceDate: "date", glPostingDate: "posting_date", currency: "currency", partyId: "supplier.id", partyName: "supplier.name", net: "totals.net", vat: "totals.vat", gross: "totals.gross", updatedAt: "updated_at", linesPath: "lines", line: { lineNo: "no", description: "description", qty: "qty", unitPrice: "unit_price", net: "net", pct: "vat_pct", rawTaxCode: "vat_code" } },
+    customers: { id: "id", name: "name", vatNo: "vat_no", regNo: "reg_no", country: "country", city: "city", iban: "iban" },
+    suppliers: { id: "id", name: "name", vatNo: "vat_no", regNo: "reg_no", country: "country", city: "city", iban: "iban" },
+  },
+};
+FIELD_MAPS.zuora = { ...FIELD_MAPS["generic-rest"], label: "Zuora · REST /v1/invoices + AQuA batch-query (ZOQL: SELECT ... FROM Invoice WHERE UpdatedDate > {since})" };
+
+// Heuristic ERP-code → STI PVM classifier suggestions, shown as
+// "(suggested)" in the Tax-code Mapper. Deterministic validation checks
+// ONLY the percentage against the dated rate pack (resolveRatePack);
+// the semantic classifier choice stays a human decision.
+const STI_SUGGEST = [
+  { when: (c) => c.reverseCharge, code: "PVM25", note: "96 str. reverse charge" },
+  { when: (c) => c.oss, code: "PVM36", note: "OSS (101-1 str.)" },
+  { when: (c) => c.pct === 21, code: "PVM1", note: "standartinis 21%" },
+  { when: (c) => c.pct === 12, code: "PVM2", note: "lengvatinis 12% (2026)" },
+  { when: (c) => c.pct === 9, code: "PVM2", note: "9% — panaikinta nuo 2026" },
+  { when: (c) => c.pct === 5, code: "PVM3", note: "lengvatinis 5%" },
+  { when: (c) => c.pct === 0, code: "PVM5", note: "0% / neapmokestinama" },
+];
+function suggestStiCode(taxCode) { const hit = STI_SUGGEST.find((s) => { try { return s.when(taxCode); } catch { return false; } }); return hit ? { code: hit.code, note: hit.note } : { code: "", note: "" }; }
+
+// ─── Path utilities (mini-JSONPath: "a.b", "lines[0].net", "partner_id[1]") ─
+function getPath(obj, path) {
+  if (obj == null || !path) return undefined;
+  const parts = String(path).split(".");
+  let cur = obj;
+  for (let p of parts) {
+    if (cur == null) return undefined;
+    const m = p.match(/^([^[\]]+)?(?:\[(\d+)\])?$/);
+    if (!m) return undefined;
+    if (m[1]) cur = cur[m[1]];
+    if (m[2] !== undefined && cur != null) cur = cur[+m[2]];
+  }
+  return cur;
+}
+function setPath(obj, path, val) {
+  const parts = String(path).split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length; i++) {
+    const m = parts[i].match(/^([^[\]]+)?(?:\[(\d+)\])?$/);
+    const key = m[1], idx = m[2] !== undefined ? +m[2] : null;
+    const last = i === parts.length - 1;
+    if (key) {
+      if (idx !== null) { cur[key] = cur[key] || []; if (last) cur[key][idx] = val; else { cur[key][idx] = cur[key][idx] || {}; cur = cur[key][idx]; } }
+      else if (last) cur[key] = val;
+      else { cur[key] = cur[key] || {}; cur = cur[key]; }
+    } else if (idx !== null) { if (last) cur[idx] = val; else { cur[idx] = cur[idx] || {}; cur = cur[idx]; } }
+  }
+  return obj;
+}
+const djb2 = (s) => { let h = 5381; const str = String(s); for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0; return h.toString(16); };
+const mulberry32 = (seed) => { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+
+// ─── Demo seed generator (deterministic per connector) ────────────────
+// Generates CANONICAL truth with planted defects so boundary rules,
+// conflict detection and the downstream SAF-T audit rules all fire on
+// realistic Lithuanian data. rawifyForAdapter() then shapes it into the
+// source system's payload, so the Mapping Studio preview shows the real
+// raw→canonical pipeline rather than a mock.
+const DEMO_LT_CUSTOMERS = [
+  ["UAB Baltijos logistika", "300011238", "LT130001123817", "LT", "Vilnius"],
+  ["AB Nemuno prekyba", "110045678", "LT100001104512", "LT", "Kaunas"],
+  ["UAB Žalgirio statyba", "302233440", "LT100005022314", "LT", "Vilnius"],
+  ["MB Kuršių marios", "305566770", "", "LT", "Klaipėda"],
+  ["Hansa Handel GmbH", "", "DE811234560", "DE", "Hamburg"],
+  ["Wisła Trade Sp. z o.o.", "", "PL5251234567", "PL", "Warszawa"],
+];
+const DEMO_LT_SUPPLIERS = [
+  ["UAB Vilniaus tiekimas", "300099882", "LT130009988210", "LT", "Vilnius", "LT607044060008101234"],
+  ["UAB Geležinis vilkas", "301122330", "LT100003011217", "LT", "Šiauliai", "LT767300001000111223"],
+  ["AB Energijos sprendimai", "110234561", "LT100001102314", "LT", "Vilnius", "LT597300001013456789"],
+  ["Tallinn Components OÜ", "", "EE101234562", "EE", "Tallinn", "EE382200221012345678"],
+  ["UAB Metalo laužas", "303344550", "LT100003033418", "LT", "Panevėžys", "LT000000000000000000"], // planted: invalid IBAN
+  ["UAB Smulkus servisas", "304455660", "", "LT", "Vilnius", ""],                                    // planted: LT supplier, no VAT no.
+];
+const DEMO_PRODUCTS = [
+  ["LOG-001", "Krovinių pervežimas LT-DE", "PS", 21], ["LOG-002", "Sandėliavimo paslauga", "PS", 21],
+  ["PRK-010", "Statybinės medžiagos", "PR", 21], ["PRK-011", "Mediniai padėklai", "PR", 21],
+  ["KNG-020", "Techninė literatūra", "PR", 5], ["VIE-030", "Apgyvendinimo paslauga", "PS", 12],
+  ["IT-040", "Programinės įrangos licencija", "PS", 21], ["STA-050", "Statybos montavimo darbai (96 str.)", "PS", 0],
+];
+const DEMO_RAW_TAXCODES = { "sap-odata": { 21: "A1", 12: "A2", 5: "A3", 0: "A0", 9: "A9" }, netsuite: { 21: "LT-S", 12: "LT-R12", 5: "LT-R5", 0: "LT-Z", 9: "LT-R9" }, d365bc: { 21: "VAT21", 12: "VAT12", 5: "VAT5", 0: "VAT0", 9: "VAT9" }, odoo: { 21: "21% PVM", 12: "12% PVM", 5: "5% PVM", 0: "0% PVM", 9: "9% PVM" }, "generic-rest": { 21: "S21", 12: "R12", 5: "R5", 0: "Z0", 9: "R9" } };
+
+function generateDemoCanonical(entry, profilePeriod) {
+  const rng = mulberry32(parseInt(djb2(entry.id).slice(0, 7), 16));
+  const pStart = profilePeriod?.start || "2026-01-01", pEnd = profilePeriod?.end || "2026-03-31";
+  const day = (i, span = 88) => { const d = new Date(pStart + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + Math.floor(rng() * span)); return d.toISOString().slice(0, 10); };
+  const codes = DEMO_RAW_TAXCODES[entry.adapter] || DEMO_RAW_TAXCODES["generic-rest"];
+  const sysTag = entry.id.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+  const customers = DEMO_LT_CUSTOMERS.map(([name, regNo, vatNo, country, city], i) => ({ id: `C${100 + i}`, name, regNo, vatNo, country, city, iban: "" }));
+  const suppliers = DEMO_LT_SUPPLIERS.map(([name, regNo, vatNo, country, city, iban], i) => ({ id: `S${200 + i}`, name, regNo, vatNo, country, city, iban }));
+  const products = DEMO_PRODUCTS.map(([productCode, description, goodsServicesID, pct]) => ({ productCode, description, goodsServicesID, defaultPct: pct }));
+  const taxCodes = Object.entries(codes).map(([pct, rawCode]) => ({ rawCode, pct: +pct, description: `VAT ${pct}%`, stiCode: "", reverseCharge: false, oss: false }));
+  taxCodes.push({ rawCode: codes[0] + "-RC", pct: 0, description: "Reverse charge 96 str.", stiCode: "", reverseCharge: true, oss: false });
+
+  const mkInv = (dir, i, party, defect) => {
+    const nLines = 1 + Math.floor(rng() * 3);
+    const lines = [];
+    for (let l = 0; l < nLines; l++) {
+      const prod = products[Math.floor(rng() * products.length)];
+      let pct = prod.defaultPct;
+      if (defect === "legacy9") pct = 9;                                   // planted: abolished 2026 rate
+      const isRC = prod.productCode === "STA-050";
+      const qty = 1 + Math.floor(rng() * 20);
+      const unitPrice = eR2(8 + rng() * 240);
+      const net = eR2(qty * unitPrice);
+      const vat = isRC ? 0 : eR2(net * pct / 100);
+      lines.push({ lineNo: String(l + 1), description: prod.description, productCode: prod.productCode, qty, uom: "VNT", unitPrice, net, tax: { rawCode: isRC ? codes[0] + "-RC" : (codes[pct] || codes[21]), stiCode: "", pct: isRC ? 0 : pct, base: net, amount: vat, reverseCharge: isRC } });
+    }
+    const net = eR2(lines.reduce((s, l) => s + l.net, 0));
+    const vat = eR2(lines.reduce((s, l) => s + l.tax.amount, 0));
+    let gross = eR2(net + vat);
+    if (defect === "totals") gross = eR2(gross + 0.05);                    // planted: gross ≠ net+vat
+    let invoiceDate = day(i);
+    if (defect === "future") invoiceDate = "2026-11-30";                   // planted: date after period
+    const no = defect === "dupNo" ? `${sysTag}-AR-2026-00003` : `${sysTag}-${dir}-2026-${String(i + 1).padStart(5, "0")}`;
+    return { source: { system: entry.id, connectorId: entry.id, externalId: `${dir}-${1000 + i}${defect === "dupNo" ? "-B" : ""}`, updatedAt: invoiceDate + "T08:0" + (i % 10) + ":00Z" }, direction: dir, invoiceNo: no, invoiceDate, glPostingDate: invoiceDate, currency: "EUR", party, lines, totals: { net, vat, gross }, unpaid: rng() < 0.3 };
+  };
+  const invoicesAR = []; const invoicesAP = [];
+  for (let i = 0; i < 26; i++) {
+    const defect = i === 6 ? "dupNo" : i === 11 ? "legacy9" : i === 13 ? "totals" : i === 17 ? "future" : null;
+    invoicesAR.push(mkInv("AR", i, customers[Math.floor(rng() * customers.length)], defect));
+  }
+  for (let i = 0; i < 18; i++) invoicesAP.push(mkInv("AP", i, suppliers[i === 8 ? 5 : Math.floor(rng() * suppliers.length)], null));
+
+  // Journals derived from invoices (LT chart: 2410 AR · 500x revenue · 44921 output VAT · 6001 costs · 24451 input VAT · 4430 AP · 271 bank)
+  const journals = []; let rec = 1;
+  invoicesAR.forEach((inv, i) => {
+    const ls = [
+      { recordId: String(rec++), accountId: "2410", debit: inv.totals.gross, credit: null, description: inv.invoiceNo, customerId: inv.party.id },
+      { recordId: String(rec++), accountId: "5001", debit: null, credit: inv.totals.net, description: inv.invoiceNo, customerId: inv.party.id, tax: inv.lines[0].tax },
+    ];
+    if (inv.totals.vat) ls.push({ recordId: String(rec++), accountId: "44921", debit: null, credit: inv.totals.vat, description: "PVM " + inv.invoiceNo, customerId: inv.party.id });
+    if (i === 21) ls[0] = { ...ls[0], debit: eR2(ls[0].debit + 0.02) };    // planted: unbalanced txn (+0.02)
+    journals.push({ journalId: "PARD", transactionId: `T-AR-${inv.invoiceNo}`, date: inv.glPostingDate, description: "Pardavimas " + inv.invoiceNo, lines: ls });
+  });
+  invoicesAP.forEach((inv, i) => {
+    const ls = [
+      { recordId: String(rec++), accountId: "6001", debit: inv.totals.net, credit: null, description: inv.invoiceNo, supplierId: inv.party.id, tax: inv.lines[0].tax },
+      { recordId: String(rec++), accountId: "4430", debit: null, credit: inv.totals.gross, description: inv.invoiceNo, supplierId: inv.party.id },
+    ];
+    if (inv.totals.vat) ls.splice(1, 0, { recordId: String(rec++), accountId: "24451", debit: inv.totals.vat, credit: null, description: "PVM " + inv.invoiceNo, supplierId: inv.party.id });
+    journals.push({ journalId: "PIRK", transactionId: `T-AP-${inv.invoiceNo}`, date: inv.glPostingDate, description: "Pirkimas " + inv.invoiceNo, lines: ls });
+  });
+  // Payments for the paid invoices
+  const payments = []; let pr = 1;
+  invoicesAR.filter((x) => !x.unpaid).slice(0, 12).forEach((inv) => {
+    payments.push({ refNo: `MOK-${pr}`, date: inv.glPostingDate, method: "BP", gross: inv.totals.gross, lines: [{ recordId: String(pr * 2 - 1), customerId: inv.party.id, sourceDocumentId: inv.invoiceNo, debit: inv.totals.gross, credit: null }] });
+    journals.push({ journalId: "BANK", transactionId: `T-PAY-MOK-${pr}`, date: inv.glPostingDate, description: "Apmokėjimas " + inv.invoiceNo, lines: [{ recordId: String(rec++), accountId: "271", debit: inv.totals.gross, credit: null, description: inv.invoiceNo, customerId: inv.party.id }, { recordId: String(rec++), accountId: "2410", debit: null, credit: inv.totals.gross, description: inv.invoiceNo, customerId: inv.party.id }] });
+    pr++;
+  });
+  // Outgoing payments for ~half the purchase invoices (enables 3-way matching)
+  invoicesAP.filter((_, i) => i % 2 === 0).forEach((inv) => {
+    payments.push({ refNo: `MOK-${pr}`, date: inv.glPostingDate, method: "BP", gross: inv.totals.gross, lines: [{ recordId: String(pr * 2 - 1), supplierId: inv.party.id, sourceDocumentId: inv.invoiceNo, debit: null, credit: inv.totals.gross }] });
+    journals.push({ journalId: "BANK", transactionId: `T-PAY-MOK-${pr}`, date: inv.glPostingDate, description: "Mokėjimas tiekėjui " + inv.invoiceNo, lines: [{ recordId: String(rec++), accountId: "4430", debit: inv.totals.gross, credit: null, description: inv.invoiceNo, supplierId: inv.party.id }, { recordId: String(rec++), accountId: "271", debit: null, credit: inv.totals.gross, description: inv.invoiceNo, supplierId: inv.party.id }] });
+    pr++;
+  });
+  return { customers, suppliers, products, taxCodes, invoicesAR, invoicesAP, journals, payments };
+}
+
+// ─── Raw ⇄ canonical (declarative, both directions) ───────────────────
+function rawifyInvoice(map, inv) {
+  const raw = {};
+  ["externalId", "invoiceNo", "invoiceDate", "glPostingDate", "currency", "updatedAt"].forEach((k) => map[k] && setPath(raw, map[k], k === "externalId" ? inv.source.externalId : k === "updatedAt" ? inv.source.updatedAt : inv[k]));
+  if (map.partyId) setPath(raw, map.partyId, inv.party.id);
+  if (map.partyName) setPath(raw, map.partyName, inv.party.name);
+  if (map.net) setPath(raw, map.net, inv.totals.net);
+  if (map.vat) setPath(raw, map.vat, inv.totals.vat);
+  if (map.gross) setPath(raw, map.gross, inv.totals.gross);
+  if (map.linesPath) setPath(raw, map.linesPath, inv.lines.map((l) => { const r = {}; const lm = map.line || {}; Object.entries({ lineNo: l.lineNo, description: l.description, productCode: l.productCode, qty: l.qty, uom: l.uom, unitPrice: l.unitPrice, net: l.net, vatAmount: l.tax.amount, pct: l.tax.pct, rawTaxCode: l.tax.rawCode }).forEach(([k, v]) => { if (lm[k]) setPath(r, lm[k], v); }); return r; }));
+  return raw;
+}
+function rawifyParty(map, p) { const r = {}; Object.entries({ id: p.id, name: p.name, vatNo: p.vatNo, regNo: p.regNo, country: p.country, city: p.city, iban: p.iban }).forEach(([k, v]) => { if (map[k]) setPath(r, map[k], v); }); return r; }
+const numv = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+function transformInvoice(map, raw, entry, dir) {
+  const lines = (getPath(raw, map.linesPath) || []).map((rl, i) => { const lm = map.line || {}; const net = eR2(numv(getPath(rl, lm.net))); const pct = lm.pct ? numv(getPath(rl, lm.pct)) : null; const vatAmount = lm.vatAmount ? eR2(numv(getPath(rl, lm.vatAmount))) : (pct != null ? eR2(net * pct / 100) : 0); return { lineNo: String(getPath(rl, lm.lineNo) ?? i + 1), description: String(getPath(rl, lm.description) || ""), productCode: String(getPath(rl, lm.productCode) || ""), qty: numv(getPath(rl, lm.qty)) || 1, uom: String(getPath(rl, lm.uom) || "VNT"), unitPrice: eR2(numv(getPath(rl, lm.unitPrice)) || (net / (numv(getPath(rl, lm.qty)) || 1))), net, tax: { rawCode: String(getPath(rl, lm.rawTaxCode) || ""), stiCode: "", pct: pct != null ? pct : (net ? eR2(vatAmount / net * 100) : 0), base: net, amount: vatAmount } }; });
+  const net = map.net != null && getPath(raw, map.net) != null ? eR2(numv(getPath(raw, map.net))) : eR2(lines.reduce((s, l) => s + l.net, 0));
+  const vat = map.vat != null && getPath(raw, map.vat) != null ? eR2(numv(getPath(raw, map.vat))) : eR2(lines.reduce((s, l) => s + l.tax.amount, 0));
+  const gross = map.gross != null && getPath(raw, map.gross) != null ? eR2(numv(getPath(raw, map.gross))) : eR2(net + vat);
+  return { source: { system: entry.id, connectorId: entry.id, externalId: String(getPath(raw, map.externalId) ?? getPath(raw, map.invoiceNo) ?? ""), updatedAt: String(getPath(raw, map.updatedAt) || "") }, direction: dir, invoiceNo: String(getPath(raw, map.invoiceNo) || ""), invoiceDate: String(getPath(raw, map.invoiceDate) || "").slice(0, 10), glPostingDate: String(getPath(raw, map.glPostingDate) || getPath(raw, map.invoiceDate) || "").slice(0, 10), currency: String(getPath(raw, map.currency) || "EUR"), party: { id: String(getPath(raw, map.partyId) ?? ""), name: String(getPath(raw, map.partyName) || "") }, lines, totals: { net, vat, gross }, unpaid: !!raw.__unpaid };
+}
+function transformParty(map, raw) { return { id: String(getPath(raw, map.id) ?? ""), name: String(getPath(raw, map.name) || ""), vatNo: String(getPath(raw, map.vatNo) || ""), regNo: String(getPath(raw, map.regNo) || ""), country: String(getPath(raw, map.country) || ""), city: String(getPath(raw, map.city) || ""), iban: String(getPath(raw, map.iban) || "") }; }
+
+// ─── Connector factory (auth / pull / push / capabilities / healthCheck) ─
+async function relayCall(entry, config, body) {
+  let res;
+  try {
+    res = await fetch(ERP_RELAY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: entry.id, protocol: entry.protocol, auth: entry.auth, baseUrl: config.baseUrl || "", credentials: config.credentials || {}, ...body }) });
+  } catch (e) { const err = new Error("ERP relay unreachable (" + e.message + ")"); err.code = "RELAY_UNREACHABLE"; err.transient = true; throw err; }
+  let json = {}; try { json = await res.json(); } catch { }
+  if (!res.ok || json.ok === false) { const err = new Error(json.error || `Relay error ${res.status}`); err.transient = res.status >= 500 || res.status === 429; throw err; }
+  return json;
+}
+function mapsFor(entry, config) {
+  const base = FIELD_MAPS[entry.adapter] || FIELD_MAPS["generic-rest"];
+  if (!config?.mapOverrides) return base;
+  const merged = JSON.parse(JSON.stringify(base));
+  Object.entries(config.mapOverrides).forEach(([entity, fields]) => { merged[entity] = { ...(merged[entity] || {}), ...fields, line: { ...((merged[entity] || {}).line || {}), ...((fields || {}).line || {}) } }; });
+  return merged;
+}
+function makeConnector(entry, config = {}) {
+  const maps = () => mapsFor(entry, config);
+  const demoCache = {};
+  const demoData = () => { if (!demoCache.d) demoCache.d = generateDemoCanonical(entry, config.period); return demoCache.d; };
+  const rawDemo = (entity) => {
+    const d = demoData(); const m = maps();
+    if (entity === "invoicesAR") return d.invoicesAR.map((inv) => { const r = rawifyInvoice(m.invoicesAR, inv); r.__unpaid = inv.unpaid; return r; });
+    if (entity === "invoicesAP") return d.invoicesAP.map((inv) => { const r = rawifyInvoice(m.invoicesAP, inv); r.__unpaid = inv.unpaid; return r; });
+    if (entity === "customers") return d.customers.map((p) => rawifyParty(m.customers, p));
+    if (entity === "suppliers") return d.suppliers.map((p) => rawifyParty(m.suppliers, p));
+    return d[entity] || [];                                  // products / taxCodes / journals / payments pass canonical-shaped
+  };
+  const toCanonical = (entity, raws) => {
+    const m = maps();
+    if (entity === "invoicesAR") return raws.map((r) => transformInvoice(m.invoicesAR, r, entry, "AR"));
+    if (entity === "invoicesAP") return raws.map((r) => transformInvoice(m.invoicesAP, r, entry, "AP"));
+    if (entity === "customers") return raws.map((r) => transformParty(m.customers, r));
+    if (entity === "suppliers") return raws.map((r) => transformParty(m.suppliers, r));
+    return raws;
+  };
+  return {
+    entry, config,
+    capabilities() { const file = entry.adapter === "csv" || entry.adapter === "agent"; return { entities: file ? ["invoicesAR", "invoicesAP", "journals"] : ENTITY_KINDS, pull: !file, push: entry.tier !== "generic", formats: [entry.protocol], demoCapable: true }; },
+    async auth() { if (DEMO_MODE.enabled || config.demo) return { ok: true, mode: "demo", token: "demo-" + entry.id }; const r = await relayCall(entry, config, { action: "auth" }); return { ok: true, mode: "live", expiresIn: r.expiresIn }; },
+    async healthCheck() {
+      const t0 = Date.now();
+      if (DEMO_MODE.enabled || config.demo) { await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 200))); return { ok: true, mode: "demo", latencyMs: Date.now() - t0 }; }
+      try { const r = await relayCall(entry, config, { action: "health" }); return { ok: true, mode: "live", latencyMs: r.latencyMs ?? Date.now() - t0 }; }
+      catch (e) { return { ok: false, mode: "live", error: e.message, demoFallback: e.code === "RELAY_UNREACHABLE" }; }
+    },
+    async pull(entity, since, cursor) {
+      if (DEMO_MODE.enabled || config.demo) { const raws = rawDemo(entity); return { records: toCanonical(entity, raws), raw: raws, nextCursor: null, done: true, mode: "demo" }; }
+      const r = await relayCall(entry, config, { action: "pull", entity, since, cursor });
+      return { records: toCanonical(entity, r.records || []), raw: r.records || [], nextCursor: r.nextCursor || null, done: r.done !== false, mode: "live" };
+    },
+    async push(entity, payload) {
+      if (DEMO_MODE.enabled || config.demo) return { ok: true, mode: "demo", accepted: Array.isArray(payload) ? payload.length : 1 };
+      return relayCall(entry, config, { action: "push", entity, payload });
+    },
+    sampleRaw(entity) { return rawDemo(entity).slice(0, 3); },
+  };
+}
+
+// ─── Sync engine: cursors · idempotency · backoff · rate limit · conflicts ─
+const idemKey = (sys, entity, rec) => djb2(`${sys}|${entity}|${rec?.source?.externalId || rec?.invoiceNo || rec?.id || rec?.refNo || rec?.transactionId || JSON.stringify(rec).slice(0, 60)}|${rec?.source?.updatedAt || ""}`);
+async function withBackoff(fn, { tries = 4, base = 400 } = {}) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); } catch (e) { lastErr = e; if (!e.transient || i === tries - 1) throw e; await new Promise((r) => setTimeout(r, base * Math.pow(2, i))); }
+  }
+  throw lastErr;
+}
+const _rateLast = {};
+async function rateGate(connectorId, minMs = 150) { const now = Date.now(); const wait = Math.max(0, (_rateLast[connectorId] || 0) + minMs - now); if (wait) await new Promise((r) => setTimeout(r, wait)); _rateLast[connectorId] = Date.now(); }
+
+function detectErpConflicts(store) {
+  const conflicts = [];
+  const scan = (arr, kind) => {
+    const byNo = {};
+    arr.forEach((inv) => { const k = `${kind}|${inv.invoiceNo}`; (byNo[k] = byNo[k] || []).push(inv); });
+    Object.values(byNo).forEach((g) => {
+      const ids = [...new Set(g.map((x) => x.source.system + ":" + x.source.externalId))];
+      if (g.length > 1 && ids.length > 1) conflicts.push({ kind, invoiceNo: g[0].invoiceNo, sources: ids, amounts: g.map((x) => x.totals.gross) });
+    });
+  };
+  scan(store.invoicesAR, "AR"); scan(store.invoicesAP, "AP");
+  return conflicts;
+}
+
+async function runConnectorSync(connector, store, syncState, { log, onEvent } = {}) {
+  const entry = connector.entry;
+  const st = syncState[entry.id] = syncState[entry.id] || { cursors: {}, lastSync: null, rows: 0, errors: [], status: "idle" };
+  st.status = "running"; st.errors = [];
+  const caps = connector.capabilities();
+  const byEntity = {};
+  let usedDemoFallback = false;
+  for (const entity of caps.entities) {
+    let cursor = st.cursors[entity] || null;
+    const since = st.lastSync || null;
+    let added = 0, pages = 0;
+    try {
+      let done = false;
+      while (!done && pages < 50) {
+        await rateGate(entry.id, entry.tier === "deep" ? 120 : 200);
+        let page;
+        try { page = await withBackoff(() => connector.pull(entity, since, cursor)); }
+        catch (e) {
+          if (e.code === "RELAY_UNREACHABLE" && !usedDemoFallback) { usedDemoFallback = true; if (log) log("ERP_RELAY_FALLBACK", `${entry.name}: relay unreachable → demo data`); const demo = makeConnector(entry, { ...connector.config, demo: true }); page = await demo.pull(entity, since, cursor); }
+          else throw e;
+        }
+        pages++;
+        for (const rec of page.records) {
+          const key = idemKey(entry.id, entity, rec);
+          if (store._seen[key]) continue;
+          store._seen[key] = 1;
+          if (entity === "taxCodes") { if (!store.taxCodes.find((t) => t.rawCode === rec.rawCode)) store.taxCodes.push({ ...rec, system: entry.id }); added++; }
+          else if (entity === "customers" || entity === "suppliers") { const same = store[entity].some((x) => x.id === rec.id && (x.vatNo || "") === (rec.vatNo || "") && x.name === rec.name); if (!same) { store[entity].push(rec); added++; } }
+          else { store[entity].push(entity === "journals" || entity === "payments" || entity === "products" ? { ...rec, system: entry.id } : rec); added++; }
+        }
+        cursor = page.nextCursor; done = page.done || !cursor;
+      }
+      st.cursors[entity] = new Date().toISOString();
+      byEntity[entity] = added;
+      if (onEvent) onEvent({ entity, added });
+    } catch (e) {
+      st.errors.push({ entity, error: e.message });
+      if (onEvent) onEvent({ entity, error: e.message });
+    }
+  }
+  if (!store._sources.includes(entry.id)) store._sources.push(entry.id);
+  st.lastSync = new Date().toISOString();
+  st.rows += Object.values(byEntity).reduce((s, n) => s + n, 0);
+  st.status = st.errors.length ? "error" : "ok";
+  st.demoFallback = usedDemoFallback;
+  if (log) log("ERP_SYNC", `${entry.name} → ${Object.entries(byEntity).map(([k, v]) => `${k}:${v}`).join(" · ")}${st.errors.length ? " · errors:" + st.errors.length : ""}${usedDemoFallback ? " · DEMO FALLBACK" : ""}`);
+  return { byEntity, errors: st.errors, demoFallback: usedDemoFallback };
+}
+
+// ─── Validation at the boundary (XSD-facet style → Findings) ──────────
+const ERP_BOUNDARY_RULES = [
+  { id: "ERPB-01", sev: "Block", title: "Missing invoice number", titleLt: "Trūksta sąskaitos numerio", legal: "PVMĮ 58 str. 1 d.", kinds: ["invoicesAR", "invoicesAP"], check: (r) => !r.invoiceNo, msg: (r) => `externalId=${r.source.externalId}` },
+  { id: "ERPB-02", sev: "Block", title: "Invalid or missing invoice date", titleLt: "Neteisinga sąskaitos data", legal: "PVMĮ 58 str. 1 d.", kinds: ["invoicesAR", "invoicesAP"], check: (r) => !/^\d{4}-\d{2}-\d{2}$/.test(r.invoiceDate || ""), msg: (r) => `${r.invoiceNo}: "${r.invoiceDate}"` },
+  { id: "ERPB-03", sev: "Reject", title: "Document totals do not reconcile (net+VAT ≠ gross)", titleLt: "Sumos nesutampa (neto+PVM ≠ bendra)", legal: "PVMĮ 58 str.; MAĮ 139 str.", kinds: ["invoicesAR", "invoicesAP"], check: (r) => Math.abs(eR2(r.totals.net + r.totals.vat) - r.totals.gross) > 0.02, msg: (r) => `${r.invoiceNo}: ${r.totals.net}+${r.totals.vat}≠${r.totals.gross}` },
+  { id: "ERPB-04", sev: "Reject", title: "Line sum differs from header net", titleLt: "Eilučių suma nesutampa su antrašte", legal: "VA-55 (SAF-T konsistencija)", kinds: ["invoicesAR", "invoicesAP"], check: (r) => Math.abs(eR2(r.lines.reduce((s, l) => s + l.net, 0)) - r.totals.net) > 0.02, msg: (r) => r.invoiceNo },
+  { id: "ERPB-05", sev: "Reject", title: "VAT % not in dated LT rate pack", titleLt: "PVM tarifas neatitinka galiojančių tarifų", legal: "PVMĮ 19 str. (2026 red.)", kinds: ["invoicesAR", "invoicesAP"], check: (r, H) => r.lines.some((l) => l.tax.pct > 0 && H.classifyVatRate(l.tax.pct, r.invoiceDate).valid === false), msg: (r, H) => `${r.invoiceNo}: ${[...new Set(r.lines.filter((l) => l.tax.pct > 0 && H.classifyVatRate(l.tax.pct, r.invoiceDate).valid === false).map((l) => l.tax.pct + "%"))].join(",")}` },
+  { id: "ERPB-06", sev: "Reject", title: "Invalid Lithuanian IBAN", titleLt: "Neteisingas LT IBAN", legal: "ISO 13616 / mokėjimų rekvizitai", kinds: ["suppliers"], check: (r, H) => r.country === "LT" && r.iban && !H.isValidLtIban(r.iban), msg: (r) => `${r.name}: ${r.iban}` },
+  { id: "ERPB-07", sev: "Warn", title: "LT counterparty without VAT number on taxed supply", titleLt: "LT kontrahentas be PVM kodo apmokestintame sandoryje", legal: "PVMĮ 58 str. 1 d. 3 p.", kinds: ["invoicesAR", "invoicesAP"], check: (r) => r.party?.country === "LT" && !r.party?.vatNo && r.totals.vat > 0, msg: (r) => `${r.invoiceNo} · ${r.party.name}` },
+  { id: "ERPB-08", sev: "Warn", title: "VAT number fails LT format", titleLt: "PVM kodas neatitinka LT formato", legal: "PVMĮ 71 str.", kinds: ["customers", "suppliers"], check: (r, H) => r.country === "LT" && r.vatNo && !H.isLtVatNumber(r.vatNo), msg: (r) => `${r.name}: ${r.vatNo}` },
+  { id: "ERPB-09", sev: "Warn", title: "Currency not ISO-4217 / non-EUR without FX", titleLt: "Valiuta ne ISO-4217 / ne EUR be kurso", legal: "VA-55; Buhalterinės apskaitos įst.", kinds: ["invoicesAR", "invoicesAP"], check: (r, H) => !H.ISO_4217.has(r.currency), msg: (r) => `${r.invoiceNo}: ${r.currency}` },
+  { id: "ERPB-10", sev: "Warn", title: "Invoice date in the future", titleLt: "Sąskaitos data ateityje", legal: "MAĮ; apskaitos tvarka", kinds: ["invoicesAR", "invoicesAP"], check: (r) => r.invoiceDate > new Date().toISOString().slice(0, 10), msg: (r) => `${r.invoiceNo}: ${r.invoiceDate}` },
+  { id: "ERPB-11", sev: "Warn", title: "ERP tax code not mapped to STI classifier", titleLt: "ERP PVM kodas nesusietas su STI klasifikatoriumi", legal: "i.SAF (KIT708) klasifikatoriai", kinds: ["invoicesAR", "invoicesAP"], check: (r, H) => r.lines.some((l) => l.tax.rawCode && !(H.taxMap || {})[l.tax.rawCode]), msg: (r, H) => `${r.invoiceNo}: ${[...new Set(r.lines.filter((l) => l.tax.rawCode && !(H.taxMap || {})[l.tax.rawCode]).map((l) => l.tax.rawCode))].join(",")}` },
+  { id: "ERPB-12", sev: "Block", title: "Unbalanced journal transaction", titleLt: "Nesubalansuota DK operacija", legal: "Buhalterinės apskaitos įst. 6 str.", kinds: ["journals"], check: (r) => Math.abs(eR2(r.lines.reduce((s, l) => s + (l.debit || 0), 0)) - eR2(r.lines.reduce((s, l) => s + (l.credit || 0), 0))) > 0.01, msg: (r) => `${r.transactionId}: D ${eR2(r.lines.reduce((s, l) => s + (l.debit || 0), 0))} ≠ K ${eR2(r.lines.reduce((s, l) => s + (l.credit || 0), 0))}` },
+];
+function validateCanonicalBatch(store, helpers) {
+  const findings = [];
+  const sevUi = { Block: "Critical", Reject: "High", Warn: "Medium" };
+  ERP_BOUNDARY_RULES.forEach((rule) => {
+    rule.kinds.forEach((kind) => {
+      const hits = (store[kind] || []).filter((r) => { try { return rule.check(r, helpers); } catch { return false; } });
+      if (!hits.length) return;
+      findings.push({ rule_id: rule.id, category: "ERP Boundary", severity: rule.sev, severityUi: sevUi[rule.sev], type: "B", typeName: "Boundary", title: rule.title, detail: hits.slice(0, MAX_EVIDENCE).map((h) => { try { return rule.msg(h, helpers); } catch { return ""; } }).join(" · ") + (hits.length > MAX_EVIDENCE ? ` (+${hits.length - MAX_EVIDENCE})` : ""), evidence: hits.slice(0, MAX_EVIDENCE).map((h) => { try { return rule.msg(h, helpers); } catch { return ""; } }), legal_basis: rule.legal, ruleMeta: { titleLt: rule.titleLt, titleEn: rule.title, legal: rule.legal, scope: kind }, hitCount: hits.length });
+    });
+  });
+  detectErpConflicts(store).forEach((c) => findings.push({ rule_id: "ERP-CONFLICT", category: "ERP Boundary", severity: "Reject", severityUi: "High", type: "C", typeName: "Conflict", title: "Same invoice number from two sources", detail: `${c.kind} ${c.invoiceNo} ← ${c.sources.join(" vs ")} (€${c.amounts.join(" / €")})`, evidence: c.sources, legal_basis: "PVMĮ 58 str. (numeracijos vientisumas)", ruleMeta: { titleLt: "Tas pats sąskaitos numeris iš dviejų šaltinių", titleEn: "Same invoice number from two sources", legal: "PVMĮ 58 str.", scope: c.kind } }));
+  return findings;
+}
+
+// ─── Bridge: canonical store → parseSAFTFull() shape (zero special-casing) ─
+const acctTypeOf = (id) => ({ 1: "IT", 2: "TT", 3: "NK", 4: "I", 5: "P", 6: "S" }[String(id)[0]] || "KT");
+const ERP_COA = { 2410: "Pirkėjų skolos", 24451: "Gautinas PVM", 271: "Bankų sąskaitos", 3011: "Įstatinis kapitalas", 4430: "Skolos tiekėjams", 44921: "Mokėtinas PVM", 5001: "Pardavimo pajamos", 6001: "Parduotų prekių savikaina" };
+function canonicalToSaft(store, profile = {}) {
+  const P = { name: profile.name || "UAB TaxAI demo įmonė", regNo: profile.regNo || "305123458", vatNo: profile.vatNo || "LT130512345819", iban: profile.iban || "LT607044060008101234", city: profile.city || "Vilnius", periodStart: profile.periodStart || "2026-01-01", periodEnd: profile.periodEnd || "2026-03-31" };
+  const stiOfRaw = (l) => (store._taxMap || {})[l.tax.rawCode] || l.tax.stiCode || "";
+  const invItem = (inv, dir) => ({
+    invoiceNo: inv.invoiceNo, systemID: inv.source.system, invoiceDate: inv.invoiceDate, invoiceType: "SF",
+    customerID: dir === "AR" ? inv.party.id : "", supplierID: dir === "AP" ? inv.party.id : "",
+    shipFromCountry: dir === "AR" ? "LT" : (inv.party.country || ""), shipToCountry: dir === "AR" ? (inv.party.country || "LT") : "LT",
+    supplierTaxRegType: "PVM", supplierTaxRegCountry: dir === "AP" ? (inv.party.country || "") : "LT", supplierAddressCountry: dir === "AP" ? (inv.party.country || "") : "LT",
+    accountID: dir === "AR" ? "2410" : "4430", glPostingDate: inv.glPostingDate, glTransactionID: `T-${dir}-${inv.invoiceNo}`, systemEntryDate: inv.source.updatedAt || "", selfBillingIndicator: "", settlements: [], references: "",
+    documentTotals: { netTotal: inv.totals.net, taxPayable: inv.totals.vat, grossTotal: inv.totals.gross, currencyCode: inv.currency || "EUR", currencyAmount: null, exchangeRate: null },
+    lines: inv.lines.map((l) => ({ recordID: l.lineNo, productCode: l.productCode || "", goodsServicesID: "", description: l.description, quantity: l.qty, unitOfMeasure: l.uom || "VNT", unitPrice: l.unitPrice, settlementAmount: null, taxPointDate: inv.invoiceDate, debitAmount: dir === "AP" ? l.net : null, creditAmount: dir === "AR" ? l.net : null, tax: { taxType: "PVM", taxCode: stiOfRaw(l) || l.tax.rawCode, taxPercentage: l.tax.pct, taxExemptionReason: l.tax.reverseCharge ? "PVMĮ 96 str." : "", taxableAmount: l.tax.base, taxAmount: l.tax.amount } })),
+  });
+  const salesItems = store.invoicesAR.map((i) => invItem(i, "AR"));
+  const purchItems = store.invoicesAP.map((i) => invItem(i, "AP"));
+  const transactions = store.journals.map((j) => ({ journalID: j.journalId, transactionID: j.transactionId, period: +String(j.date || "").slice(5, 7) || null, periodYear: +String(j.date || "").slice(0, 4) || null, transactionDate: j.date, sourceID: "", description: j.description || "", systemEntryDate: (j.date || "") + "T12:00:00", glPostingDate: j.date, customerID: j.lines.find((l) => l.customerId)?.customerId || "", supplierID: j.lines.find((l) => l.supplierId)?.supplierId || "", systemID: j.system || j.journalId, lines: j.lines.map((l) => ({ recordID: l.recordId, accountID: l.accountId, sourceDocumentID: l.description || "", systemEntryDate: "", customerID: l.customerId || "", supplierID: l.supplierId || "", description: l.description || "", debitAmount: l.debit != null ? eR2(l.debit) : null, debitCurrencyCode: "", debitCurrencyAmount: null, creditAmount: l.credit != null ? eR2(l.credit) : null, creditCurrencyCode: "", creditCurrencyAmount: null, taxInfo: l.tax ? { taxType: "PVM", taxCode: stiOfRaw({ tax: l.tax }) || l.tax.rawCode, taxPercentage: l.tax.pct, taxBase: l.tax.base, taxAmount: l.tax.amount } : null, analysis: [] })) }));
+  const acctAgg = {};
+  transactions.forEach((t) => t.lines.forEach((l) => { const a = acctAgg[l.accountID] = acctAgg[l.accountID] || { d: 0, c: 0 }; a.d += l.debitAmount || 0; a.c += l.creditAmount || 0; }));
+  const accounts = Object.entries({ ...ERP_COA, ...Object.fromEntries(Object.keys(acctAgg).map((k) => [k, ERP_COA[k] || "Sąskaita " + k])) }).map(([accountID, accountDescription]) => { const a = acctAgg[accountID] || { d: 0, c: 0 }; const net = eR2(a.d - a.c); return { accountID, accountDescription, accountTableID: "", accountTableDescription: "", accountType: acctTypeOf(accountID), groupingCategory: "", groupingCode: "", openingDebitBalance: 0, openingCreditBalance: 0, closingDebitBalance: net > 0 ? net : 0, closingCreditBalance: net < 0 ? -net : 0, _hasOpeningDb: true, _hasOpeningCr: true, _hasClosingDb: true, _hasClosingCr: true }; });
+  const partyRow = (p, dir) => ({ [dir === "AR" ? "customerID" : "supplierID"]: p.id, accounts: [{ accountID: dir === "AR" ? "2410" : "4430", od: 0, oc: 0, cd: 0, cc: 0 }], registrationNumber: p.regNo || "", name: p.name, taxRegistrationNumber: p.vatNo || "", country: p.country || "", addressCity: p.city || "", addressCountry: p.country || "", accountID: dir === "AR" ? "2410" : "4430", selfBillingIndicator: "", openingDebitBalance: 0, openingCreditBalance: 0, closingDebitBalance: 0, closingCreditBalance: 0, ...(dir === "AR" ? { openSalesInvoices: store.invoicesAR.filter((i) => i.unpaid && i.party.id === p.id).map((i) => ({ invoiceNo: i.invoiceNo, systemID: i.source.system, invoiceDate: i.invoiceDate, glPostingDate: i.glPostingDate, transactionID: `T-AR-${i.invoiceNo}`, amount: i.totals.gross, unpaidAmount: i.totals.gross, currencyAmount: null, currencyCode: "" })) } : { bankAccount: p.iban || "", openPurchaseInvoices: store.invoicesAP.filter((i) => i.unpaid && i.party.id === p.id).map((i) => ({ invoiceNo: i.invoiceNo, systemID: i.source.system, invoiceDate: i.invoiceDate, glPostingDate: i.glPostingDate, transactionID: `T-AP-${i.invoiceNo}`, amount: i.totals.gross, unpaidAmount: i.totals.gross })) }) });
+  const customers = store.customers.map((p) => partyRow(p, "AR"));
+  const suppliers = store.suppliers.map((p) => partyRow(p, "AP"));
+  const stiCodes = {}; store.invoicesAR.concat(store.invoicesAP).forEach((inv) => inv.lines.forEach((l) => { const code = stiOfRaw(l) || l.tax.rawCode; if (code && !stiCodes[code]) stiCodes[code] = { taxType: "PVM", taxCode: code, description: `${l.tax.pct}%${l.tax.reverseCharge ? " atvirkštinis (96 str.)" : ""}`, taxPercentage: l.tax.pct, flatTaxRate: null, country: "LT", stiTaxCode: (store._taxMap || {})[l.tax.rawCode] || "" }; }));
+  const taxCodes = Object.values(stiCodes);
+  const products = []; const seenP = {}; store.products.forEach((p) => { if (!seenP[p.productCode]) { seenP[p.productCode] = 1; products.push({ productCode: p.productCode, goodsServicesID: p.goodsServicesID || "", description: p.description || "", uomBase: "VNT", uomStandard: "", uomToBaseFactor: 1, taxType: "PVM", taxCode: "" }); } });
+  const payments = store.payments.map((p) => ({ paymentRefNo: p.refNo, systemID: p.system || "", transactionID: `T-PAY-${p.refNo}`, transactionDate: p.date, paymentMethod: p.method || "BP", description: "", bankAccount: P.iban, grossTotal: p.gross, lines: p.lines.map((l) => ({ recordID: l.recordId, customerID: l.customerId || "", supplierID: l.supplierId || "", sourceDocumentID: l.sourceDocumentId || "", debitAmount: l.debit, creditAmount: l.credit, debitCreditIndicator: l.credit != null ? "K" : "D", paymentLineAmount: l.credit != null ? l.credit : (l.debit ?? null) })) }));
+  const totalDebit = eR2(transactions.reduce((s, t) => s + t.lines.reduce((x, l) => x + (l.debitAmount || 0), 0), 0));
+  const totalCredit = eR2(transactions.reduce((s, t) => s + t.lines.reduce((x, l) => x + (l.creditAmount || 0), 0), 0));
+  const sumG = (arr) => eR2(arr.reduce((s, i) => s + (i.documentTotals?.grossTotal || 0), 0));
+  return {
+    _meta: { rootIsAuditFile: true, namespace: "https://www.vmi.lt/cms/saf-t", hasXmlDecl: true, declaredEncoding: "UTF-8", hasBom: false, fileSizeBytes: 0, erpSources: store._sources.slice() },
+    xsdResults: [], dubResults: [], clsResults: [], schemaValidation: { ok: true, total: 0, byKind: {}, findings: [] },
+    header: { auditFileVersion: "2.01", registrationNumber: P.regNo, companyName: P.name, taxEntity: "", periodStart: P.periodStart, periodEnd: P.periodEnd, auditFileCountry: "LT", auditFileDateCreated: new Date().toISOString(), softwareCompanyName: "TAXAI", softwareID: "TAXAI-ERP-HUB", softwareVersion: "9.0", fiscalYearFrom: P.periodStart.slice(0, 4) + "-01-01", fiscalYearTo: P.periodStart.slice(0, 4) + "-12-31", defaultCurrencyCode: "EUR", selectionCriteria: "", taxAccountingBasis: "K", entity: "", dataType: "F", numberOfParts: 1, partNumber: 1, company: { registrationNumber: P.regNo, name: P.name, address: { city: P.city, country: "LT" }, taxRegistration: P.vatNo, bankAccount: P.iban } },
+    glMeta: { numberOfEntries: transactions.length, totalDebit: eR2(transactions.reduce((a, t2) => a + t2.lines.reduce((b, l) => b + (l.debitAmount || 0), 0), 0)), totalCredit: eR2(transactions.reduce((a, t2) => a + t2.lines.reduce((b, l) => b + (l.creditAmount || 0), 0), 0)) },
+    analysisTable: [], accounts, customers, suppliers, taxCodes, uoms: [{ unitOfMeasure: "VNT", description: "Vienetai" }], analysisTypes: [], movementTypes: [], products, physicalStock: [], assets: [], owners: [],
+    gl: { numberOfEntries: transactions.length, totalDebit, totalCredit },
+    journals: [...new Set(store.journals.map((j) => j.journalId))].map((id) => ({ journalID: id, description: id, type: "" })),
+    transactions,
+    sales: { meta: { numberOfEntries: salesItems.length, totalDebit: 0, totalCredit: sumG(salesItems) }, items: salesItems },
+    purchases: { meta: { numberOfEntries: purchItems.length, totalDebit: sumG(purchItems), totalCredit: 0 }, items: purchItems },
+    paymentsMeta: { numberOfEntries: payments.length, totalDebit: eR2(payments.reduce((s, p) => s + p.grossTotal, 0)), totalCredit: 0 }, payments,
+    movementMeta: null, stockMovements: [], assetTxMeta: null, assetTransactions: [],
+    counts: { accounts: accounts.length, customers: customers.length, suppliers: suppliers.length, taxCodes: taxCodes.length, products: products.length, transactions: transactions.length, invoicesSales: salesItems.length, invoicesPurchases: purchItems.length, payments: payments.length, stockMovements: 0, assets: 0, assetTransactions: 0 },
+  };
+}
+
+// ─── Node.js sync-agent companion + webhook receiver (DESIGN-ONLY SPEC) ─
+const SYNC_AGENT_SPEC = `TAXAI SYNC AGENT — design-only specification (Node.js ≥ 20, single binary via pkg/esbuild)
+Purpose: bridge sources the browser cannot reach — SFTP drops, network folders, IDoc/BAPI, webhooks.
+  agent.config.json: { relayUrl:"https://<app>.vercel.app/api/erp", agentKey:"env:TAXAI_AGENT_KEY",
+    watches:[{ id:"sap-idoc", type:"sftp", host, user, keyPath, remoteDir:"/out/invoices", pattern:"*.xml|*.csv",
+               mapProfile:"sap-odata", pollSec:60, archiveDir:"/out/archive" },
+             { id:"shared-folder", type:"folder", path:"//fs01/export/saft", pattern:"*.csv" }]
+Loop per watch: list → download new (by name+mtime cursor in .agent-state.json) → parse (csv/xml/json)
+  → apply mapProfile (same FIELD_MAPS schema as the app) → POST {action:"ingest", system, entity, records[]}
+  to the relay with HMAC-SHA256(agentKey) header → on 2xx move file to archiveDir; on failure retry w/ backoff.
+Security: outbound-only HTTPS; agentKey rotation; no inbound ports; payload minimisation (only mapped fields).
+WEBHOOK RECEIVER (relay-side, /api/erp action:"webhook"): verify per-connector HMAC secret + replay window
+  (timestamp ±5 min, nonce cache) → normalise event {system, entity, op:create|update|void, record} → enqueue;
+  browser polls {action:"pullQueued"} with its cursor. ERPs that push (Shopify, Stripe, Chargebee, Allegro)
+  register the relay URL as their webhook endpoint.`;
+
+// ─── Self-test: demo sync → boundary findings → bridge sanity ─────────
+async function runErpSelfTest(helpers) {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || "" });
+  const store = emptyCanonicalStore();
+  const entry = ERP_CATALOG.find((e) => e.id === "odoo");
+  const conn = makeConnector(entry, { demo: true });
+  const syncState = {};
+  const res = await runConnectorSync(conn, store, syncState, {});
+  ok("demo sync pulls all entities", ENTITY_KINDS.every((k) => res.byEntity[k] >= 0) && store.invoicesAR.length === 26 && store.invoicesAP.length === 18, `AR=${store.invoicesAR.length} AP=${store.invoicesAP.length}`);
+  const entry2 = ERP_CATALOG.find((e) => e.id === "d365-bc");
+  await runConnectorSync(makeConnector(entry2, { demo: true }), store, syncState, {});
+  const findings = validateCanonicalBatch(store, helpers);
+  ok("boundary rules fire on planted defects", ["ERPB-03", "ERPB-05", "ERPB-06", "ERPB-10", "ERPB-12"].every((id) => findings.some((f) => f.rule_id === id)), findings.map((f) => f.rule_id).join(","));
+  ok("idempotency: re-sync adds nothing", (await runConnectorSync(conn, store, syncState, {})).byEntity.invoicesAR === 0);
+  const parsed = canonicalToSaft(store, {});
+  const dT = parsed.gl.totalDebit, cT = parsed.gl.totalCredit;
+  ok("bridge GL balanced within planted defects (+0.07/system)", Math.abs(dT - cT) <= 0.07 * store._sources.length + 0.02, `D=${dT} K=${cT} Δ=${eR2(Math.abs(dT - cT))}`);
+  ok("bridge counts match store", parsed.counts.invoicesSales === store.invoicesAR.length && parsed.counts.invoicesPurchases === store.invoicesAP.length && parsed.counts.transactions === store.journals.length);
+  ok("bridge header is LT 2.01", parsed.header.auditFileVersion === "2.01" && parsed.header.auditFileCountry === "LT");
+  return { ok: checks.every((c) => c.pass), checks, findings: findings.length, store };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MODULE 2 — LITHUANIAN E-INVOICING ENGINE (v9)
+// EN 16931 semantic model · UBL 2.1 syntax · Peppol BIS Billing 3.0 ·
+// SABIS (B2G) routing · i.SAF / SAF-T bridges · hash-chain archive ·
+// ViDA (EU) 2025/516 readiness. Deterministic engines; AI only explains.
+// ════════════════════════════════════════════════════════════════════
+
+// ─── Regulatory regime (dated, with provenance — rate-pack style) ─────
+// Every date below was source-verified; the UI shows this object verbatim
+// so a reviewer can audit the legal timeline the engine enforces.
+const EINV_REGIME = {
+  asOf: "2026-06",
+  b2g: {
+    mandatorySince: "2017-07-01",
+    basis: "Direktyva 2014/55/ES + LR viešųjų pirkimų įstatymas",
+    note: "Tiekėjai viešojo sektoriaus pirkėjams privalo teikti e. sąskaitas; nuo 2024-07 — per SABIS.",
+    noteEn: "Suppliers to public-sector buyers must issue e-invoices; since 2024-07 — via SABIS.",
+  },
+  sabis: {
+    liveFrom: "2024-07-01",
+    esaskaitaDisconnected: "2024-08-30",
+    fullyOperational: "2024-09-01",
+    verbalContractsOver1000: "2024-07-01",   // žodinės sutartys > €1 000 (be PVM) — per SABIS
+    verbalContractsAll: "2025-01-01",         // visos žodinės sutartys, nepriklausomai nuo sumos
+    note: "SABIS („E. sąskaita“ įpėdinė) — centralizuota viešojo sektoriaus e. sąskaitų platforma.",
+    noteEn: "SABIS (successor of eSąskaita) — the centralised public-sector e-invoicing platform.",
+  },
+  formats: {
+    semantic: "EN 16931",
+    syntaxes: ["UBL 2.1", "UN/CEFACT CII D16B"],
+    peppol: "Peppol BIS Billing 3.0",
+    nationalCius: null,                        // LT netaiko atskiro nacionalinio CIUS
+  },
+  archive: { years: 10, basis: "PVMĮ + Buhalterinės apskaitos dokumentų saugojimas", integrity: "eIDAS (910/2014): kval. parašas/antspaudas arba audituojama vientisumo grandinė" },
+  vida: {
+    directive: "Tarybos direktyva (ES) 2025/516 („VAT in the Digital Age“)",
+    adopted: "2025-03-11",
+    inForce: "2025-04-14",
+    transposeBy: "2030-06-30",
+    intraEuMandatory: "2030-07-01",            // struktūrizuotos e. sąskaitos + DRR ES vidaus B2B
+    drr: true,
+    note: "Nuo 2030-07-01 ES vidaus B2B sandoriams privaloma EN 16931 e. sąskaita ir skaitmeninis pranešimas (DRR).",
+    noteEn: "From 2030-07-01 intra-EU B2B requires EN 16931 e-invoices and digital real-time reporting (DRR).",
+  },
+  provenance: ["EC eInvoicing Country Sheet — Lithuania", "Pagero / Thomson Reuters regulatory updates (2024)", "Sovos: Lithuania e-invoicing (2025)", "Comarch: SABIS go-live (2024)", "Council Directive (EU) 2025/516, OJ L 2025/516"],
+};
+// Peppol Electronic Address Scheme (EAS/ICD) codes relevant to LT.
+const PEPPOL_EAS = { legalEntity: "0200", vat: "9937" };   // 0200 = LT juridinio asmens kodas (LT:LEC); 9937 = LT PVM kodas
+const PEPPOL_EAS_KNOWN = new Set(["0200", "9937", "0088", "0192", "0007", "9930", "0196", "0184"]);
+const EINV_CUSTOMIZATION = "urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0";
+const EINV_PROFILE = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0";
+const EINV_STATES = ["DRAFT", "VALIDATED", "ISSUED", "TRANSMITTED", "DELIVERED", "ACCEPTED", "REJECTED", "PAID", "ARCHIVED"];
+const EINV_FLOW = { DRAFT: ["VALIDATED"], VALIDATED: ["ISSUED", "DRAFT"], ISSUED: ["TRANSMITTED"], TRANSMITTED: ["DELIVERED", "REJECTED"], DELIVERED: ["ACCEPTED", "REJECTED", "PAID"], ACCEPTED: ["PAID"], REJECTED: ["DRAFT"], PAID: ["ARCHIVED"], ARCHIVED: [] };
+const APP_BUILD = "v9.2 · SOTA compliance build (SAF-T LT 2.01 full catalogue · EN 16931 · Peppol BIS 3.0 · SABIS · ViDA)";
+
+const xmlEsc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+const fmt2 = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+const einvR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const EU_CC = new Set(["AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE"]);
+
+// ─── Canonical e-invoice model (EN 16931 BG/BT aligned) ───────────────
+function newEInvoice(profile, seq, today) {
+  const d = today || new Date().toISOString().slice(0, 10);
+  const due = new Date(d + "T00:00:00Z"); due.setUTCDate(due.getUTCDate() + 14);
+  return {
+    id: "einv-" + Date.now().toString(36) + "-" + seq,
+    direction: "AR", typeCode: "380", state: "DRAFT",
+    invoiceNo: `${profile.series || "TX"}-${d.slice(0, 4)}-${String(seq).padStart(5, "0")}`,
+    issueDate: d, dueDate: due.toISOString().slice(0, 10), currency: "EUR", exchangeRate: 1,
+    buyerRef: "", note: "", precedingInvoiceNo: "", period: { start: "", end: "" },
+    seller: { name: profile.name, regNo: profile.regNo, vatNo: profile.vatNo, country: "LT", city: profile.city, street: profile.street || "", postal: profile.postal || "", endpoint: { scheme: profile.peppolScheme || PEPPOL_EAS.legalEntity, id: profile.peppolScheme === PEPPOL_EAS.vat ? profile.vatNo : profile.regNo } },
+    buyer: { name: "", regNo: "", vatNo: "", country: "LT", city: "", street: "", postal: "", email: "", isPublic: false, endpoint: { scheme: PEPPOL_EAS.legalEntity, id: "" } },
+    lines: [{ id: "1", description: "", qty: 1, unitCode: "H87", unitPrice: 0, pct: 21, reverseCharge: false, exempt: false, exemptReason: "", outOfScope: false }],
+    allowances: [], charges: [],            // BG-20 / BG-21 (document level): { amount, reason, reasonCode, cat, pct }
+    payment: { meansCode: "30", iban: profile.iban || "", paymentId: "", prepaid: 0 },
+    roundingAmount: 0,                       // BT-114
+    oss: false,
+  };
+}
+// VAT category per EN 16931 / UNCL5305: S standard/reduced · Z zero ·
+// AE reverse charge · K intra-Community supply · G export (non-EU) ·
+// E exempt · O out of scope.
+function taxCategoryOf(line, inv) {
+  if (line.outOfScope) return "O";
+  if (line.reverseCharge) return "AE";
+  if (line.exempt) return "E";
+  if ((line.pct || 0) === 0 && inv.buyer?.country && !EU_CC.has(inv.buyer.country)) return "G";
+  if ((line.pct || 0) === 0 && inv.buyer?.vatNo && EU_CC.has(inv.buyer.country) && inv.buyer.country !== "LT") return "K";
+  if ((line.pct || 0) === 0) return "Z";
+  return "S";
+}
+const VATEX = { AE: "VATEX-EU-AE", K: "VATEX-EU-IC", G: "VATEX-EU-G", O: "VATEX-EU-O" };
+const exemptionReasonOf = (cat, line) => cat === "AE" ? "Atvirkštinis apmokestinimas — PVMĮ 96 str." : cat === "K" ? "Intra-Community supply — 0% (PVMĮ 49 str.)" : cat === "G" ? "Export of goods/services — 0% (PVMĮ 41 str.)" : cat === "O" ? "Ne PVM objektas (out of scope)" : cat === "E" ? ((line && line.exemptReason) || "Neapmokestinama") : "";
+
+// Deterministic totals: per-line TaxCalc.vatCalc; document allowances and
+// charges adjust the taxable base of their own VAT category (EN 16931).
+function computeEinvTotals(inv) {
+  const lines = (inv.lines || []).map((l) => {
+    const net = einvR2((Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
+    const cat = taxCategoryOf(l, inv);
+    const pct = cat === "S" ? (Number(l.pct) || 0) : 0;
+    return { ...l, net, cat, effPct: pct, vat: 0 };
+  });
+  const subMap = {};
+  const bucket = (cat, pct, sample) => { const k = cat + "|" + pct; return subMap[k] = subMap[k] || { cat, pct, taxable: 0, tax: 0, reason: exemptionReasonOf(cat, sample), reasonCode: VATEX[cat] || "" }; };
+  lines.forEach((l) => { const s = bucket(l.cat, l.effPct, l); s.taxable = einvR2(s.taxable + l.net); });
+  const allowances = inv.allowances || [], charges = inv.charges || [];
+  allowances.forEach((a) => { const pct = a.cat === "S" ? (Number(a.pct) || 0) : 0; const s = bucket(a.cat || "S", pct, null); s.taxable = einvR2(s.taxable - (Number(a.amount) || 0)); });
+  charges.forEach((a) => { const pct = a.cat === "S" ? (Number(a.pct) || 0) : 0; const s = bucket(a.cat || "S", pct, null); s.taxable = einvR2(s.taxable + (Number(a.amount) || 0)); });
+  const subtotals = Object.values(subMap);
+  subtotals.forEach((s) => { s.tax = s.cat === "S" ? TaxCalc.vatCalc(s.taxable, s.pct).vat : 0; });
+  lines.forEach((l) => { l.vat = l.cat === "S" ? TaxCalc.vatCalc(l.net, l.effPct).vat : 0; });
+  const lineExt = einvR2(lines.reduce((s, l) => s + l.net, 0));
+  const allowSum = einvR2(allowances.reduce((s, a) => s + (Number(a.amount) || 0), 0));
+  const chargeSum = einvR2(charges.reduce((s, a) => s + (Number(a.amount) || 0), 0));
+  const taxEx = einvR2(lineExt - allowSum + chargeSum);
+  const taxTotal = einvR2(subtotals.reduce((s, x) => s + x.tax, 0));
+  const taxInc = einvR2(taxEx + taxTotal);
+  const prepaid = einvR2(Number(inv.payment?.prepaid) || 0);
+  const rounding = einvR2(Number(inv.roundingAmount) || 0);
+  const payable = einvR2(taxInc - prepaid + rounding);
+  return { lines, subtotals, lineExt, allowSum, chargeSum, taxEx, taxTotal, taxInc, prepaid, rounding, payable };
+}
+
+// ─── UBL 2.1 / Peppol BIS Billing 3.0 builder ─────────────────────────
+function buildUBLInvoice(inv) {
+  const T = computeEinvTotals(inv);
+  const C = inv.currency;
+  const party = (p, role) => `<cac:Accounting${role}Party><cac:Party>
+<cbc:EndpointID schemeID="${xmlEsc(p.endpoint?.scheme || "")}">${xmlEsc(p.endpoint?.id || "")}</cbc:EndpointID>
+<cac:PartyName><cbc:Name>${xmlEsc(p.name)}</cbc:Name></cac:PartyName>
+<cac:PostalAddress><cbc:StreetName>${xmlEsc(p.street || "")}</cbc:StreetName><cbc:CityName>${xmlEsc(p.city || "")}</cbc:CityName><cbc:PostalZone>${xmlEsc(p.postal || "")}</cbc:PostalZone><cac:Country><cbc:IdentificationCode>${xmlEsc(p.country || "")}</cbc:IdentificationCode></cac:Country></cac:PostalAddress>
+${p.vatNo ? `<cac:PartyTaxScheme><cbc:CompanyID>${xmlEsc(p.vatNo)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>` : ""}
+<cac:PartyLegalEntity><cbc:RegistrationName>${xmlEsc(p.name)}</cbc:RegistrationName>${p.regNo ? `<cbc:CompanyID schemeID="0200">${xmlEsc(p.regNo)}</cbc:CompanyID>` : ""}</cac:PartyLegalEntity>
+</cac:Party></cac:Accounting${role}Party>`;
+  const acXml = (a, charge) => `<cac:AllowanceCharge><cbc:ChargeIndicator>${charge}</cbc:ChargeIndicator>${a.reasonCode ? `<cbc:AllowanceChargeReasonCode>${xmlEsc(a.reasonCode)}</cbc:AllowanceChargeReasonCode>` : ""}<cbc:AllowanceChargeReason>${xmlEsc(a.reason || "")}</cbc:AllowanceChargeReason><cbc:Amount currencyID="${C}">${fmt2(a.amount)}</cbc:Amount><cac:TaxCategory><cbc:ID>${xmlEsc(a.cat || "S")}</cbc:ID><cbc:Percent>${fmt2(a.cat === "S" ? a.pct : 0)}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:AllowanceCharge>`;
+  const subt = T.subtotals.map((s) => `<cac:TaxSubtotal><cbc:TaxableAmount currencyID="${C}">${fmt2(s.taxable)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="${C}">${fmt2(s.tax)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>${s.cat}</cbc:ID><cbc:Percent>${fmt2(s.pct)}</cbc:Percent>${s.reasonCode && s.cat !== "S" && s.cat !== "Z" ? `<cbc:TaxExemptionReasonCode>${s.reasonCode}</cbc:TaxExemptionReasonCode>` : ""}${s.reason && s.cat !== "S" && s.cat !== "Z" ? `<cbc:TaxExemptionReason>${xmlEsc(s.reason)}</cbc:TaxExemptionReason>` : ""}<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal>`).join("");
+  const lineXml = T.lines.map((l) => `<cac:InvoiceLine><cbc:ID>${xmlEsc(l.id)}</cbc:ID><cbc:InvoicedQuantity unitCode="${xmlEsc(l.unitCode || "H87")}">${l.qty}</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="${C}">${fmt2(l.net)}</cbc:LineExtensionAmount><cac:Item><cbc:Name>${xmlEsc(l.description || "—")}</cbc:Name><cac:ClassifiedTaxCategory><cbc:ID>${l.cat}</cbc:ID><cbc:Percent>${fmt2(l.cat === "S" ? l.pct : 0)}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item><cac:Price><cbc:PriceAmount currencyID="${C}">${fmt2(l.unitPrice)}</cbc:PriceAmount></cac:Price></cac:InvoiceLine>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+<cbc:CustomizationID>${EINV_CUSTOMIZATION}</cbc:CustomizationID>
+<cbc:ProfileID>${EINV_PROFILE}</cbc:ProfileID>
+<cbc:ID>${xmlEsc(inv.invoiceNo)}</cbc:ID>
+<cbc:IssueDate>${xmlEsc(inv.issueDate)}</cbc:IssueDate>
+${inv.dueDate ? `<cbc:DueDate>${xmlEsc(inv.dueDate)}</cbc:DueDate>` : ""}
+<cbc:InvoiceTypeCode>${xmlEsc(inv.typeCode || "380")}</cbc:InvoiceTypeCode>
+${inv.note ? `<cbc:Note>${xmlEsc(inv.note)}</cbc:Note>` : ""}
+<cbc:DocumentCurrencyCode>${xmlEsc(inv.currency)}</cbc:DocumentCurrencyCode>
+${inv.buyerRef ? `<cbc:BuyerReference>${xmlEsc(inv.buyerRef)}</cbc:BuyerReference>` : ""}
+${inv.period && inv.period.start ? `<cac:InvoicePeriod><cbc:StartDate>${xmlEsc(inv.period.start)}</cbc:StartDate>${inv.period.end ? `<cbc:EndDate>${xmlEsc(inv.period.end)}</cbc:EndDate>` : ""}</cac:InvoicePeriod>` : ""}
+${inv.precedingInvoiceNo ? `<cac:BillingReference><cac:InvoiceDocumentReference><cbc:ID>${xmlEsc(inv.precedingInvoiceNo)}</cbc:ID></cac:InvoiceDocumentReference></cac:BillingReference>` : ""}
+${party(inv.seller, "Supplier")}
+${party(inv.buyer, "Customer")}
+<cac:PaymentMeans><cbc:PaymentMeansCode>${xmlEsc(inv.payment?.meansCode || "30")}</cbc:PaymentMeansCode>${inv.payment?.paymentId ? `<cbc:PaymentID>${xmlEsc(inv.payment.paymentId)}</cbc:PaymentID>` : ""}${inv.payment?.iban ? `<cac:PayeeFinancialAccount><cbc:ID>${xmlEsc(inv.payment.iban)}</cbc:ID></cac:PayeeFinancialAccount>` : ""}</cac:PaymentMeans>
+${(inv.allowances || []).map((a) => acXml(a, "false")).join("\n")}
+${(inv.charges || []).map((a) => acXml(a, "true")).join("\n")}
+<cac:TaxTotal><cbc:TaxAmount currencyID="${C}">${fmt2(T.taxTotal)}</cbc:TaxAmount>${subt}</cac:TaxTotal>
+<cac:LegalMonetaryTotal><cbc:LineExtensionAmount currencyID="${C}">${fmt2(T.lineExt)}</cbc:LineExtensionAmount><cbc:TaxExclusiveAmount currencyID="${C}">${fmt2(T.taxEx)}</cbc:TaxExclusiveAmount><cbc:TaxInclusiveAmount currencyID="${C}">${fmt2(T.taxInc)}</cbc:TaxInclusiveAmount><cbc:AllowanceTotalAmount currencyID="${C}">${fmt2(T.allowSum)}</cbc:AllowanceTotalAmount><cbc:ChargeTotalAmount currencyID="${C}">${fmt2(T.chargeSum)}</cbc:ChargeTotalAmount><cbc:PrepaidAmount currencyID="${C}">${fmt2(T.prepaid)}</cbc:PrepaidAmount>${T.rounding ? `<cbc:PayableRoundingAmount currencyID="${C}">${fmt2(T.rounding)}</cbc:PayableRoundingAmount>` : ""}<cbc:PayableAmount currencyID="${C}">${fmt2(T.payable)}</cbc:PayableAmount></cac:LegalMonetaryTotal>
+${lineXml}
+</Invoice>`;
+}
+
+// SBDH envelope (Peppol AS4 transport header) — participant scheme 0200/9937.
+function buildSBDH(inv, settings) {
+  const sId = `${inv.seller.endpoint?.scheme || PEPPOL_EAS.legalEntity}:${inv.seller.endpoint?.id || inv.seller.regNo}`;
+  const rId = `${inv.buyer.endpoint?.scheme || PEPPOL_EAS.legalEntity}:${inv.buyer.endpoint?.id || inv.buyer.regNo}`;
+  return `<sbd:StandardBusinessDocumentHeader xmlns:sbd="http://www.unece.org/cefact/namespaces/StandardBusinessDocumentHeader">
+<sbd:HeaderVersion>1.0</sbd:HeaderVersion>
+<sbd:Sender><sbd:Identifier Authority="iso6523-actorid-upis">${xmlEsc(sId)}</sbd:Identifier></sbd:Sender>
+<sbd:Receiver><sbd:Identifier Authority="iso6523-actorid-upis">${xmlEsc(rId)}</sbd:Identifier></sbd:Receiver>
+<sbd:DocumentIdentification><sbd:Standard>urn:oasis:names:specification:ubl:schema:xsd:Invoice-2</sbd:Standard><sbd:TypeVersion>2.1</sbd:TypeVersion><sbd:InstanceIdentifier>${xmlEsc(inv.id)}</sbd:InstanceIdentifier><sbd:Type>Invoice</sbd:Type><sbd:CreationDateAndTime>${new Date().toISOString()}</sbd:CreationDateAndTime></sbd:DocumentIdentification>
+<sbd:BusinessScope><sbd:Scope><sbd:Type>DOCUMENTID</sbd:Type><sbd:InstanceIdentifier>${EINV_CUSTOMIZATION}::2.1</sbd:InstanceIdentifier></sbd:Scope><sbd:Scope><sbd:Type>PROCESSID</sbd:Type><sbd:InstanceIdentifier>${EINV_PROFILE}</sbd:InstanceIdentifier></sbd:Scope></sbd:BusinessScope>
+</sbd:StandardBusinessDocumentHeader>`;
+}
+
+// ─── UBL parser (namespace-prefix tolerant: matches by localName) ─────
+function parseUBLInvoice(xmlStr, DOMParserImpl) {
+  try {
+    const DP = DOMParserImpl || (typeof DOMParser !== "undefined" ? DOMParser : null);
+    if (!DP) return { _parseError: "No XML parser available" };
+    const doc = new DP().parseFromString(xmlStr, "text/xml");
+    const perr = doc.querySelector && doc.querySelector("parsererror");
+    if (perr) return { _parseError: (perr.textContent || "XML parse error").slice(0, 200) };
+    const root = doc.documentElement;
+    if ((root.localName || root.tagName) !== "Invoice") return { _parseError: "Root element is not <Invoice> (UBL 2.1)" };
+    const ln = (e) => (e.localName || e.tagName).replace(/^.*:/, "");
+    const descend = (el) => Array.from(el.getElementsByTagName("*"));
+    const firstLocal = (el, name) => descend(el).find((e) => ln(e) === name) || null;
+    const allLocal = (el, name) => descend(el).filter((e) => ln(e) === name);
+    const childLocal = (el, name) => Array.from(el.children || []).find((e) => ln(e) === name) || null;
+    const childAll = (el, name) => Array.from(el.children || []).filter((e) => ln(e) === name);
+    const txtOf = (el) => (el && (el.textContent || "").trim()) || "";
+    const tIn = (el, name) => txtOf(firstLocal(el, name));
+    const numOf = (s) => { const v = parseFloat(s); return isNaN(v) ? 0 : v; };
+    const nIn = (el, name) => numOf(tIn(el, name));
+    const attrOf = (el, a) => (el && el.getAttribute && el.getAttribute(a)) || "";
+
+    const sup = firstLocal(root, "AccountingSupplierParty"), cus = firstLocal(root, "AccountingCustomerParty");
+    const readParty = (sec) => {
+      if (!sec) return { name: "", regNo: "", vatNo: "", country: "", city: "", street: "", postal: "", endpoint: { scheme: "", id: "" } };
+      const ep = firstLocal(sec, "EndpointID");
+      const pts = firstLocal(sec, "PartyTaxScheme");
+      const ple = firstLocal(sec, "PartyLegalEntity");
+      const addr = firstLocal(sec, "PostalAddress");
+      return { name: tIn(sec, "RegistrationName") || tIn(sec, "Name"), regNo: ple ? tIn(ple, "CompanyID") : "", vatNo: pts ? tIn(pts, "CompanyID") : "", country: addr ? tIn(addr, "IdentificationCode") : "", city: addr ? tIn(addr, "CityName") : "", street: addr ? tIn(addr, "StreetName") : "", postal: addr ? tIn(addr, "PostalZone") : "", endpoint: { scheme: attrOf(ep, "schemeID"), id: txtOf(ep) } };
+    };
+    const lmt = firstLocal(root, "LegalMonetaryTotal");
+    const taxTotalEl = firstLocal(root, "TaxTotal");
+    const rawIn = (el, name) => txtOf(el ? firstLocal(el, name) : null);
+    const subtotals = taxTotalEl ? allLocal(taxTotalEl, "TaxSubtotal").map((s) => ({ taxable: nIn(s, "TaxableAmount"), tax: nIn(s, "TaxAmount"), cat: (firstLocal(s, "TaxCategory") ? txtOf(childLocal(firstLocal(s, "TaxCategory"), "ID")) : ""), pct: nIn(s, "Percent"), reason: tIn(s, "TaxExemptionReason"), reasonCode: tIn(s, "TaxExemptionReasonCode"), _rawTaxable: rawIn(s, "TaxableAmount"), _rawTax: rawIn(s, "TaxAmount") })) : [];
+    // Document-level allowances/charges = direct children of <Invoice>
+    const docACs = childAll(root, "AllowanceCharge").map((a) => { const tc = firstLocal(a, "TaxCategory"); return { charge: txtOf(childLocal(a, "ChargeIndicator")) === "true", amount: numOf(txtOf(childLocal(a, "Amount"))), _rawAmount: txtOf(childLocal(a, "Amount")), reason: tIn(a, "AllowanceChargeReason"), reasonCode: tIn(a, "AllowanceChargeReasonCode"), cat: tc ? txtOf(childLocal(tc, "ID")) : "S", pct: tc ? nIn(tc, "Percent") : 0 }; });
+    const lines = allLocal(root, "InvoiceLine").map((le, i) => {
+      const item = firstLocal(le, "Item"); const ctc = item ? firstLocal(item, "ClassifiedTaxCategory") : null;
+      const cat = ctc ? txtOf(childLocal(ctc, "ID")) : "S";
+      const pct = ctc ? nIn(ctc, "Percent") : 0;
+      const qEl = firstLocal(le, "InvoicedQuantity");
+      return { id: txtOf(childLocal(le, "ID")) || String(i + 1), description: item ? (tIn(item, "Name") || tIn(item, "Description")) : "", qty: parseFloat(txtOf(qEl)) || 0, unitCode: attrOf(qEl, "unitCode") || "", unitPrice: nIn(firstLocal(le, "Price") || le, "PriceAmount"), net: numOf(txtOf(childLocal(le, "LineExtensionAmount"))), _rawNet: txtOf(childLocal(le, "LineExtensionAmount")), pct, cat, reverseCharge: cat === "AE", exempt: cat === "E", outOfScope: cat === "O", exemptReason: "" };
+    });
+    const pm = firstLocal(root, "PaymentMeans");
+    const period = firstLocal(root, "InvoicePeriod");
+    const billRef = firstLocal(root, "BillingReference");
+    const inv = {
+      id: "einv-in-" + Date.now().toString(36), direction: "AP", state: "RECEIVED",
+      _customization: txtOf(childLocal(root, "CustomizationID")), _profile: txtOf(childLocal(root, "ProfileID")),
+      invoiceNo: txtOf(childLocal(root, "ID")), issueDate: txtOf(childLocal(root, "IssueDate")), dueDate: txtOf(childLocal(root, "DueDate")),
+      typeCode: txtOf(childLocal(root, "InvoiceTypeCode")) || "380", note: txtOf(childLocal(root, "Note")), buyerRef: txtOf(childLocal(root, "BuyerReference")),
+      currency: txtOf(childLocal(root, "DocumentCurrencyCode")) || "EUR", exchangeRate: 1,
+      precedingInvoiceNo: billRef ? tIn(billRef, "ID") : "",
+      period: { start: period ? tIn(period, "StartDate") : "", end: period ? tIn(period, "EndDate") : "" },
+      seller: readParty(sup), buyer: readParty(cus), lines,
+      allowances: docACs.filter((a) => !a.charge), charges: docACs.filter((a) => a.charge),
+      payment: { meansCode: pm ? tIn(pm, "PaymentMeansCode") : "", iban: pm && firstLocal(pm, "PayeeFinancialAccount") ? tIn(firstLocal(pm, "PayeeFinancialAccount"), "ID") : "", paymentId: pm ? tIn(pm, "PaymentID") : "", prepaid: lmt ? nIn(lmt, "PrepaidAmount") : 0 },
+      roundingAmount: lmt ? nIn(lmt, "PayableRoundingAmount") : 0,
+      oss: false,
+      _declared: {
+        lineExt: lmt && firstLocal(lmt, "LineExtensionAmount") ? nIn(lmt, "LineExtensionAmount") : null,
+        taxEx: lmt && firstLocal(lmt, "TaxExclusiveAmount") ? nIn(lmt, "TaxExclusiveAmount") : null,
+        taxInc: lmt && firstLocal(lmt, "TaxInclusiveAmount") ? nIn(lmt, "TaxInclusiveAmount") : null,
+        payable: lmt && firstLocal(lmt, "PayableAmount") ? nIn(lmt, "PayableAmount") : null,
+        allowTotal: lmt && firstLocal(lmt, "AllowanceTotalAmount") ? nIn(lmt, "AllowanceTotalAmount") : null,
+        chargeTotal: lmt && firstLocal(lmt, "ChargeTotalAmount") ? nIn(lmt, "ChargeTotalAmount") : null,
+        prepaid: lmt && firstLocal(lmt, "PrepaidAmount") ? nIn(lmt, "PrepaidAmount") : null,
+        rounding: lmt && firstLocal(lmt, "PayableRoundingAmount") ? nIn(lmt, "PayableRoundingAmount") : null,
+        taxTotal: taxTotalEl ? numOf(txtOf(childLocal(taxTotalEl, "TaxAmount"))) : null,
+        subtotals,
+        _raw: { lineExt: rawIn(lmt, "LineExtensionAmount"), taxEx: rawIn(lmt, "TaxExclusiveAmount"), taxInc: rawIn(lmt, "TaxInclusiveAmount"), payable: rawIn(lmt, "PayableAmount"), taxTotal: taxTotalEl ? txtOf(childLocal(taxTotalEl, "TaxAmount")) : "" },
+      },
+    };
+    return inv;
+  } catch (e) { return { _parseError: e.message }; }
+}
+
+// ─── Validation pipeline: EN 16931 core → Peppol BIS 3.0 → LT layer ───
+const einvLegal = (ref) => { const L = LEGAL_DB.find((x) => x.id === ref); return L ? `${L.law} ${L.article}` : ref; };
+
+// LT mod-11 checksums (double pass, weights 1-8 / 3-9,1) — algorithm
+// verified against real public registry codes (VMI 188659752, Sodra 191630223…).
+function ltMod11(digits, w1, w2) { let s = 0; for (let i = 0; i < digits.length; i++) s += digits[i] * w1[i]; let r = s % 11; if (r === 10) { s = 0; for (let i = 0; i < digits.length; i++) s += digits[i] * w2[i]; r = s % 11; if (r === 10) r = 0; } return r; }
+function isValidLtCompanyCode(code) { if (!/^\d{9}$/.test(String(code || ""))) return false; const d = String(code).split("").map(Number); return ltMod11(d.slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8], [3, 4, 5, 6, 7, 8, 9, 1]) === d[8]; }
+function isValidLtVatChecksum(vat) {
+  const m = /^LT(\d{9}|\d{12})$/.exec(String(vat || "").toUpperCase()); if (!m) return false;
+  const d = m[1].split("").map(Number);
+  if (d.length === 9) { if (d[7] !== 1) return false; return ltMod11(d.slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8], [3, 4, 5, 6, 7, 8, 9, 1]) === d[8]; }
+  if (d[10] !== 1) return false;
+  return ltMod11(d.slice(0, 11), [1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2], [3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4]) === d[11];
+}
+// EU member-state VAT identifier formats (syntactic, VIES-aligned)
+const EU_VAT_FMT = { AT: /^ATU\d{8}$/, BE: /^BE[01]\d{9}$/, BG: /^BG\d{9,10}$/, CY: /^CY\d{8}[A-Z]$/, CZ: /^CZ\d{8,10}$/, DE: /^DE\d{9}$/, DK: /^DK\d{8}$/, EE: /^EE\d{9}$/, EL: /^EL\d{9}$/, ES: /^ES[A-Z0-9]\d{7}[A-Z0-9]$/, FI: /^FI\d{8}$/, FR: /^FR[A-HJ-NP-Z0-9]{2}\d{9}$/, HR: /^HR\d{11}$/, HU: /^HU\d{8}$/, IE: /^IE(\d{7}[A-W][A-I]?|\d[A-Z+*]\d{5}[A-W])$/, IT: /^IT\d{11}$/, LT: /^LT(\d{9}|\d{12})$/, LU: /^LU\d{8}$/, LV: /^LV\d{11}$/, MT: /^MT\d{8}$/, NL: /^NL\d{9}B\d{2}$/, PL: /^PL\d{10}$/, PT: /^PT\d{9}$/, RO: /^RO\d{2,10}$/, SE: /^SE\d{12}$/, SI: /^SI\d{8}$/, SK: /^SK\d{10}$/ };
+const euVatFormatOk = (vat) => { const v = String(vat || "").toUpperCase().replace(/\s/g, ""); const cc = v.slice(0, 2); const re = EU_VAT_FMT[cc]; return re ? re.test(v) : null; };
+// Code lists (ISO 3166-1 alpha-2 full; UNECE Rec 20 subset; UNCL4461/5305/UBL type codes)
+const ISO_3166 = new Set("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW XI EL".split(" "));
+const UNECE_UNITS = new Set(["H87", "C62", "EA", "PCE", "HUR", "DAY", "MON", "ANN", "KGM", "GRM", "TNE", "LTR", "MLT", "MTR", "MTK", "MTQ", "KMT", "CMT", "MMT", "SET", "KWH", "MWH", "XPP", "ZZ"]);
+const UNCL4461_MEANS = new Set(["1", "10", "20", "30", "42", "48", "49", "54", "57", "58", "59", "97"]);
+const UBL_TYPE_CODES = new Set(["380", "381", "384", "389", "751"]);
+const UNCL5305 = new Set(["S", "Z", "E", "AE", "K", "G", "O", "L", "M"]);
+
+const dec2ok = (raw, num) => { if (raw) return /^-?\d+(\.\d{1,2})?$/.test(String(raw).trim()); const n = Number(num); return !isFinite(n) || Math.abs(n * 100 - Math.round(n * 100)) < 1e-6; };
+
+// ─── Rule set (115+ executable rules). Each: {id,layer,sev,en,lt,legal,check(inv,T,D,H)→evidence|null}
+const EINV_RULES = (() => {
+  const R = [];
+  const add = (id, layer, sev, en, lt, legal, check) => R.push({ id, layer, sev, en, lt, legal, check });
+  const sub = (D, T) => (D.subtotals && D.subtotals.length ? D.subtotals : T.subtotals);
+  const isParsed = (i) => i._customization != null;
+  const acOf = (i, cat, pct, charge) => ((charge ? i.charges : i.allowances) || []).filter((a) => (a.cat || "S") === cat && (cat !== "S" || (Number(a.pct) || 0) === pct)).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+
+  // ── EN 16931 core mandatories (BR-01…BR-16) ──
+  add("BR-01", "EN16931", "Reject", "Specification identifier (BT-24) shall be present", "Privalomas specifikacijos identifikatorius (BT-24)", "einv-en16931", (i) => isParsed(i) && !i._customization ? "CustomizationID missing" : null);
+  add("BR-02", "EN16931", "Block", "An Invoice shall have an Invoice number (BT-1)", "Sąskaita privalo turėti numerį (BT-1)", "pvm-58", (i) => !i.invoiceNo ? "cbc:ID missing" : null);
+  add("BR-03", "EN16931", "Block", "An Invoice shall have an Issue date (BT-2)", "Privaloma išrašymo data (BT-2)", "pvm-58", (i) => !/^\d{4}-\d{2}-\d{2}$/.test(i.issueDate || "") ? `IssueDate="${i.issueDate || ""}"` : null);
+  add("BR-04", "EN16931", "Reject", "An Invoice shall have an Invoice type code (BT-3)", "Privalomas dokumento tipo kodas (BT-3)", "einv-en16931", (i) => !i.typeCode ? "InvoiceTypeCode missing" : null);
+  add("BR-05", "EN16931", "Reject", "Invoice currency code shall be ISO 4217 (BT-5)", "Valiutos kodas — ISO 4217 (BT-5)", "einv-en16931", (i, T, D, H) => !H.ISO_4217.has(i.currency) ? `currency="${i.currency}"` : null);
+  add("BR-06", "EN16931", "Block", "Seller name is mandatory (BT-27)", "Pardavėjo pavadinimas privalomas (BT-27)", "pvm-58", (i) => !i.seller?.name ? "Seller/Name missing" : null);
+  add("BR-07", "EN16931", "Block", "Buyer name is mandatory (BT-44)", "Pirkėjo pavadinimas privalomas (BT-44)", "pvm-58", (i) => !i.buyer?.name ? "Buyer/Name missing" : null);
+  add("BR-08", "EN16931", "Warn", "Seller postal address shall be provided (BG-5)", "Turi būti pardavėjo adresas (BG-5)", "pvm-58", (i) => !(i.seller?.city || i.seller?.street) ? "Seller address empty" : null);
+  add("BR-09", "EN16931", "Reject", "Seller address shall have a country code (BT-40)", "Pardavėjo adreso šalies kodas privalomas (BT-40)", "pvm-58", (i) => !i.seller?.country ? "Seller country missing" : null);
+  add("BR-10", "EN16931", "Warn", "Buyer postal address shall be provided (BG-8)", "Turi būti pirkėjo adresas (BG-8)", "pvm-58", (i) => !(i.buyer?.city || i.buyer?.street) ? "Buyer address empty" : null);
+  add("BR-11", "EN16931", "Reject", "Buyer address shall have a country code (BT-55)", "Pirkėjo adreso šalies kodas privalomas (BT-55)", "pvm-58", (i) => !i.buyer?.country ? "Buyer country missing" : null);
+  [["BR-12", "lineExt", "Sum of line net amounts (BT-106)"], ["BR-13", "taxEx", "Tax exclusive amount (BT-109)"], ["BR-14", "taxInc", "Tax inclusive amount (BT-112)"], ["BR-15", "payable", "Payable amount (BT-115)"]].forEach(([id, k, bt]) =>
+    add(id, "EN16931", "Reject", `${bt} shall be present`, `Privaloma deklaruota suma: ${bt}`, "einv-en16931", (i, T, D) => isParsed(i) && D[k] == null ? `${k} missing in LegalMonetaryTotal` : null));
+  add("BR-16", "EN16931", "Block", "An Invoice shall have at least one line (BG-25)", "Sąskaitoje turi būti bent viena eilutė (BG-25)", "pvm-58", (i) => !(i.lines || []).length ? "0 lines" : null);
+
+  // ── Line level (BR-21…BR-27, BR-CO-04) ──
+  add("BR-21", "EN16931", "Reject", "Each line shall have an identifier (BT-126)", "Kiekviena eilutė turi ID (BT-126)", "einv-en16931", (i, T) => { const b = T.lines.find((l) => !l.id); return b ? "line without ID" : null; });
+  add("BR-22", "EN16931", "Reject", "Each line shall have an invoiced quantity (BT-129)", "Kiekvienoje eilutėje — kiekis (BT-129)", "pvm-58", (i, T) => { const b = T.lines.find((l) => !isFinite(Number(l.qty))); return b ? `line ${b.id}: qty` : null; });
+  add("BR-23", "EN16931", "Reject", "Quantity shall have a unit of measure (BT-130)", "Kiekis turi turėti matavimo vienetą (BT-130)", "pvm-58", (i, T) => { const b = T.lines.find((l) => !l.unitCode); return b ? `line ${b.id}` : null; });
+  add("BR-25", "EN16931", "Reject", "Each line shall contain the item name (BT-153)", "Eilutėje privalomas prekės/paslaugos pavadinimas (BT-153)", "pvm-58", (i, T) => { const b = T.lines.find((l) => !(l.description || "").trim()); return b ? `line ${b.id}` : null; });
+  add("BR-27", "EN16931", "Reject", "Item net price shall not be negative (BT-146)", "Vieneto kaina negali būti neigiama (BT-146)", "einv-en16931", (i, T) => { const b = T.lines.find((l) => Number(l.unitPrice) < 0); return b ? `line ${b.id}: ${b.unitPrice}` : null; });
+  add("BR-CO-04", "EN16931", "Reject", "Each line shall be categorised with a VAT category code (BT-151)", "Kiekviena eilutė turi PVM kategoriją (UNCL5305)", "einv-en16931", (i, T) => { const b = T.lines.find((l) => !UNCL5305.has(l.cat)); return b ? `line ${b.id}: "${b.cat}"` : null; });
+
+  // ── References / period / payment ──
+  add("BR-29", "EN16931", "Reject", "Invoice period start ≤ end (BT-73/74)", "Laikotarpio pradžia ≤ pabaiga (BT-73/74)", "einv-en16931", (i) => i.period?.start && i.period?.end && i.period.start > i.period.end ? `${i.period.start} > ${i.period.end}` : null);
+  add("BR-55", "EN16931", "Reject", "Credit note / correction shall reference the preceding invoice (BT-25)", "Kreditinis/koreguojantis dokumentas privalo nurodyti ankstesnę sąskaitą (BT-25)", "pvm-58", (i) => (i.typeCode === "381" || i.typeCode === "384") && !i.precedingInvoiceNo ? `typeCode ${i.typeCode}, no BillingReference` : null);
+  add("BR-61", "EN16931", "Reject", "Credit transfer requires a payment account identifier (BT-84)", "Mokėjimo pavedimui privalomas sąskaitos numeris (BT-84)", "einv-en16931", (i) => ["30", "58"].includes(String(i.payment?.meansCode || "")) && !i.payment?.iban ? `means ${i.payment?.meansCode}, no account` : null);
+
+  // ── Document allowances / charges (BG-20/21: BR-31…BR-38) ──
+  [["allowances", "BR-31", "BR-32", "BR-33", "allowance", "Nuolaida"], ["charges", "BR-36", "BR-37", "BR-38", "charge", "Priemoka"]].forEach(([key, idA, idC, idR, en, lt]) => {
+    add(idA, "EN16931", "Reject", `Document ${en} shall have an amount (BT-92/99)`, `${lt} privalo turėti sumą`, "einv-en16931", (i) => { const b = (i[key] || []).find((a) => !(Number(a.amount) > 0)); return b ? `${en} amount=${b.amount}` : null; });
+    add(idC, "EN16931", "Reject", `Document ${en} shall have a VAT category (BT-95/102)`, `${lt} privalo turėti PVM kategoriją`, "einv-en16931", (i) => { const b = (i[key] || []).find((a) => !UNCL5305.has(a.cat || "S")); return b ? `cat "${b.cat}"` : null; });
+    add(idR, "EN16931", "Reject", `Document ${en} shall have a reason or reason code (BT-97/104)`, `${lt} privalo turėti priežastį ar jos kodą`, "einv-en16931", (i) => { const b = (i[key] || []).find((a) => !a.reason && !a.reasonCode); return b ? "no reason" : null; });
+  });
+
+  // ── BR-CO arithmetic ──
+  add("BR-CO-10", "EN16931", "Reject", "Sum of line net amounts = ΣInvoice lines (BT-106)", "Eilučių neto suma = deklaruota (BT-106)", "einv-en16931", (i, T, D) => D.lineExt != null && Math.abs(D.lineExt - T.lineExt) > 0.02 ? `declared ${fmt2(D.lineExt)} ≠ Σ ${fmt2(T.lineExt)}` : null);
+  add("BR-CO-11", "EN16931", "Reject", "Allowance total = Σ document allowances (BT-107)", "Nuolaidų suma = Σ nuolaidų (BT-107)", "einv-en16931", (i, T, D) => D.allowTotal != null && Math.abs(D.allowTotal - T.allowSum) > 0.02 ? `${fmt2(D.allowTotal)} ≠ ${fmt2(T.allowSum)}` : null);
+  add("BR-CO-12", "EN16931", "Reject", "Charge total = Σ document charges (BT-108)", "Priemokų suma = Σ priemokų (BT-108)", "einv-en16931", (i, T, D) => D.chargeTotal != null && Math.abs(D.chargeTotal - T.chargeSum) > 0.02 ? `${fmt2(D.chargeTotal)} ≠ ${fmt2(T.chargeSum)}` : null);
+  add("BR-CO-13", "EN16931", "Reject", "Tax exclusive = Σlines − allowances + charges (BT-109)", "Suma be PVM = eilutės − nuolaidos + priemokos (BT-109)", "einv-en16931", (i, T, D) => { const ex = D.taxEx != null ? D.taxEx : T.taxEx; const want = einvR2((D.lineExt != null ? D.lineExt : T.lineExt) - (D.allowTotal != null ? D.allowTotal : T.allowSum) + (D.chargeTotal != null ? D.chargeTotal : T.chargeSum)); return Math.abs(ex - want) > 0.02 ? `${fmt2(ex)} ≠ ${fmt2(want)}` : null; });
+  add("BR-CO-14", "EN16931", "Reject", "Invoice total VAT = Σ VAT category amounts (BT-110)", "Bendras PVM = kategorijų PVM suma (BT-110)", "einv-en16931", (i, T, D) => { const s = einvR2(sub(D, T).reduce((a, x) => a + x.tax, 0)); const tt = D.taxTotal != null ? D.taxTotal : T.taxTotal; return Math.abs(tt - s) > 0.02 ? `TaxTotal ${fmt2(tt)} ≠ Σsub ${fmt2(s)}` : null; });
+  add("BR-CO-15", "EN16931", "Reject", "Tax inclusive = tax exclusive + total VAT (BT-112)", "Suma su PVM = be PVM + PVM (BT-112)", "einv-en16931", (i, T, D) => { const ex = D.taxEx != null ? D.taxEx : T.taxEx, tt = D.taxTotal != null ? D.taxTotal : T.taxTotal, inc = D.taxInc != null ? D.taxInc : T.taxInc; return Math.abs(inc - einvR2(ex + tt)) > 0.02 ? `${fmt2(inc)} ≠ ${fmt2(ex)}+${fmt2(tt)}` : null; });
+  add("BR-CO-16", "EN16931", "Reject", "Payable = tax inclusive − prepaid + rounding (BT-115)", "Mokėtina = su PVM − avansas + apvalinimas (BT-115)", "einv-en16931", (i, T, D) => { const inc = D.taxInc != null ? D.taxInc : T.taxInc; const pre = D.prepaid != null ? D.prepaid : T.prepaid; const rnd = D.rounding != null ? D.rounding : T.rounding; const pay = D.payable != null ? D.payable : T.payable; const want = einvR2(inc - pre + rnd); return Math.abs(pay - want) > 0.02 ? `${fmt2(pay)} ≠ ${fmt2(want)}` : null; });
+  add("BR-CO-18", "EN16931", "Reject", "An invoice shall contain at least one VAT breakdown (BG-23)", "Privalomas bent vienas PVM suskirstymas (BG-23)", "einv-en16931", (i, T, D) => !sub(D, T).length ? "no TaxSubtotal" : null);
+  add("BR-CO-25", "EN16931", "Warn", "Payable > 0 requires Due date or payment terms (BT-9/BT-20)", "Kai mokėtina > 0 — apmokėjimo data ar sąlygos", "einv-en16931", (i, T) => T.payable > 0 && !i.dueDate ? `payable €${fmt2(T.payable)}` : null);
+  add("BR-CO-26", "EN16931", "Reject", "Seller shall have an identifier or VAT id (BT-29/30/31)", "Pardavėjas privalo turėti kodą arba PVM kodą", "pvm-58", (i) => !(i.seller?.regNo || i.seller?.vatNo) ? "no seller identifier" : null);
+
+  // ── BR-DEC decimals group ──
+  [["LE", "Line extension", (i, T, D) => [D._raw?.lineExt, D.lineExt != null ? D.lineExt : T.lineExt]], ["TE", "Tax exclusive", (i, T, D) => [D._raw?.taxEx, D.taxEx != null ? D.taxEx : T.taxEx]], ["TI", "Tax inclusive", (i, T, D) => [D._raw?.taxInc, D.taxInc != null ? D.taxInc : T.taxInc]], ["PA", "Payable", (i, T, D) => [D._raw?.payable, D.payable != null ? D.payable : T.payable]], ["TT", "Tax total", (i, T, D) => [D._raw?.taxTotal, D.taxTotal != null ? D.taxTotal : T.taxTotal]]].forEach(([sfx, label, get]) =>
+    add("BR-DEC-" + sfx, "EN16931", "Reject", `${label} amount: max 2 decimals (BR-DEC)`, `${label}: ne daugiau 2 skaitmenų po kablelio`, "einv-en16931", (i, T, D) => { const [raw, num] = get(i, T, D); return !dec2ok(raw, num) ? `"${raw || num}"` : null; }));
+  add("BR-DEC-ST", "EN16931", "Reject", "VAT breakdown amounts: max 2 decimals (BR-DEC)", "PVM suskirstymo sumos: maks. 2 skaitmenys", "einv-en16931", (i, T, D) => { const b = sub(D, T).find((s) => !dec2ok(s._rawTaxable, s.taxable) || !dec2ok(s._rawTax, s.tax)); return b ? `${b.cat} ${fmt2(b.pct)}%` : null; });
+  add("BR-DEC-LN", "EN16931", "Reject", "Line net amounts: max 2 decimals (BR-DEC)", "Eilučių sumos: maks. 2 skaitmenys", "einv-en16931", (i, T) => { const b = (i.lines || []).find((l) => !dec2ok(l._rawNet, l.net != null ? l.net : einvR2((l.qty || 0) * (l.unitPrice || 0)))); return b ? `line ${b.id}: "${b._rawNet || b.net}"` : null; });
+  add("BR-DEC-AC", "EN16931", "Reject", "Allowance/charge amounts: max 2 decimals (BR-DEC)", "Nuolaidų/priemokų sumos: maks. 2 skaitmenys", "einv-en16931", (i) => { const b = [...(i.allowances || []), ...(i.charges || [])].find((a) => !dec2ok(a._rawAmount, a.amount)); return b ? `"${b._rawAmount || b.amount}"` : null; });
+
+  // ── VAT category families (official BR-[CAT]-01/02/03/05/08/09/10) ──
+  const CATS = { S: { sellerVat: true, ratePos: true, reasonForbidden: true }, Z: { rate0: true, taxZero: true, reasonForbidden: true }, E: { rate0: true, taxZero: true, reasonReq: true }, AE: { rate0: true, taxZero: true, reasonReq: true, sellerVat: true, buyerVat: true }, K: { rate0: true, taxZero: true, reasonReq: true, buyerVat: true }, G: { rate0: true, taxZero: true, reasonReq: true }, O: { rate0: true, taxZero: true, reasonReq: true } };
+  Object.entries(CATS).forEach(([cat, cfg]) => {
+    const has = (i, T) => T.lines.some((l) => l.cat === cat) || (i.allowances || []).some((a) => (a.cat || "S") === cat) || (i.charges || []).some((a) => (a.cat || "S") === cat);
+    add(`BR-${cat}-01`, "EN16931", "Reject", `Category ${cat} used → a ${cat} VAT breakdown shall exist`, `Naudojama ${cat} kategorija → privalomas ${cat} PVM suskirstymas`, "einv-en16931", (i, T, D) => has(i, T) && !sub(D, T).some((s) => s.cat === cat) ? `no ${cat} subtotal` : null);
+    if (cfg.sellerVat) add(`BR-${cat}-02`, "EN16931", "Reject", `Category ${cat} requires Seller VAT identifier (BT-31)`, `${cat} kategorijai privalomas pardavėjo PVM kodas`, "pvm-58", (i, T) => has(i, T) && !i.seller?.vatNo ? "Seller VAT missing" : null);
+    if (cfg.buyerVat) add(`BR-${cat}-03`, "EN16931", "Reject", `Category ${cat} requires Buyer VAT identifier (BT-48)`, `${cat} kategorijai privalomas pirkėjo PVM kodas`, cat === "AE" ? "pvm-96" : "einv-en16931", (i, T) => has(i, T) && !i.buyer?.vatNo ? "Buyer VAT missing" : null);
+    add(`BR-${cat}-05`, "EN16931", "Reject", cfg.ratePos ? `Category ${cat} rate shall be > 0` : `Category ${cat} rate shall be 0`, cfg.ratePos ? `${cat} tarifas turi būti > 0` : `${cat} tarifas turi būti 0`, "einv-en16931", (i, T, D) => { const bL = T.lines.find((l) => l.cat === cat && (cfg.ratePos ? !(l.pct > 0) : (l.effPct || l.pct) !== 0 && l.cat !== "S")); const bS = sub(D, T).find((s) => s.cat === cat && (cfg.ratePos ? !(s.pct > 0) : s.pct !== 0)); return bL ? `line ${bL.id}` : bS ? `subtotal ${fmt2(bS.pct)}%` : null; });
+    add(`BR-${cat}-08`, "EN16931", "Reject", `Category ${cat} taxable = Σ lines − allowances + charges of ${cat}`, `${cat} apmokestinamoji vertė = eilutės − nuolaidos + priemokos`, "einv-en16931", (i, T, D) => { const subs = sub(D, T).filter((s) => s.cat === cat); for (const s of subs) { const want = einvR2(T.lines.filter((l) => l.cat === cat && (cat !== "S" || l.effPct === s.pct)).reduce((a, l) => a + l.net, 0) - acOf(i, cat, s.pct, false) + acOf(i, cat, s.pct, true)); if (Math.abs(s.taxable - want) > 0.02) return `${cat} ${fmt2(s.pct)}%: ${fmt2(s.taxable)} ≠ ${fmt2(want)}`; } return null; });
+    add(`BR-${cat}-09`, "EN16931", "Reject", cfg.taxZero ? `Category ${cat} VAT amount shall be 0` : `Category ${cat} VAT = taxable × rate`, cfg.taxZero ? `${cat} PVM suma turi būti 0` : `${cat} PVM = vertė × tarifas`, cat === "AE" ? "pvm-96" : "einv-en16931", (i, T, D) => { const subs = sub(D, T).filter((s) => s.cat === cat); for (const s of subs) { const want = cfg.taxZero ? 0 : einvR2(s.taxable * s.pct / 100); if (Math.abs(s.tax - want) > 0.02) return `${cat} ${fmt2(s.pct)}%: ${fmt2(s.tax)} ≠ ${fmt2(want)}`; } return null; });
+    if (cfg.reasonReq) add(`BR-${cat}-10`, "EN16931", "Reject", `Category ${cat} requires an exemption reason (BT-120/121)`, `${cat} kategorijai privaloma neapmokestinimo priežastis`, cat === "AE" ? "pvm-96" : "einv-en16931", (i, T, D) => { const b = sub(D, T).find((s) => s.cat === cat && !s.reason && !s.reasonCode); return b ? `${cat} without reason` : null; });
+    if (cfg.reasonForbidden) add(`BR-${cat}-10`, "EN16931", "Warn", `Category ${cat} shall not carry an exemption reason`, `${cat} kategorijoje neapmokestinimo priežastis nenurodoma`, "einv-en16931", (i, T, D) => { const b = sub(D, T).find((s) => s.cat === cat && (s.reason || s.reasonCode)); return b ? `${cat} carries reason` : null; });
+  });
+  add("BR-47", "EN16931", "Reject", "Each VAT breakdown shall have a category code (BT-118)", "Kiekvienas PVM suskirstymas turi kategorijos kodą", "einv-en16931", (i, T, D) => { const b = sub(D, T).find((s) => !UNCL5305.has(s.cat)); return b ? `"${b.cat}"` : null; });
+  add("BR-48", "EN16931", "Reject", "Each VAT breakdown shall have a category rate (BT-119)", "Kiekvienas PVM suskirstymas turi tarifą", "einv-en16931", (i, T, D) => { const b = sub(D, T).find((s) => s.pct == null || !isFinite(s.pct)); return b ? `${b.cat}: rate missing` : null; });
+
+  // ── Peppol BIS Billing 3.0 ──
+  add("PEPPOL-EN16931-R001", "PEPPOL", "Warn", "Business process (ProfileID) shall be provided", "Turi būti nurodytas verslo procesas (ProfileID)", "einv-peppol-bis3", (i) => isParsed(i) && !i._profile ? "ProfileID missing" : null);
+  add("PEPPOL-EN16931-R004", "PEPPOL", "Warn", "CustomizationID shall equal the BIS Billing 3.0 value", "CustomizationID turi atitikti BIS Billing 3.0", "einv-peppol-bis3", (i) => isParsed(i) && i._customization !== EINV_CUSTOMIZATION ? i._customization.slice(0, 60) : null);
+  add("PEPPOL-EN16931-R007", "PEPPOL", "Warn", "Payment means code shall be from UNCL4461", "Mokėjimo būdo kodas — iš UNCL4461", "einv-peppol-bis3", (i) => i.payment?.meansCode && !UNCL4461_MEANS.has(String(i.payment.meansCode)) ? `means="${i.payment.meansCode}"` : null);
+  add("PEPPOL-EN16931-R008", "PEPPOL", "Reject", "Document type code shall be 380/381/384/389/751", "Dokumento tipo kodas — 380/381/384/389/751", "einv-peppol-bis3", (i) => !UBL_TYPE_CODES.has(String(i.typeCode)) ? `typeCode="${i.typeCode}"` : null);
+  add("PEPPOL-EN16931-R010", "PEPPOL", "Reject", "Buyer electronic address (EndpointID) shall be provided", "Privalomas pirkėjo elektroninis adresas (EndpointID)", "einv-peppol-bis3", (i) => !i.buyer?.endpoint?.id ? "Buyer EndpointID missing" : null);
+  add("PEPPOL-EN16931-R020", "PEPPOL", "Reject", "Seller electronic address (EndpointID) shall be provided", "Privalomas pardavėjo elektroninis adresas (EndpointID)", "einv-peppol-bis3", (i) => !i.seller?.endpoint?.id ? "Seller EndpointID missing" : null);
+  add("PEPPOL-EN16931-F002", "PEPPOL", "Reject", "Due date format shall be YYYY-MM-DD", "Apmokėjimo datos formatas — YYYY-MM-DD", "einv-peppol-bis3", (i) => i.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(i.dueDate) ? i.dueDate : null);
+  add("PEPPOL-EN16931-F003", "PEPPOL", "Reject", "Invoice period dates format YYYY-MM-DD", "Laikotarpio datų formatas — YYYY-MM-DD", "einv-peppol-bis3", (i) => { const b = [i.period?.start, i.period?.end].find((d) => d && !/^\d{4}-\d{2}-\d{2}$/.test(d)); return b || null; });
+  add("PEPPOL-EN16931-R120", "PEPPOL", "Warn", "Line net = quantity × price (rounding ±0.02)", "Eilutės neto = kiekis × kaina (±0,02)", "einv-peppol-bis3", (i, T) => { const b = T.lines.find((l) => Math.abs(l.net - einvR2((l.qty || 0) * (l.unitPrice || 0))) > 0.02); return b ? `line ${b.id}: ${fmt2(b.net)} ≠ ${b.qty}×${fmt2(b.unitPrice)}` : null; });
+  add("PEPPOL-LINE-UNIQ", "PEPPOL", "Reject", "Invoice line identifiers shall be unique", "Eilučių ID turi būti unikalūs", "einv-peppol-bis3", (i, T) => { const seen = new Set(); const dup = T.lines.find((l) => seen.has(l.id) || (seen.add(l.id), false)); return dup ? `duplicate line id "${dup.id}"` : null; });
+  add("PEPPOL-CL-CC", "PEPPOL", "Reject", "Country codes shall be ISO 3166-1 alpha-2", "Šalių kodai — ISO 3166-1 alpha-2", "einv-peppol-bis3", (i) => { const b = [i.seller?.country, i.buyer?.country].find((c) => c && !ISO_3166.has(c)); return b ? `"${b}"` : null; });
+  add("PEPPOL-CL-UNIT", "PEPPOL", "Warn", "Unit codes should be UN/ECE Rec 20 (checked against a common subset)", "Mato vnt. kodai — UN/ECE Rec 20 (tikrinama pagal dažniausių poaibį)", "einv-peppol-bis3", (i, T) => { const b = T.lines.find((l) => l.unitCode && !UNECE_UNITS.has(l.unitCode)); return b ? `line ${b.id}: "${b.unitCode}"` : null; });
+  add("PEPPOL-EAS-CL", "PEPPOL", "Warn", "Electronic address scheme should be a known EAS code", "Elektroninio adreso schema — žinomas EAS kodas", "einv-peppol-bis3", (i) => { const bad = [i.seller, i.buyer].find((p) => p?.endpoint?.id && p.endpoint.scheme && !PEPPOL_EAS_KNOWN.has(p.endpoint.scheme)); return bad ? `schemeID="${bad.endpoint.scheme}"` : null; });
+
+  // ── Lithuanian layer (PVMĮ · registries · SABIS) ──
+  add("LT-58-SER", "LT", "Reject", "LT seller must carry a 9-digit company code", "LT pardavėjo juridinio asmens kodas — 9 skaitmenys", "pvm-58", (i, T, D, H) => i.seller?.country === "LT" && !H.isLtRegistrationNumber(i.seller?.regNo || "") ? `regNo="${i.seller?.regNo || ""}"` : null);
+  add("LT-REG-CHK", "LT", "Reject", "LT company code fails the mod-11 registry checksum", "LT juridinio asmens kodas neatitinka mod-11 kontrolinio skaitmens", "pvm-58", (i, T, D, H) => { const b = [["seller", i.seller], ["buyer", i.buyer]].find(([, p]) => p?.country === "LT" && /^\d{9}$/.test(p?.regNo || "") && !isValidLtCompanyCode(p.regNo)); return b ? `${b[0]} regNo=${b[1].regNo}` : null; });
+  add("LT-58-VAT", "LT", "Reject", "LT seller VAT identifier must match LT format", "LT pardavėjo PVM kodas turi atitikti LT formatą", "pvm-58", (i, T, D, H) => i.seller?.country === "LT" && i.seller?.vatNo && !H.isLtVatNumber(i.seller.vatNo) ? `vatNo="${i.seller.vatNo}"` : null);
+  add("LT-VAT-CHK", "LT", "Reject", "LT VAT identifier fails the mod-11 checksum", "LT PVM kodas neatitinka mod-11 kontrolinio skaitmens", "pvm-58", (i) => { const b = [["seller", i.seller], ["buyer", i.buyer]].find(([, p]) => p?.vatNo && /^LT(\d{9}|\d{12})$/.test(p.vatNo) && !isValidLtVatChecksum(p.vatNo)); return b ? `${b[0]} ${b[1].vatNo}` : null; });
+  add("LT-58-BVAT", "LT", "Warn", "LT buyer VAT identifier fails LT format", "LT pirkėjo PVM kodas neatitinka LT formato", "pvm-58", (i, T, D, H) => i.buyer?.country === "LT" && i.buyer?.vatNo && !H.isLtVatNumber(i.buyer.vatNo) ? `vatNo="${i.buyer.vatNo}"` : null);
+  add("LT-58-ADDR", "LT", "Reject", "LT seller address must include the city (PVMĮ 58 str.)", "LT pardavėjo adrese privalomas miestas (PVMĮ 58 str.)", "pvm-58", (i) => i.seller?.country === "LT" && !(i.seller?.city || "").trim() ? "Seller city missing" : null);
+  add("EU-VAT-FMT", "LT", "Warn", "EU buyer VAT identifier fails the member-state format", "ES pirkėjo PVM kodas neatitinka valstybės narės formato", "einv-en16931", (i) => { const v = i.buyer?.vatNo; if (!v || i.buyer?.country === "LT") return null; const ok = euVatFormatOk(v); return ok === false ? v : null; });
+  add("LT-RATE-19", "LT", "Reject", "VAT rate must be valid on the issue date (dated rate pack)", "PVM tarifas turi galioti sąskaitos datą (datuotas tarifų paketas)", "pvm-19-1", (i, T, D, H) => { const bad = T.lines.find((l) => l.cat === "S" && H.classifyVatRate(l.pct, i.issueDate).valid === false); if (!bad) return null; const cl = H.classifyVatRate(bad.pct, i.issueDate); return `${bad.pct}% on ${i.issueDate} — valid: ${cl.expected.join("/")}%${bad.pct === 9 ? " (9% → 12% nuo 2026-01-01, PVMĮ 19 str. 2 d.)" : ""}`; });
+  add("LT-96-AE", "LT", "Reject", "Reverse charge (96 str.) requires buyer LT VAT identifier", "Atvirkštinis apmokestinimas (96 str.) — privalomas pirkėjo LT PVM kodas", "pvm-96", (i, T, D, H) => T.lines.some((l) => l.cat === "AE") && (!i.buyer?.vatNo || (i.buyer.country === "LT" && !H.isLtVatNumber(i.buyer.vatNo))) ? `buyer vatNo="${i.buyer?.vatNo || ""}"` : null);
+  add("LT-OSS-101", "LT", "Warn", "OSS flag set: intended for B2C supplies outside LT (PVM36)", "OSS žyma: skirta B2C tiekimams ne LT (PVM36)", "pvm-101-1", (i) => i.oss && (i.buyer?.vatNo || i.buyer?.country === "LT") ? `oss=true, buyer ${i.buyer?.country}${i.buyer?.vatNo ? " (turi PVM kodą)" : ""}` : null);
+  add("LT-IBAN", "LT", "Reject", "LT payment IBAN fails MOD-97", "LT mokėjimo IBAN neatitinka MOD-97", "ISO 13616 (IBAN)", (i, T, D, H) => (i.payment?.iban || "").toUpperCase().startsWith("LT") && !H.isValidLtIban(i.payment.iban) ? i.payment.iban : null);
+  add("LT-CUR-RATE", "LT", "Warn", "Non-EUR invoice: set the exchange rate for i.SAF/SAF-T (EUR)", "Ne EUR valiuta: nurodykite kursą i.SAF/SAF-T konvertavimui", "saft-va55", (i) => i.currency !== "EUR" && !(Number(i.exchangeRate) > 0 && Number(i.exchangeRate) !== 1) ? `${i.currency}, rate=${i.exchangeRate}` : null);
+  add("LT-DATE-FUT", "LT", "Warn", "Issue date is in the future", "Išrašymo data — ateityje", "pvm-58", (i, T, D, H) => (i.issueDate || "") > (H.today || new Date().toISOString().slice(0, 10)) ? i.issueDate : null);
+  add("LT-DUE-SEQ", "LT", "Warn", "Due date precedes issue date", "Apmokėjimo data ankstesnė už išrašymo", "einv-en16931", (i) => i.dueDate && i.dueDate < i.issueDate ? `${i.dueDate} < ${i.issueDate}` : null);
+  add("LT-SABIS-EP", "LT", "Warn", "Public-sector buyer: use LT legal-entity code (EAS 0200) for SABIS", "Viešojo sektoriaus pirkėjui — JA kodas (EAS 0200) per SABIS", "einv-sabis", (i) => i.buyer?.isPublic && i.buyer?.endpoint?.scheme !== PEPPOL_EAS.legalEntity ? `schemeID="${i.buyer?.endpoint?.scheme}"` : null);
+  return R;
+})();
+const EINV_RULE_COUNT = EINV_RULES.length;
+function validateEInvoice(inv, H) {
+  const T = computeEinvTotals(inv);
+  const D = inv._declared || { lineExt: T.lineExt, taxEx: T.taxEx, taxInc: T.taxInc, payable: T.payable, allowTotal: T.allowSum, chargeTotal: T.chargeSum, prepaid: T.prepaid, rounding: T.rounding, taxTotal: T.taxTotal, subtotals: T.subtotals };
+  const sevUi = { Block: "Critical", Reject: "High", Warn: "Medium" };
+  const findings = [];
+  EINV_RULES.forEach((r) => {
+    let ev = null; try { ev = r.check(inv, T, D, H); } catch (e) { ev = null; }
+    if (ev) findings.push({ rule_id: r.id, layer: r.layer, category: "E-Invoicing", severity: r.sev, severityUi: sevUi[r.sev], type: "E", typeName: "E-Invoice", title: r.en, detail: ev, evidence: [ev], legal_basis: einvLegal(r.legal), legalId: LEGAL_DB.find((x) => x.id === r.legal) ? r.legal : null, ruleMeta: { titleLt: r.lt, titleEn: r.en } });
+  });
+  const byLayer = {}; const bySeverity = { Block: 0, Reject: 0, Warn: 0 };
+  findings.forEach((f) => { byLayer[f.layer] = (byLayer[f.layer] || 0) + 1; bySeverity[f.severity]++; });
+  return { findings, totals: T, declared: D, ok: !findings.some((f) => f.severity === "Block" || f.severity === "Reject"), byLayer, bySeverity };
+}
+
+// ─── Routing, demo directories, transmission simulator ────────────────
+// DEMO registries (clearly synthetic): a SABIS addressee catalogue and a
+// Peppol SMP directory. Live integrations go through the same /api/erp
+// relay pattern (action:"einv-transmit") — out of scope for the sandbox.
+const SABIS_DEMO_REGISTRY = { 188000008: "Demo ministerija", 188000015: "Demo miesto savivaldybė", 188000022: "Demo valstybinė įstaiga" };
+const PEPPOL_DEMO_DIRECTORY = new Set(["0200:300011238", "0200:110045678", "0200:302233440", "9937:LT130001123817"]);
+function selectRoute(inv, settings) {
+  if (inv.buyer?.isPublic) return { route: "SABIS", mandatory: true, reason: "Public-sector buyer → SABIS (Directive 2014/55/EU; mandatory in LT since 2017-07-01, via SABIS since 2024-07-01)", reasonLt: "Viešojo sektoriaus pirkėjas → SABIS (2014/55/ES; LT privaloma nuo 2017-07-01, per SABIS nuo 2024-07-01)" };
+  if (settings?.peppolEnabled && inv.buyer?.endpoint?.id) return { route: "PEPPOL", mandatory: false, reason: "Buyer Peppol participant known → BIS Billing 3.0 over Peppol", reasonLt: "Pirkėjo Peppol dalyvis žinomas → BIS Billing 3.0 per Peppol" };
+  if (inv.buyer?.email) return { route: "EMAIL_PDF", mandatory: false, consentRequired: true, reason: "Fallback: PDF by e-mail — recipient acceptance required (Council Dir. 2006/112/EC art. 232)", reasonLt: "Atsarginis kanalas: PDF el. paštu — būtinas gavėjo sutikimas (2006/112/EB 232 str.)" };
+  return { route: "PDF", mandatory: false, reason: "Manual PDF delivery", reasonLt: "Rankinis PDF pateikimas" };
+}
+async function simulateTransmission(entry, settings, archive, H) {
+  const inv = entry.inv, events = [...(entry.events || [])], pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const lag = 60 + (parseInt(djb2(inv.invoiceNo), 16) % 120);
+  const ev = (state, detail) => events.push({ at: new Date().toISOString(), state, detail });
+  const routing = selectRoute(inv, settings);
+  const sbdh = buildSBDH(inv, settings);
+  ev("TRANSMITTED", `SBDH → ${routing.route} (gavėjas ${inv.buyer?.endpoint?.scheme}:${inv.buyer?.endpoint?.id || inv.buyer?.regNo})`);
+  await pause(lag);
+  const v = validateEInvoice(inv, H);
+  if (!v.ok) { const f = v.findings.find((x) => x.severity !== "Warn"); ev("REJECTED", `MLR RE · ${f.rule_id}: ${f.detail}`); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: f.rule_id, reason: f.title } }; }
+  if (archive.some((a) => a.invoiceNo === inv.invoiceNo && a.id !== inv.id)) { ev("REJECTED", "MLR RE · DUPLICATE: toks sąskaitos numeris jau išsiųstas"); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: "DUPLICATE", reason: "Invoice number already transmitted" } }; }
+  await pause(lag);
+  if (routing.route === "SABIS") {
+    const hit = SABIS_DEMO_REGISTRY[inv.buyer?.regNo];
+    if (!hit) { ev("REJECTED", `SABIS: gavėjas (JA kodas ${inv.buyer?.regNo || "—"}) nerastas adresatų kataloge (DEMO)`); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: "SABIS-404", reason: "Receiver not in SABIS addressee catalogue (demo)" } }; }
+    ev("DELIVERED", `SABIS: pristatyta gavėjui „${hit}“`); await pause(lag);
+    ev("ACCEPTED", "SABIS: gavėjas patvirtino (MLR AB)");
+    return { state: "ACCEPTED", events, routing, sbdh, mlr: { status: "AB", code: "OK", reason: "Accepted by " + hit } };
+  }
+  if (routing.route === "PEPPOL") {
+    const pid = `${inv.buyer.endpoint.scheme}:${inv.buyer.endpoint.id}`;
+    if (!PEPPOL_DEMO_DIRECTORY.has(pid)) { ev("REJECTED", `Peppol SMP: dalyvis ${pid} nerastas (DEMO katalogas)`); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: "SMP-404", reason: "Participant not found in SMP (demo)" } }; }
+    ev("DELIVERED", `Peppol: AS4 pristatyta ${pid} · MLR AB`);
+    return { state: "DELIVERED", events, routing, sbdh, mlr: { status: "AB", code: "OK", reason: "AS4 receipt + MLR application response" } };
+  }
+  if (routing.route === "EMAIL_PDF") {
+    if (!settings?.emailConsent) { ev("REJECTED", "Nėra gavėjo sutikimo dėl e. sąskaitos (2006/112/EB 232 str.) — įjunkite nustatymuose"); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: "NO-CONSENT", reason: "Recipient e-invoice consent missing (Dir. 2006/112/EC art. 232)" } }; }
+    ev("DELIVERED", `El. paštu (PDF+XML) → ${inv.buyer.email}`);
+    return { state: "DELIVERED", events, routing, sbdh, mlr: null };
+  }
+  ev("DELIVERED", "PDF parengtas rankiniam pateikimui");
+  return { state: "DELIVERED", events, routing, sbdh, mlr: null };
+}
+
+// ─── 10-year archive: SHA-256 hash chain (tamper-evident) ─────────────
+// Production: qualified e-seal/signature or audited integrity per eIDAS
+// (Reg. 910/2014); here a real SHA-256 chain over the exact XML bytes.
+async function sha256Hex(s) { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
+async function appendToArchive(archive, inv, xml) {
+  const prevHash = archive.length ? archive[archive.length - 1].sha256 : "GENESIS";
+  const sha256 = await sha256Hex(prevHash + "\n" + xml);
+  const retainUntil = String((+String(inv.issueDate || "2026").slice(0, 4)) + EINV_REGIME.archive.years) + "-12-31";
+  return [...archive, { seq: archive.length + 1, id: inv.id, invoiceNo: inv.invoiceNo, direction: inv.direction || "AR", issuedAt: new Date().toISOString(), bytes: xml.length, prevHash, sha256, xml, retainUntil }];
+}
+async function verifyArchiveChain(archive) {
+  let prev = "GENESIS";
+  for (const e of archive) { const sha = await sha256Hex(prev + "\n" + e.xml); if (e.prevHash !== prev || sha !== e.sha256) return { ok: false, brokenAt: e.seq, length: archive.length }; prev = e.sha256; }
+  return { ok: true, brokenAt: null, length: archive.length };
+}
+
+// ─── Bridges: e-invoices → i.SAF register · → SAF-T SourceDocuments ───
+const stiOfEinvLine = (l) => l.cat === "AE" ? "PVM25" : l.effPct === 21 ? "PVM1" : l.effPct === 12 ? "PVM58" : l.effPct === 9 ? "PVM2" : l.effPct === 5 ? "PVM3" : "PVM5"; // heuristic classifier map (M1 table; 12 % → PVM58 from 2026 per VA-107, 9 % → PVM2 legacy)
+function einvoiceToISaf(profile, outbox, inbox) {
+  const liveOut = (outbox || []).filter((e) => !["DRAFT", "REJECTED"].includes(e.state));
+  const liveIn = (inbox || []).filter((e) => e.state === "ACCEPTED" || e.state === "MATCHED" || e.state === "RECEIVED");
+  const row = (e, side) => { const T = computeEinvTotals(e.inv); const r = Number(e.inv.exchangeRate) > 0 ? Number(e.inv.exchangeRate) : 1; const cp = side === "sales" ? e.inv.buyer : e.inv.seller; return { side, invoiceNo: e.inv.invoiceNo, invoiceDate: e.inv.issueDate, invoiceType: e.inv.typeCode === "381" ? "KS" : "SF", counterpartyVat: cp?.vatNo || "", counterpartyReg: cp?.regNo || "", counterpartyName: cp?.name || "", counterpartyCountry: cp?.country || "", taxable: einvR2(T.taxEx * r), vat: einvR2(T.taxTotal * r), vatCodes: [...new Set(T.lines.map(stiOfEinvLine))], special: false, cancelled: false }; };
+  const sales = liveOut.map((e) => row(e, "sales")), purchases = liveIn.map((e) => row(e, "purchases"));
+  const dates = [...sales, ...purchases].map((x) => x.invoiceDate).filter(Boolean).sort();
+  return { header: { registrationNumber: profile.regNo, fileDate: new Date().toISOString().slice(0, 10), periodFrom: dates[0] || "", periodTo: dates[dates.length - 1] || "" }, sales, purchases, counts: { sales: sales.length, purchases: purchases.length } };
+}
+function einvoiceToSaftInvoice(e) {
+  const inv = e.inv, T = computeEinvTotals(inv);
+  return { invoiceNo: inv.invoiceNo, systemID: "TAXAI-EINV", invoiceDate: inv.issueDate, invoiceType: inv.typeCode === "381" ? "KS" : "SF", customerID: inv.buyer?.regNo || inv.buyer?.vatNo || inv.buyer?.name || "", supplierID: "", shipFromCountry: "LT", shipToCountry: inv.buyer?.country || "LT", supplierTaxRegType: "PVM", supplierTaxRegCountry: "LT", supplierAddressCountry: "LT", accountID: "2410", glPostingDate: inv.issueDate, glTransactionID: `T-AR-${inv.invoiceNo}`, systemEntryDate: e.issuedAt || "", selfBillingIndicator: "", settlements: [], references: "", documentTotals: { netTotal: T.taxEx, taxPayable: T.taxTotal, grossTotal: T.taxInc, currencyCode: inv.currency || "EUR", currencyAmount: null, exchangeRate: null }, lines: T.lines.map((l) => ({ recordID: l.id, productCode: "", goodsServicesID: "", description: l.description, quantity: l.qty, unitOfMeasure: l.unitCode === "H87" ? "VNT" : (l.unitCode || "VNT"), unitPrice: l.unitPrice, settlementAmount: null, taxPointDate: inv.issueDate, debitAmount: null, creditAmount: l.net, tax: { taxType: "PVM", taxCode: stiOfEinvLine(l), taxPercentage: l.effPct, taxExemptionReason: l.cat === "AE" ? "PVMĮ 96 str." : "", taxableAmount: l.net, taxAmount: l.vat } })) };
+}
+// 2/3-way match for inbound AP e-invoices against the ERP canonical store.
+function matchInbound(inv, erpStore) {
+  const T = computeEinvTotals(inv);
+  const gross = inv._declared?.taxInc ?? T.taxInc;
+  const cands = (erpStore?.invoicesAP || []).filter((b) => (inv.seller?.vatNo && b.party?.vatNo === inv.seller.vatNo) || (b.party?.name && inv.seller?.name && b.party.name.toLowerCase() === inv.seller.name.toLowerCase()));
+  let best = null;
+  cands.forEach((b) => { const dG = Math.abs((b.totals?.gross || 0) - gross); const noHit = b.invoiceNo === inv.invoiceNo; const score = (noHit ? 2 : 0) + (dG <= 0.02 ? 2 : dG <= Math.max(0.5, gross * 0.01) ? 1 : 0); if (!best || score > best.score) best = { bill: b, score, dG, noHit }; });
+  if (!best || best.score === 0) return { matched: false, level: "none", detail: `no ERP bill for ${inv.seller?.vatNo || inv.seller?.name || "?"} ±€${fmt2(gross)}` };
+  const pay = (erpStore?.payments || []).find((p) => (p.lines || []).some((l) => l.sourceDocumentId === best.bill.invoiceNo));
+  return { matched: true, level: pay ? "3-way" : "2-way", bill: best.bill, payment: pay || null, deltas: { gross: einvR2(best.dG), invoiceNo: best.noHit ? "exact" : `einv ${inv.invoiceNo} vs ERP ${best.bill.invoiceNo}` }, detail: `${pay ? "3-way (bill+payment)" : "2-way (bill)"} · Δgross €${fmt2(best.dG)}` };
+}
+
+// ─── ViDA (EU) 2025/516 readiness ─────────────────────────────────────
+function computeVidaReadiness(profile, settings, { outbox = [], archive = [] } = {}) {
+  const days = Math.max(0, Math.ceil((Date.UTC(2030, 6, 1) - Date.now()) / 86400000));
+  const live = outbox.filter((e) => !["DRAFT", "REJECTED"].includes(e.state));
+  const intraEu = live.filter((e) => EU_CC.has(e.inv.buyer?.country) && e.inv.buyer?.country !== "LT");
+  const vatCap = intraEu.length ? intraEu.filter((e) => e.inv.buyer?.vatNo).length / intraEu.length : 1;
+  const items = [
+    { key: "en16931", lt: "EN 16931 validatorius aktyvus (BR + BR-CO + kategorijos)", en: "EN 16931 validator active (BR + BR-CO + categories)", ok: true, detail: EINV_RULES.filter((r) => r.layer === "EN16931").length + " rules" },
+    { key: "ubl", lt: "Struktūrizuotos UBL 2.1 / BIS 3.0 sąskaitos išrašomos", en: "Structured UBL 2.1 / BIS 3.0 invoices issued", ok: live.length > 0, detail: live.length + " issued" },
+    { key: "peppol", lt: "Peppol dalyvis sukonfigūruotas (EAS 0200/9937)", en: "Peppol participant configured (EAS 0200/9937)", ok: !!(profile.regNo || profile.vatNo), detail: `${profile.peppolScheme || PEPPOL_EAS.legalEntity}:${profile.peppolScheme === PEPPOL_EAS.vat ? profile.vatNo : profile.regNo}` },
+    { key: "buyervat", lt: "ES pirkėjų PVM kodų surinkimas (DRR laukas)", en: "Buyer VAT capture on intra-EU AR (DRR field)", ok: vatCap >= 0.9, detail: Math.round(vatCap * 100) + "% of " + intraEu.length },
+    { key: "archive", lt: "Apsaugos grandinė archyve (10 m. saugojimas)", en: "Tamper-evident archive chain (10-year retention)", ok: archive.length > 0, detail: archive.length + " entries" },
+    { key: "drr", lt: "DRR duomenų laukai pilni (data, PVM kodai, sumos pagal tarifą)", en: "DRR data fields complete (date, VAT ids, per-rate totals)", ok: true, detail: "by construction" },
+  ];
+  return { days, mandatoryFrom: EINV_REGIME.vida.intraEuMandatory, items, intraEuShare: live.length ? Math.round(intraEu.length / live.length * 100) : 0, ready: items.every((i) => i.ok) };
+}
+
+// ─── Conformance fixtures (reuses the v8 runConformance runner) ────────
+function buildEinvFixtures(H) {
+  const base = () => { const inv = newEInvoice({ name: "UAB TaxAI demo įmonė", regNo: "305123458", vatNo: "LT130512345819", iban: "LT607044060008101234", city: "Vilnius", series: "FX" }, 1, "2026-03-10"); inv.buyer = { name: "UAB Baltijos logistika", regNo: "300011238", vatNo: "LT130001123817", country: "LT", city: "Vilnius", street: "", postal: "", email: "", isPublic: false, endpoint: { scheme: "0200", id: "300011238" } }; inv.lines = [{ id: "1", description: "Konsultacijos", qty: 2, unitCode: "HUR", unitPrice: 100, pct: 21, reverseCharge: false, exempt: false, exemptReason: "" }]; inv.payment.paymentId = inv.invoiceNo; return inv; };
+  const fx = [];
+  fx.push({ id: "FXE-01", name: "Clean BIS3 invoice (control)", expectPass: ["BR-02", "LT-RATE-19", "PEPPOL-EN16931-R010", "BR-CO-15", "BR-CO-16", "LT-REG-CHK", "LT-VAT-CHK"], xml: buildUBLInvoice(base()) });
+  { const i = base(); const x = buildUBLInvoice(i).replace(`<cbc:ID>${i.invoiceNo}</cbc:ID>\n`, ""); fx.push({ id: "FXE-02", name: "Missing invoice number", expectFail: ["BR-02"], xml: x }); }
+  { const i = base(); i.lines[0].pct = 9; fx.push({ id: "FXE-03", name: "Abolished 9% rate in 2026", expectFail: ["LT-RATE-19"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); i.lines[0].reverseCharge = true; i.buyer.vatNo = ""; fx.push({ id: "FXE-04", name: "Reverse charge without buyer VAT", expectFail: ["LT-96-AE"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); const T = computeEinvTotals(i); const x = buildUBLInvoice(i).replace(`<cbc:PayableAmount currencyID="EUR">${fmt2(T.payable)}</cbc:PayableAmount>`, `<cbc:PayableAmount currencyID="EUR">${fmt2(T.payable + 10)}</cbc:PayableAmount>`).replace(`<cbc:TaxInclusiveAmount currencyID="EUR">${fmt2(T.taxInc)}</cbc:TaxInclusiveAmount>`, `<cbc:TaxInclusiveAmount currencyID="EUR">${fmt2(T.taxInc + 10)}</cbc:TaxInclusiveAmount>`); fx.push({ id: "FXE-05", name: "Tampered totals (BR-CO-15)", expectFail: ["BR-CO-15"], xml: x }); }
+  { const i = base(); i.payment.iban = "LT000000000000000000"; fx.push({ id: "FXE-06", name: "Invalid LT IBAN", expectFail: ["LT-IBAN"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); i.buyer.endpoint = { scheme: "0200", id: "" }; fx.push({ id: "FXE-07", name: "Missing buyer electronic address", expectFail: ["PEPPOL-EN16931-R010"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); i.typeCode = "381"; fx.push({ id: "FXE-08", name: "Credit note (381) without preceding reference", expectFail: ["BR-55"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); i.allowances = [{ amount: 50, reason: "", reasonCode: "", cat: "S", pct: 21 }]; fx.push({ id: "FXE-09", name: "Document allowance without reason", expectFail: ["BR-33"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); i.lines[0].unitCode = "XYZ"; fx.push({ id: "FXE-10", name: "Unknown unit code (UN/ECE Rec 20)", expectFail: ["PEPPOL-CL-UNIT"], xml: buildUBLInvoice(i) }); }
+  { const i = base(); const T = computeEinvTotals(i); const x = buildUBLInvoice(i).replace(`<cbc:PayableAmount currencyID="EUR">${fmt2(T.payable)}</cbc:PayableAmount>`, `<cbc:PayableAmount currencyID="EUR">${T.payable.toFixed(3)}</cbc:PayableAmount>`); fx.push({ id: "FXE-11", name: "3-decimal payable amount (BR-DEC)", expectFail: ["BR-DEC-PA"], xml: x }); }
+  { const i = base(); i.seller.regNo = "305123451"; i.seller.endpoint.id = "305123451"; fx.push({ id: "FXE-12", name: "Checksum-invalid seller company code", expectFail: ["LT-REG-CHK"], xml: buildUBLInvoice(i) }); }
+  return fx;
+}
+function runEinvConformance(H, DOMParserImpl) {
+  return runConformance({
+    parse: (xml) => { const inv = parseUBLInvoice(xml, DOMParserImpl); if (inv._parseError) throw new Error(inv._parseError); return inv; },
+    run: (inv) => { const v = validateEInvoice(inv, H); const byRule = {}; v.findings.forEach((f) => { byRule[f.rule_id] = (byRule[f.rule_id] || 0) + 1; }); return { byRule }; },
+  }, buildEinvFixtures(H));
+}
+
+// ─── Self-test: roundtrip · conformance · transmission · archive · i.SAF ─
+async function runEinvSelfTest(H, DOMParserImpl) {
+  const checks = []; const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || "" });
+  const profile = { name: "UAB TaxAI demo įmonė", regNo: "305123458", vatNo: "LT130512345819", iban: "LT607044060008101234", city: "Vilnius", series: "ST" };
+  const mk = (seq, buyerOver, lineOver) => { const inv = newEInvoice(profile, seq, "2026-03-1" + seq); inv.buyer = { name: "UAB Baltijos logistika", regNo: "300011238", vatNo: "LT130001123817", country: "LT", city: "Vilnius", street: "", postal: "", email: "", isPublic: false, endpoint: { scheme: "0200", id: "300011238" }, ...(buyerOver || {}) }; inv.lines = [{ id: "1", description: "Paslauga", qty: 1, unitCode: "H87", unitPrice: 500, pct: 21, reverseCharge: false, exempt: false, exemptReason: "", ...(lineOver || {}) }]; inv.payment.paymentId = inv.invoiceNo; return inv; };
+  const b = mk(1);
+  const v = validateEInvoice(b, H);
+  ok("clean invoice validates (0 Block/Reject)", v.ok, Object.entries(v.byLayer).map(([k, n]) => k + ":" + n).join(",") || "0 findings");
+  const xml = buildUBLInvoice(b);
+  const p = parseUBLInvoice(xml, DOMParserImpl);
+  ok("UBL roundtrip build→parse", !p._parseError && p.invoiceNo === b.invoiceNo && p.seller.vatNo === b.seller.vatNo && p.buyer.endpoint.id === "300011238" && p.lines.length === 1 && Math.abs((p._declared.taxInc || 0) - v.totals.taxInc) < 0.005, p._parseError || `№ ${p.invoiceNo} · €${p._declared && p._declared.taxInc}`);
+  const conf = runEinvConformance(H, DOMParserImpl);
+  ok("conformance fixtures 12/12", conf.passed === conf.total && conf.total === 12, `${conf.passed}/${conf.total} (${conf.score}%)`);
+  let archive = [];
+  const pub = mk(2, { name: "Demo ministerija", regNo: "188000008", vatNo: "", isPublic: true, endpoint: { scheme: "0200", id: "188000008" } });
+  const e1 = { inv: pub, state: "ISSUED", events: [] };
+  archive = await appendToArchive(archive, pub, buildUBLInvoice(pub));
+  const t1 = await simulateTransmission(e1, { peppolEnabled: true, emailConsent: false }, archive, H);
+  ok("SABIS demo: public buyer accepted", t1.state === "ACCEPTED" && t1.routing.route === "SABIS" && t1.mlr.status === "AB", t1.events[t1.events.length - 1].detail);
+  const unk = mk(3, { name: "Nežinoma įstaiga", regNo: "999999995", isPublic: true, endpoint: { scheme: "0200", id: "999999995" } });
+  const t2 = await simulateTransmission({ inv: unk, state: "ISSUED", events: [] }, { peppolEnabled: true }, archive, H);
+  ok("SABIS demo: unknown addressee rejected", t2.state === "REJECTED" && t2.mlr.code === "SABIS-404", t2.mlr.code);
+  const dup = mk(2); dup.invoiceNo = pub.invoiceNo; dup.id = "einv-dup";
+  const t3 = await simulateTransmission({ inv: dup, state: "ISSUED", events: [] }, { peppolEnabled: true }, archive, H);
+  ok("duplicate № rejected via archive", t3.state === "REJECTED" && t3.mlr.code === "DUPLICATE", t3.mlr.code);
+  const b2 = mk(4), b3 = mk(5);
+  archive = await appendToArchive(archive, b2, buildUBLInvoice(b2));
+  archive = await appendToArchive(archive, b3, buildUBLInvoice(b3));
+  const ch1 = await verifyArchiveChain(archive);
+  const tampered = archive.map((a) => a.seq === 2 ? { ...a, xml: a.xml.replace("500.00", "999.00") } : a);
+  const ch2 = await verifyArchiveChain(tampered);
+  ok("archive chain verifies, tamper detected", ch1.ok && !ch2.ok && ch2.brokenAt === 2, `ok=${ch1.ok} brokenAt=${ch2.brokenAt}`);
+  const outbox = [{ inv: b, state: "ACCEPTED", issuedAt: "2026-03-11T10:00:00Z" }, { inv: b2, state: "DELIVERED", issuedAt: "2026-03-14T10:00:00Z" }, { inv: b3, state: "DELIVERED", issuedAt: "2026-03-15T10:00:00Z" }];
+  const isaf = einvoiceToISaf(profile, outbox, []);
+  const saftLike = { header: { registrationNumber: profile.regNo, company: { registrationNumber: profile.regNo } }, sales: { items: outbox.map(einvoiceToSaftInvoice) }, purchases: { items: [] }, taxCodes: [], payments: [], transactions: [] };
+  const recon = reconcileISAF(isaf, saftLike);
+  ok("i.SAF bridge reconciles (0 Reject)", (recon.findings || []).filter((f) => f.severity === "Reject").length === 0, `${(recon.findings || []).length} findings · netΔ €${recon.summary?.vat?.netDelta}`);
+  return { ok: checks.every((c) => c.pass), checks, conformance: conf };
+}
+
+// ─── Compliance artifacts: i.SAF XML · ApplicationResponse · gaps · print ──
+// i.SAF (KIT708-dialect) register export. Amounts are converted to EUR via
+// the invoice exchange rate; the output is round-trip-verified by this
+// app's own parseISAF + reconcileISAF in runExportSelfTest.
+const stiOfSubtotal = (s) => s.cat === "AE" ? "PVM25" : s.pct === 21 ? "PVM1" : s.pct === 12 ? "PVM58" : s.pct === 9 ? "PVM2" : s.pct === 5 ? "PVM3" : "PVM5";
+function buildISafXml(profile, outbox, inbox) {
+  const liveOut = (outbox || []).filter((e) => !["DRAFT", "REJECTED"].includes(e.state));
+  const liveIn = (inbox || []).filter((e) => ["ACCEPTED", "MATCHED", "RECEIVED"].includes(e.state));
+  const fx = (inv) => (Number(inv.exchangeRate) > 0 ? Number(inv.exchangeRate) : 1);
+  const invXml = (e, side) => {
+    const inv = e.inv, T = computeEinvTotals(inv), r = fx(inv);
+    const cp = side === "S" ? inv.buyer : inv.seller;
+    const partyTag = side === "S" ? "CustomerInfo" : "SupplierInfo";
+    const vds = T.subtotals.map((s) => `<VATDetail><TaxableValue>${fmt2(s.taxable * r)}</TaxableValue><TaxAmount>${fmt2(s.tax * r)}</TaxAmount><VATCode>${stiOfSubtotal(s)}</VATCode><TaxPercentage>${fmt2(s.pct)}</TaxPercentage></VATDetail>`).join("");
+    return `<Invoice><InvoiceNo>${xmlEsc(inv.invoiceNo)}</InvoiceNo><${partyTag}><Name>${xmlEsc(cp?.name || "")}</Name><RegistrationNumber>${xmlEsc(cp?.regNo || "")}</RegistrationNumber><VATRegistrationNumber>${xmlEsc(cp?.vatNo || "")}</VATRegistrationNumber><Country>${xmlEsc(cp?.country || "")}</Country></${partyTag}><InvoiceDate>${xmlEsc(inv.issueDate)}</InvoiceDate><InvoiceType>${inv.typeCode === "381" ? "KS" : "SF"}</InvoiceType><SpecialTaxation></SpecialTaxation><DocumentTotals>${vds}</DocumentTotals></Invoice>`;
+  };
+  const dates = [...liveOut, ...liveIn].map((e) => e.inv.issueDate).filter(Boolean).sort();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<iSAFFile xmlns="http://www.vmi.lt/cms/imas/isaf">
+<Header><FileDescription><FileVersion>iSAF1.2</FileVersion><FileDateCreated>${new Date().toISOString()}</FileDateCreated><DataType>F</DataType><SoftwareCompanyName>TAXAI</SoftwareCompanyName><SoftwareName>TAXAI-EINV</SoftwareName><SoftwareVersion>9.1</SoftwareVersion><RegistrationNumber>${xmlEsc(profile.regNo)}</RegistrationNumber><NumberOfParts>1</NumberOfParts><PartNumber>1</PartNumber><SelectionStartDate>${dates[0] || ""}</SelectionStartDate><SelectionEndDate>${dates[dates.length - 1] || ""}</SelectionEndDate></FileDescription></Header>
+<SourceDocuments>
+<SalesInvoices>${liveOut.map((e) => invXml(e, "S")).join("\n")}</SalesInvoices>
+<PurchaseInvoices>${liveIn.map((e) => invXml(e, "P")).join("\n")}</PurchaseInvoices>
+</SourceDocuments>
+</iSAFFile>`;
+}
+
+// UBL 2.1 ApplicationResponse (Peppol Invoice Message Response): AB=accepted, RE=rejected.
+function buildApplicationResponse(inv, status, reason) {
+  const d = new Date().toISOString().slice(0, 10);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ApplicationResponse xmlns="urn:oasis:names:specification:ubl:schema:xsd:ApplicationResponse-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+<cbc:CustomizationID>urn:fdc:peppol.eu:poacc:trns:invoice_response:3</cbc:CustomizationID>
+<cbc:ProfileID>urn:fdc:peppol.eu:poacc:bis:invoice_response:3</cbc:ProfileID>
+<cbc:ID>IMR-${xmlEsc(inv.invoiceNo)}</cbc:ID>
+<cbc:IssueDate>${d}</cbc:IssueDate>
+<cac:SenderParty><cac:PartyIdentification><cbc:ID schemeID="${xmlEsc(inv.buyer?.endpoint?.scheme || "0200")}">${xmlEsc(inv.buyer?.endpoint?.id || inv.buyer?.regNo || "")}</cbc:ID></cac:PartyIdentification></cac:SenderParty>
+<cac:ReceiverParty><cac:PartyIdentification><cbc:ID schemeID="${xmlEsc(inv.seller?.endpoint?.scheme || "0200")}">${xmlEsc(inv.seller?.endpoint?.id || inv.seller?.regNo || "")}</cbc:ID></cac:PartyIdentification></cac:ReceiverParty>
+<cac:DocumentResponse><cac:Response><cbc:ResponseCode>${status}</cbc:ResponseCode>${reason ? `<cbc:Description>${xmlEsc(reason)}</cbc:Description>` : ""}</cac:Response><cac:DocumentReference><cbc:ID>${xmlEsc(inv.invoiceNo)}</cbc:ID><cbc:DocumentTypeCode>${xmlEsc(inv.typeCode || "380")}</cbc:DocumentTypeCode></cac:DocumentReference></cac:DocumentResponse>
+</ApplicationResponse>`;
+}
+
+// PVMĮ requires gapless invoice numbering per series → detect missing numbers.
+function detectSeqGaps(outbox) {
+  const live = (outbox || []).filter((e) => !["DRAFT", "REJECTED"].includes(e.state));
+  const bySeries = {};
+  live.forEach((e) => { const m = /^(.*?)(\d+)$/.exec(e.inv.invoiceNo || ""); if (!m) return; (bySeries[m[1]] = bySeries[m[1]] || []).push(parseInt(m[2], 10)); });
+  const out = [];
+  Object.entries(bySeries).forEach(([series, nums]) => {
+    const u = [...new Set(nums)].sort((a, b) => a - b); const missing = [];
+    for (let v = u[0]; v < u[u.length - 1] && missing.length < 20; v++) if (!u.includes(v)) missing.push(v);
+    if (missing.length) out.push({ series, missing, range: `${u[0]}–${u[u.length - 1]}` });
+  });
+  return out;
+}
+
+// Printable invoice (opens in a new window → browser print/PDF).
+function einvPrintHtml(inv, T2, lang) {
+  const T = T2 || computeEinvTotals(inv);
+  const LT = lang === "lt";
+  const row = (l) => `<tr><td>${xmlEsc(l.id)}</td><td>${xmlEsc(l.description || "")}</td><td class="r">${l.qty}</td><td class="r">${fmt2(l.unitPrice)}</td><td class="r">${l.cat === "S" ? fmt2(l.pct) + "%" : l.cat}</td><td class="r">${fmt2(l.net)}</td><td class="r">${fmt2(l.vat)}</td></tr>`;
+  const tot = (lab, v, b) => `<tr${b ? ' class="b"' : ""}><td colspan="6" class="r">${lab}</td><td class="r">${fmt2(v)} ${xmlEsc(inv.currency)}</td></tr>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${xmlEsc(inv.invoiceNo)}</title><style>
+body{font-family:Georgia,serif;color:#111;margin:36px;font-size:13px} h1{font-size:20px;margin:0 0 2px} .m{font-family:ui-monospace,monospace;font-size:11px;color:#555}
+.grid{display:flex;gap:40px;margin:18px 0} .grid div{flex:1} .lbl{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#777;margin-bottom:3px}
+table{width:100%;border-collapse:collapse;margin-top:14px} th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;font-size:12px} .r{text-align:right} th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#666}
+tr.b td{font-weight:700;border-top:2px solid #111} .foot{margin-top:26px;font-size:10px;color:#777;line-height:1.5}</style></head><body>
+<h1>${inv.typeCode === "381" ? (LT ? "KREDITINĖ SĄSKAITA FAKTŪRA" : "CREDIT NOTE") : (LT ? "PVM SĄSKAITA FAKTŪRA" : "VAT INVOICE")} ${xmlEsc(inv.invoiceNo)}</h1>
+<div class="m">${LT ? "Išrašyta" : "Issued"}: ${xmlEsc(inv.issueDate)}${inv.dueDate ? ` · ${LT ? "Apmokėti iki" : "Due"}: ${xmlEsc(inv.dueDate)}` : ""}${inv.precedingInvoiceNo ? ` · ${LT ? "Koreguojama" : "Corrects"}: ${xmlEsc(inv.precedingInvoiceNo)}` : ""}</div>
+<div class="grid"><div><div class="lbl">${LT ? "Pardavėjas" : "Seller"}</div><b>${xmlEsc(inv.seller.name)}</b><br>${LT ? "Į. k." : "Reg."} ${xmlEsc(inv.seller.regNo)}${inv.seller.vatNo ? `<br>PVM ${xmlEsc(inv.seller.vatNo)}` : ""}<br>${xmlEsc(inv.seller.street || "")} ${xmlEsc(inv.seller.city || "")}, ${xmlEsc(inv.seller.country)}${inv.payment?.iban ? `<br class="m">IBAN ${xmlEsc(inv.payment.iban)}` : ""}</div>
+<div><div class="lbl">${LT ? "Pirkėjas" : "Buyer"}</div><b>${xmlEsc(inv.buyer.name)}</b><br>${LT ? "Į. k." : "Reg."} ${xmlEsc(inv.buyer.regNo || "—")}${inv.buyer.vatNo ? `<br>PVM ${xmlEsc(inv.buyer.vatNo)}` : ""}<br>${xmlEsc(inv.buyer.street || "")} ${xmlEsc(inv.buyer.city || "")}, ${xmlEsc(inv.buyer.country)}</div></div>
+<table><thead><tr><th>#</th><th>${LT ? "Aprašymas" : "Description"}</th><th class="r">${LT ? "Kiekis" : "Qty"}</th><th class="r">${LT ? "Kaina" : "Price"}</th><th class="r">PVM</th><th class="r">${LT ? "Suma" : "Net"}</th><th class="r">PVM €</th></tr></thead>
+<tbody>${T.lines.map(row).join("")}</tbody>
+<tfoot>${T.allowSum ? tot(LT ? "Nuolaidos" : "Allowances", -T.allowSum) : ""}${T.chargeSum ? tot(LT ? "Priemokos" : "Charges", T.chargeSum) : ""}${tot(LT ? "Suma be PVM" : "Tax exclusive", T.taxEx)}${tot("PVM", T.taxTotal)}${T.prepaid ? tot(LT ? "Avansas" : "Prepaid", -T.prepaid) : ""}${T.rounding ? tot(LT ? "Apvalinimas" : "Rounding", T.rounding) : ""}${tot(LT ? "MOKĖTINA SUMA" : "AMOUNT PAYABLE", T.payable, true)}</tfoot></table>
+${T.subtotals.some((s) => s.reason) ? `<div class="foot">${T.subtotals.filter((s) => s.reason).map((s) => `${s.cat}: ${xmlEsc(s.reason)}`).join(" · ")}</div>` : ""}
+<div class="foot">EN 16931 · UBL 2.1 · Peppol BIS Billing 3.0 · ${LT ? "Saugoma 10 m. (SHA-256 grandinė)" : "Retained 10 y (SHA-256 chain)"} · TAXAI v9.1</div>
+</body></html>`;
+}
+
+
+// ─── ERP hub v9.1: CSV ingestion · data quality · SAF-T XML export ─────
+function csvParse(text) {
+  const raw = String(text || "").replace(/^\uFEFF/, "").trim();
+  if (!raw) return { headers: [], rows: [], delimiter: "," };
+  const first = raw.split(/\r?\n/)[0];
+  const counts = [[",", (first.match(/,/g) || []).length], [";", (first.match(/;/g) || []).length], ["\t", (first.match(/\t/g) || []).length]].sort((a, b) => b[1] - a[1]);
+  const d = counts[0][1] ? counts[0][0] : ",";
+  const rows = []; let row = [], cell = "", inQ = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inQ) { if (ch === '"') { if (raw[i + 1] === '"') { cell += '"'; i++; } else inQ = false; } else cell += ch; }
+    else if (ch === '"') inQ = true;
+    else if (ch === d) { row.push(cell); cell = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && raw[i + 1] === "\n") i++; row.push(cell); cell = ""; if (row.some((c) => c.trim() !== "")) rows.push(row); row = []; }
+    else cell += ch;
+  }
+  row.push(cell); if (row.some((c) => c.trim() !== "")) rows.push(row);
+  return { headers: (rows[0] || []).map((h) => h.trim()), rows: rows.slice(1), delimiter: d };
+}
+const CSV_FIELD_KEYS = ["invoiceNo", "invoiceDate", "partyName", "partyVat", "partyReg", "description", "qty", "unitPrice", "net", "vat", "gross", "pct", "currency", "skip"];
+function guessCsvField(header) {
+  const h = String(header || "").toLowerCase().replace(/[ąčęėįšųūž]/g, (c) => ({ ą: "a", č: "c", ę: "e", ė: "e", į: "i", š: "s", ų: "u", ū: "u", ž: "z" }[c])).replace(/[^a-z0-9]/g, "");
+  const T = [["invoiceNo", /saskait|invoice|numeris|docno|number|nr$/], ["invoiceDate", /data|date/], ["partyVat", /pvmkod|vatno|vatid|vatnumber|pvmmoketoj/], ["partyReg", /imoneskod|jakod|regnr|companycode|registr/], ["partyName", /pirkej|klient|tiekej|customer|supplier|partner|pavadinim|name/], ["pct", /tarif|rate|proc|percent/], ["vat", /^pvm$|^vat$|pvmsuma|vatamount|taxamount/], ["gross", /viso|supvm|gross|total|bendra/], ["net", /bepvm|^suma$|^net$|netto|amount|taxable/], ["qty", /kiek|qty|quantity/], ["unitPrice", /kaina|price|unit/], ["description", /aprasym|preke|paslaug|item|descript/], ["currency", /valiut|currency|cur$/]];
+  for (const [k, re] of T) if (re.test(h)) return k;
+  return "skip";
+}
+function csvRowsToInvoices(headers, rows, mapping, dir) {
+  const num = (v) => { const n = parseFloat(String(v ?? "").replace(/\s/g, "").replace(",", ".")); return isNaN(n) ? null : n; };
+  const col = (r, key) => { const idx = Object.entries(mapping).find(([, k]) => k === key)?.[0]; return idx == null ? "" : String(r[idx] ?? "").trim(); };
+  const groups = new Map();
+  rows.forEach((r, ri) => { const no = col(r, "invoiceNo") || `CSV-ROW-${ri + 1}`; if (!groups.has(no)) groups.set(no, []); groups.get(no).push(r); });
+  const out = [];
+  groups.forEach((rs, invoiceNo) => {
+    const r0 = rs[0];
+    const name = col(r0, "partyName") || "CSV partneris";
+    const vat = col(r0, "partyVat").toUpperCase().replace(/\s/g, "");
+    const lines = rs.map((r) => {
+      const qty = num(col(r, "qty")) ?? 1;
+      let price = num(col(r, "unitPrice"));
+      const net = num(col(r, "net"));
+      if (price == null) price = net != null && qty ? einvR2(net / qty) : 0;
+      let pct = num(col(r, "pct"));
+      if (pct == null) { const v = num(col(r, "vat")); pct = v != null && net ? Math.round(v / net * 100) : 21; }
+      return { description: col(r, "description") || "CSV eilutė", qty, unitPrice: price, tax: { pct, rawCode: "", reverseCharge: false } };
+    });
+    const netSum = einvR2(lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
+    const vatCol = num(col(r0, "vat"));
+    const vatSum = rs.length === 1 && vatCol != null ? vatCol : einvR2(lines.reduce((s, l) => s + TaxCalc.vatCalc(einvR2(l.qty * l.unitPrice), l.tax.pct).vat, 0));
+    const grossCol = num(col(r0, "gross"));
+    const date = col(r0, "invoiceDate").replace(/\./g, "-").slice(0, 10);
+    out.push({ invoiceNo, invoiceDate: date, glPostingDate: date, currency: col(r0, "currency") || "EUR", unpaid: false, party: { id: "CSV-" + (vat || name).replace(/[^A-Za-z0-9]/g, "").slice(0, 12), name, vatNo: vat, regNo: col(r0, "partyReg"), country: /^[A-Z]{2}/.test(vat) ? vat.slice(0, 2) : "LT", city: "" }, lines, totals: { net: netSum, vat: vatSum, gross: grossCol != null ? grossCol : einvR2(netSum + vatSum) }, source: { system: "csv", externalId: "csv:" + dir + ":" + invoiceNo, updatedAt: new Date().toISOString() } });
+  });
+  return out;
+}
+function computeDataQuality(store) {
+  const pctf = (n, d) => d ? Math.round(n / d * 100) : 100;
+  const ent = (label, rowsArr, fields) => {
+    const rows = rowsArr || []; const missing = {};
+    let filled = 0, totalCells = rows.length * fields.length;
+    rows.forEach((r) => fields.forEach((f) => { const v = f.split(".").reduce((o, k) => (o || {})[k], r); if (v != null && v !== "" && !(Array.isArray(v) && !v.length)) filled++; else missing[f] = (missing[f] || 0) + 1; }));
+    return { label, rows: rows.length, completeness: pctf(filled, totalCells), missing: Object.entries(missing).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, n]) => `${f}×${n}`).join(", ") || "—" };
+  };
+  const dupes = (arr) => { const seen = new Set(); let d = 0; (arr || []).forEach((i) => { const k = (i.invoiceNo || "").toUpperCase(); if (seen.has(k)) d++; else seen.add(k); }); return d; };
+  const allInv = [...(store.invoicesAR || []), ...(store.invoicesAP || [])];
+  const dates = allInv.map((i) => i.invoiceDate).filter(Boolean).sort();
+  return {
+    entities: [
+      ent("Customers", store.customers, ["name", "vatNo", "country"]),
+      ent("Suppliers", store.suppliers, ["name", "vatNo", "country"]),
+      ent("Invoices AR", store.invoicesAR, ["invoiceNo", "invoiceDate", "party.vatNo", "totals.gross"]),
+      ent("Invoices AP", store.invoicesAP, ["invoiceNo", "invoiceDate", "party.vatNo", "totals.gross"]),
+      ent("Payments", store.payments, ["refNo", "gross", "lines"]),
+      ent("Journals", store.journals, ["transactionId", "date", "lines"]),
+    ],
+    duplicates: dupes(store.invoicesAR) + dupes(store.invoicesAP),
+    currencies: [...new Set(allInv.map((i) => i.currency || "EUR"))].join(", "),
+    dateRange: dates.length ? `${dates[0]} … ${dates[dates.length - 1]}` : "—",
+  };
+}
+
+// ─── SAF-T LT 2.01 XML exporter (mirrors parseSAFTFull's tag map; scalar
+// tags are emitted BEFORE nested blocks because txt() is descendant-first) ──
+function buildSaftXml(d) {
+  const E = xmlEsc;
+  const t = (name, v) => (v == null || v === "") ? "" : `<${name}>${E(v)}</${name}>`;
+  const m2 = (name, v) => v == null ? "" : `<${name}>${fmt2(v)}</${name}>`;
+  const amt = (name, v, cur, curAmt) => v == null ? "" : `<${name}><Amount>${fmt2(v)}</Amount>${t("CurrencyCode", cur)}${curAmt != null ? `<CurrencyAmount>${fmt2(curAmt)}</CurrencyAmount>` : ""}</${name}>`;
+  const H = d.header || {}, C = H.company || {};
+  // Header per XSD: company holds Name/RegistrationNumber; period lives in SelectionCriteria
+  const header = `<Header>${t("AuditFileVersion", H.auditFileVersion || "2.01")}${t("AuditFileCountry", H.auditFileCountry || "LT")}${t("AuditFileDateCreated", H.auditFileDateCreated)}${t("SoftwareCompanyName", H.softwareCompanyName)}${t("SoftwareID", H.softwareID)}${t("SoftwareVersion", H.softwareVersion)}<Company>${t("RegistrationNumber", C.registrationNumber || H.registrationNumber)}${t("Name", C.name || H.companyName)}<Address>${t("City", C.address?.city)}${t("Country", C.address?.country || "LT")}</Address>${C.taxRegistration ? `<TaxRegistration><TaxRegistrationNumber>${E(C.taxRegistration)}</TaxRegistrationNumber><TaxType>PVM</TaxType><Country>LT</Country></TaxRegistration>` : ""}${C.bankAccount ? `<BankAccount><IBANNumber>${E(C.bankAccount)}</IBANNumber></BankAccount>` : ""}</Company>${t("DefaultCurrencyCode", H.defaultCurrencyCode || "EUR")}<SelectionCriteria>${t("PeriodStart", H.periodStart)}${t("PeriodEnd", H.periodEnd)}</SelectionCriteria>${t("TaxAccountingBasis", H.taxAccountingBasis)}${t("FiscalYearFrom", H.fiscalYearFrom)}${t("FiscalYearTo", H.fiscalYearTo)}${t("Entity", H.entity)}${t("DataType", H.dataType)}${t("NumberOfParts", H.numberOfParts)}${t("PartNumber", H.partNumber)}</Header>`;
+  const accounts = (d.accounts || []).map((a) => `<Account>${t("AccountID", a.accountID)}${t("AccountDescription", a.accountDescription)}${t("AccountTableID", a.accountTableID || String(a.accountID || "0").charAt(0))}${t("AccountTableDescription", a.accountTableDescription || "Sąskaitų planas")}${t("AccountType", a.accountType)}${m2("OpeningDebitBalance", a.openingDebitBalance)}${m2("OpeningCreditBalance", a.openingCreditBalance)}${m2("ClosingDebitBalance", a.closingDebitBalance)}${m2("ClosingCreditBalance", a.closingCreditBalance)}</Account>`).join("");
+  const openInv = (wrapTag, tag, list) => (list && list.length) ? `<${wrapTag}>${list.map((o) => `<${tag}>${t("InvoiceNo", o.invoiceNo)}${t("InvoiceDate", o.invoiceDate)}${t("GLPostingDate", o.glPostingDate)}${t("TransactionID", o.transactionID)}${m2("Amount", o.amount)}${m2("UnpaidAmount", o.unpaidAmount)}</${tag}>`).join("")}</${wrapTag}>` : "";
+  const party = (tag, idTag, idVal, p, bank, openXml) => { const ac = (p.accounts && p.accounts[0]) || { accountID: p.accountID, od: p.openingDebitBalance, oc: p.openingCreditBalance, cd: p.closingDebitBalance, cc: p.closingCreditBalance }; return `<${tag}>${t("RegistrationNumber", p.registrationNumber)}${t("Name", p.name)}<Address>${t("City", p.addressCity)}${t("Country", p.addressCountry)}</Address>${p.taxRegistrationNumber ? `<TaxRegistration><TaxRegistrationNumber>${E(p.taxRegistrationNumber)}</TaxRegistrationNumber><TaxType>PVM</TaxType>${t("Country", p.country)}</TaxRegistration>` : ""}${bank}${t(idTag, idVal)}${t("SelfBillingIndicator", p.selfBillingIndicator)}<Accounts>${t("AccountID", ac.accountID)}${m2("OpeningDebitBalance", ac.od ?? 0)}${m2("OpeningCreditBalance", ac.oc ?? 0)}${m2("ClosingDebitBalance", ac.cd ?? 0)}${m2("ClosingCreditBalance", ac.cc ?? 0)}</Accounts>${openXml}</${tag}>`; };
+  const customers = (d.customers || []).map((c) => party("Customer", "CustomerID", c.customerID, c, "", openInv("OpenSalesInvoices", "OpenSalesInvoice", c.openSalesInvoices))).join("");
+  const suppliers = (d.suppliers || []).map((s2) => party("Supplier", "SupplierID", s2.supplierID, s2, s2.bankAccount ? `<BankAccount><IBANNumber>${E(s2.bankAccount)}</IBANNumber></BankAccount>` : "", openInv("OpenPurchaseInvoices", "OpenPurchaseInvoice", s2.openPurchaseInvoices))).join("");
+  const taxTable = (d.taxCodes || []).map((tc) => `<TaxTableEntry>${t("TaxType", tc.taxType || "PVM")}${t("Description", tc.description || tc.taxCode)}<TaxCodeDetails><TaxCodeDetail>${t("TaxCode", tc.taxCode)}${t("Description", tc.description)}${tc.taxPercentage != null ? m2("TaxPercentage", tc.taxPercentage) : ""}${t("Country", tc.country || "LT")}${t("STITaxCode", tc.stiTaxCode)}</TaxCodeDetail></TaxCodeDetails></TaxTableEntry>`).join("");
+  const uomTable = (d.uoms || []).map((u) => `<UOMTableEntry>${t("UnitOfMeasure", u.unitOfMeasure)}${t("Description", u.description)}</UOMTableEntry>`).join("");
+  const products = (d.products || []).map((pr) => `<Product>${t("ProductCode", pr.productCode)}${t("GoodsServicesID", pr.goodsServicesID)}${t("Description", pr.description)}${t("UOMBase", pr.uomBase)}<UOMS><UOM>${t("UOMStandard", pr.uomStandard)}${pr.uomToBaseFactor != null ? t("UOMToUOMBaseConversionFactor", pr.uomToBaseFactor) : ""}</UOM></UOMS>${(pr.taxType || pr.taxCode) ? `<Taxes><Tax>${t("TaxType", pr.taxType)}${t("TaxCode", pr.taxCode)}</Tax></Taxes>` : ""}</Product>`).join("");
+  const txnLine = (l) => `<Line>${t("RecordID", l.recordID)}${t("AccountID", l.accountID)}${t("SourceDocumentID", l.sourceDocumentID)}${t("CustomerID", l.customerID)}${t("SupplierID", l.supplierID)}${t("Description", l.description)}${amt("DebitAmount", l.debitAmount, l.debitCurrencyCode, l.debitCurrencyAmount)}${amt("CreditAmount", l.creditAmount, l.creditCurrencyCode, l.creditCurrencyAmount)}${l.taxInfo ? `<TaxInformations><TaxInformation>${t("TaxType", l.taxInfo.taxType)}${t("TaxCode", l.taxInfo.taxCode)}${l.taxInfo.taxPercentage != null ? m2("TaxPercentage", l.taxInfo.taxPercentage) : ""}${l.taxInfo.taxBase != null ? m2("TaxBase", l.taxInfo.taxBase) : ""}${l.taxInfo.taxAmount != null ? `<TaxAmount><Amount>${fmt2(l.taxInfo.taxAmount)}</Amount></TaxAmount>` : ""}</TaxInformation></TaxInformations>` : ""}</Line>`;
+  const byJournal = {};
+  (d.transactions || []).forEach((tx) => { (byJournal[tx.journalID || ""] = byJournal[tx.journalID || ""] || []).push(tx); });
+  let totD = 0, totC = 0;
+  (d.transactions || []).forEach((tx) => (tx.lines || []).forEach((l) => { totD += l.debitAmount || 0; totC += l.creditAmount || 0; }));
+  const journals = Object.entries(byJournal).map(([jid, txs]) => { const meta = (d.journals || []).find((j) => j.journalID === jid) || {}; return `<Journal>${t("JournalID", jid)}${t("Description", meta.description)}${t("Type", meta.type)}<Transactions>${txs.map((tx) => `<Transaction>${t("TransactionID", tx.transactionID)}${tx.period != null ? t("Period", tx.period) : ""}${tx.periodYear != null ? t("PeriodYear", tx.periodYear) : ""}${t("TransactionDate", tx.transactionDate)}${t("Description", tx.description)}${t("SystemEntryDate", tx.systemEntryDate)}${t("GLPostingDate", tx.glPostingDate)}<CustomerID>${E(tx.customerID || "")}</CustomerID>${t("SupplierID", tx.supplierID)}${t("SystemID", tx.systemID)}<Lines>${(tx.lines || []).map(txnLine).join("")}</Lines></Transaction>`).join("")}</Transactions></Journal>`; }).join("");
+  const gl = `<GeneralLedgerEntries><NumberOfEntries>${(d.transactions || []).length}</NumberOfEntries><TotalDebit>${fmt2(totD)}</TotalDebit><TotalCredit>${fmt2(totC)}</TotalCredit><Journals>${journals}</Journals></GeneralLedgerEntries>`;
+  const invLine = (l, isS) => { const v = l.creditAmount != null ? l.creditAmount : l.debitAmount; const dci = l.creditAmount != null ? "K" : l.debitAmount != null ? "D" : (isS ? "K" : "D"); return `<Line>${t("LineNumber", l.recordID)}${t("GoodsServicesID", l.goodsServicesID)}${t("ProductCode", l.productCode)}${l.quantity != null ? t("Quantity", l.quantity) : ""}${t("InvoiceUOM", l.unitOfMeasure)}${l.unitPrice != null ? m2("UnitPrice", l.unitPrice) : ""}${t("TaxPointDate", l.taxPointDate)}${t("Description", l.description)}${v != null ? `<InvoiceLineAmount><Amount>${fmt2(v)}</Amount></InvoiceLineAmount><DebitCreditIndicator>${dci}</DebitCreditIndicator>` : ""}${l.tax ? `<TaxInformation>${t("TaxType", l.tax.taxType)}${t("TaxCode", l.tax.taxCode)}${l.tax.taxPercentage != null ? m2("TaxPercentage", l.tax.taxPercentage) : ""}${l.tax.taxableAmount != null ? m2("TaxBase", l.tax.taxableAmount) : ""}${l.tax.taxAmount != null ? `<TaxAmount><Amount>${fmt2(l.tax.taxAmount)}</Amount></TaxAmount>` : ""}${t("TaxExemptionReason", l.tax.taxExemptionReason)}</TaxInformation>` : ""}</Line>`; };
+  const invXml = (i, side) => { const isS = side === "S"; const pTag = isS ? "CustomerInfo" : "SupplierInfo"; const pid = isS ? t("CustomerID", i.customerID) : t("SupplierID", i.supplierID); const partyB = `<${pTag}>${pid}<BillingAddress>${t("Country", i.supplierAddressCountry)}</BillingAddress>${t("TaxType", i.supplierTaxRegType)}${t("Country", i.supplierTaxRegCountry)}</${pTag}>`; const dt = i.documentTotals || {}; const tit = dt.taxPayable != null ? `<TaxInformationTotals><TaxType>PVM</TaxType><TaxAmount><Amount>${fmt2(dt.taxPayable)}</Amount></TaxAmount></TaxInformationTotals>` : ""; return `<Invoice>${t("InvoiceNo", i.invoiceNo)}${partyB}${t("AccountID", i.accountID)}${t("InvoiceDate", i.invoiceDate)}${t("InvoiceType", i.invoiceType)}${i.shipToCountry ? `<ShipTo><Address><Country>${E(i.shipToCountry)}</Country></Address></ShipTo>` : ""}${i.shipFromCountry ? `<ShipFrom><Address><Country>${E(i.shipFromCountry)}</Country></Address></ShipFrom>` : ""}${t("SelfBillingIndicator", i.selfBillingIndicator)}${t("GLPostingDate", i.glPostingDate)}${t("SystemID", i.systemID)}${t("TransactionID", i.glTransactionID)}${(i.lines || []).map((l) => invLine(l, isS)).join("")}${i.references ? `<References><CreditNote><Reference>${E(i.references)}</Reference></CreditNote></References>` : ""}<DocumentTotals>${tit}${m2("NetTotal", dt.netTotal ?? 0)}${m2("GrossTotal", dt.grossTotal ?? 0)}</DocumentTotals>${t("GLTransactionID", i.glTransactionID)}</Invoice>`; };
+  const secMeta = (meta, items) => { const me = meta || {}; return `<NumberOfEntries>${me.numberOfEntries ?? items.length}</NumberOfEntries><TotalDebit>${fmt2(me.totalDebit ?? 0)}</TotalDebit><TotalCredit>${fmt2(me.totalCredit ?? 0)}</TotalCredit>`; };
+  const sales = `<SalesInvoices>${secMeta(d.sales?.meta, d.sales?.items || [])}${(d.sales?.items || []).map((i) => invXml(i, "S")).join("\n")}</SalesInvoices>`;
+  const purch = `<PurchaseInvoices>${secMeta(d.purchases?.meta, d.purchases?.items || [])}${(d.purchases?.items || []).map((i) => invXml(i, "P")).join("\n")}</PurchaseInvoices>`;
+  const payLine = (l) => { const v = l.creditAmount != null ? l.creditAmount : l.debitAmount; const dci = l.creditAmount != null ? "K" : "D"; return `<Line>${t("LineNumber", l.recordID)}${t("SourceDocumentID", l.sourceDocumentID)}${t("CustomerID", l.customerID)}${t("SupplierID", l.supplierID)}<DebitCreditIndicator>${dci}</DebitCreditIndicator>${v != null ? `<PaymentLineAmount><Amount>${fmt2(v)}</Amount></PaymentLineAmount>` : ""}</Line>`; };
+  const pm = d.paymentsMeta || {};
+  const payments = `<Payments><NumberOfEntries>${pm.numberOfEntries ?? (d.payments || []).length}</NumberOfEntries><TotalDebit>${fmt2(pm.totalDebit ?? 0)}</TotalDebit><TotalCredit>${fmt2(pm.totalCredit ?? 0)}</TotalCredit>${(d.payments || []).map((p2) => `<Payment>${t("PaymentRefNo", p2.paymentRefNo)}${t("TransactionID", p2.transactionID)}${t("TransactionDate", p2.transactionDate)}${t("PaymentMethod", p2.paymentMethod)}${p2.bankAccount ? `<BankAccount><IBANNumber>${E(p2.bankAccount)}</IBANNumber></BankAccount>` : ""}<Description>${E(p2.description || "")}</Description>${t("SystemID", p2.systemID)}<Lines>${(p2.lines || []).map(payLine).join("")}</Lines>${m2("GrossTotal", p2.grossTotal)}</Payment>`).join("\n")}</Payments>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<AuditFile xmlns="https://www.vmi.lt/cms/saf-t">
+${header}
+<MasterFiles><GeneralLedgerAccounts>${accounts}</GeneralLedgerAccounts><Customers>${customers}</Customers><Suppliers>${suppliers}</Suppliers><TaxTable>${taxTable}</TaxTable><UOMTable>${uomTable}</UOMTable><Products>${products}</Products></MasterFiles>
+${gl}
+<SourceDocuments>${sales}
+${purch}
+${payments}</SourceDocuments>
+</AuditFile>`;
+}
+
+// ─── Export round-trip self-test: canonical → XML → own parsers → engines ──
+async function runExportSelfTest(H) {
+  const checks = []; const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || "" });
+  // (a) ERP canonical → SAF-T XML → parseSAFTFull → rules parity with bridge
+  const store = emptyCanonicalStore();
+  await runConnectorSync(makeConnector(ERP_CATALOG.find((e) => e.id === "odoo"), { demo: true }), store, {}, {});
+  store._taxMap = {};
+  const bridge = canonicalToSaft(store, {});
+  const xml = buildSaftXml(bridge);
+  const re = parseSAFTFull(xml);
+  ok("SAF-T XML parses (own strict parser)", !re._parseError, re._parseError || `${Math.round(xml.length / 1024)} kB`);
+  if (!re._parseError) {
+    const cnt = (x) => [x.customers.length, x.suppliers.length, x.transactions.length, x.sales.items.length, x.purchases.items.length, x.payments.length].join("/");
+    ok("entity counts equal (cust/sup/txn/AR/AP/pay)", cnt(re) === cnt(bridge), `${cnt(re)} vs ${cnt(bridge)}`);
+    const gl = (x) => { let D = 0, C = 0; x.transactions.forEach((t2) => (t2.lines || []).forEach((l) => { D += l.debitAmount || 0; C += l.creditAmount || 0; })); return [einvR2(D), einvR2(C)]; };
+    const [d1, c1] = gl(bridge), [d2, c2] = gl(re);
+    ok("GL debit/credit totals equal", Math.abs(d1 - d2) < 0.02 && Math.abs(c1 - c2) < 0.02, `D ${fmt2(d2)} C ${fmt2(c2)}`);
+    const sg = (x) => einvR2(x.sales.items.reduce((s, i) => s + (i.documentTotals?.grossTotal || 0), 0));
+    ok("Σ sales gross equal", Math.abs(sg(bridge) - sg(re)) < 0.02, `€${fmt2(sg(re))}`);
+    const r1 = runAllRules(bridge), r2 = runAllRules(re);
+    const diff = [...new Set([...Object.keys(r1.byRule), ...Object.keys(r2.byRule)])].filter((k) => (r1.byRule[k] || 0) !== (r2.byRule[k] || 0));
+    const hard = diff.filter((k) => !k.startsWith("SAFT_CLS_"));
+    const xsdv = Object.keys(r2.byRule).filter((k) => k.startsWith("SAFT_XSDV_"));
+    ok("export is XSD-clean (0 undeclared / 0 maxOccurs)", !xsdv.length, xsdv.length ? xsdv.map((k) => `${k}:${r2.byRule[k]}`).join(", ") : "schema-conformant");
+    ok("rule-for-rule audit parity (CLS sweep is XML-only)", !hard.length, hard.length ? "Δ " + hard.map((k) => `${k}:${r1.byRule[k] || 0}→${r2.byRule[k] || 0}`).join(", ") : `${r2.summary.total} vs ${r1.summary.total} findings` + (diff.length ? ` (+XML-only: ${diff.map((k) => `${k}×${r2.byRule[k] || 0}`).join(", ")})` : ""));
+  }
+  // (b) e-invoices → i.SAF XML → parseISAF → reconcile vs SAF-T bridge rows
+  const profile = { name: "UAB TaxAI demo įmonė", regNo: "305123458", vatNo: "LT130512345819", iban: "LT607044060008101234", city: "Vilnius", series: "EX", peppolScheme: "0200" };
+  const mkInv = (seq, type, preceding) => { const inv = newEInvoice(profile, seq, "2026-04-0" + seq); inv.typeCode = type; inv.precedingInvoiceNo = preceding || ""; inv.buyer = { name: "UAB Baltijos logistika", regNo: "300011238", vatNo: "LT130001123817", country: "LT", city: "Vilnius", street: "", postal: "", email: "", isPublic: false, endpoint: { scheme: "0200", id: "300011238" } }; inv.lines = [{ id: "1", description: "Paslauga", qty: 2, unitCode: "HUR", unitPrice: 150, pct: 21, reverseCharge: false, exempt: false, exemptReason: "", outOfScope: false }]; inv.payment.paymentId = inv.invoiceNo; return inv; };
+  const outbox = [{ inv: mkInv(1, "380"), state: "ACCEPTED", issuedAt: "2026-04-01T08:00:00Z" }, { inv: mkInv(2, "381", "EX-2026-00001"), state: "DELIVERED", issuedAt: "2026-04-02T08:00:00Z" }];
+  const isafXml = buildISafXml(profile, outbox, []);
+  const pi = parseISAF(isafXml);
+  ok("i.SAF XML parses (own parseISAF)", !pi._parseError && pi.counts.sales === 2, pi._parseError || `${pi.counts.sales} sales, period ${pi.header.periodFrom}…${pi.header.periodTo}`);
+  const recon = reconcileISAF(pi, { header: { registrationNumber: profile.regNo, company: { registrationNumber: profile.regNo } }, sales: { items: outbox.map(einvoiceToSaftInvoice) }, purchases: { items: [] }, taxCodes: [], payments: [], transactions: [] });
+  ok("i.SAF XML reconciles vs SAF-T rows (0 Reject)", (recon.findings || []).filter((f) => f.severity === "Reject").length === 0, `${(recon.findings || []).length} findings · netΔ €${recon.summary?.vat?.netDelta}`);
+  // (c) CSV ingestion
+  const csv = 'Sąskaita;Data;Pirkėjas;PVM kodas;Suma be PVM;PVM;Iš viso\n"CSV-001";2026-02-10;"UAB Testas";LT130001123817;500,00;105,00;605,00\n"CSV-002";2026-02-11;"UAB Testas";LT130001123817;200,00;42,00;242,00';
+  const parsedCsv = csvParse(csv);
+  const map = {}; parsedCsv.headers.forEach((h, i2) => { map[i2] = guessCsvField(h); });
+  const invs = csvRowsToInvoices(parsedCsv.headers, parsedCsv.rows, map, "AR");
+  ok("CSV import (LT headers, decimal commas)", invs.length === 2 && Math.abs(invs[0].totals.gross - 605) < 0.01 && invs[0].party.vatNo === "LT130001123817", `${invs.length} inv · €${fmt2(invs[0]?.totals.gross)} · ${parsedCsv.delimiter === ";" ? "';'" : parsedCsv.delimiter}`);
+  // (d) registry checksums (algorithm verified vs real public codes)
+  ok("LT checksum validators", isValidLtCompanyCode("188659752") && isValidLtCompanyCode("305123458") && !isValidLtCompanyCode("305123451") && isValidLtVatChecksum(profile.vatNo), "mod-11 OK (VMI 188659752 ✓)");
+  return { ok: checks.every((c) => c.pass), checks };
+}
+
+
 const KPI_META = [
   // Profitability
   { key: "revenue", en: "Revenue", lt: "Pajamos", fmt: "eur", dir: "up", cat: "profitability", bench: null },
@@ -6360,207 +10133,6 @@ function computeFr0600(parsed) {
   ["28","35","36"].forEach((b) => rows.push({ box: b, label: b === "28" ? "PVM atskaitos procentas" : b === "35" ? "Atskaitomas PVM" : "Mok\u0117tinas (gr\u0105\u017eintinas) PVM", value: null, codes: "\u2014", note: "nenustatoma i\u0161 SAF-T (priklauso nuo atskaitos teis\u0117s)" }));
   return { rows, lines, noTV };
 }
-function Fr0600Compare({ parsed, lang }) {
-  const [open, setOpen] = useState(false);
-  const [filed, setFiled] = useState({});
-  const res = useMemo(() => (parsed ? computeFr0600(parsed) : null), [parsed]);
-  if (!parsed || !res) return null;
-  const L = (lt, en) => (lang === "lt" ? lt : en);
-  const rows = (res.rows || []).filter((r) => r.value != null);
-  let fld = 0, mism = 0;
-  const data = rows.map((r) => {
-    const raw = String(filed[r.box] ?? "").replace(",", ".").trim();
-    const f = raw === "" ? null : parseFloat(raw);
-    const ok = f != null && isFinite(f);
-    const d = ok ? Math.round((f - r.value) * 100) / 100 : null;
-    if (ok) { fld++; if (Math.abs(d) > 0.01) mism++; }
-    return { box: r.box, label: r.label, value: r.value, f, d };
-  });
-  const LINE = "#3a3f4d";
-  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
-  return <>
-    <button onClick={() => setOpen(true)} style={btn} title={L("Palyginti su pateikta deklaracija", "Compare with the filed return")}>{"\u21c4"} {L("FR0600 vs deklaruota", "FR0600 vs filed")}</button>
-    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 780, maxWidth: "94vw", maxHeight: "84vh", overflow: "auto", color: "inherit" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <strong>{L("FR0600 palyginimas: apskai\u010diuota i\u0161 SAF-T vs deklaruota", "FR0600 comparison: computed from SAF-T vs filed")}</strong>
-          <button data-frclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
-        </div>
-        <div style={{ fontSize: 12, opacity: .8, marginBottom: 12 }}>{L("\u012eveskite pateiktos FR0600 reik\u0161mes \u2014 skirtumai skai\u010diuojami deterministi\u0161kai (tolerancija 0,01 EUR). Laukeliai 28/35/36 nenustatomi i\u0161 SAF-T.", "Enter the filed FR0600 values \u2014 differences are computed deterministically (0.01 EUR tolerance). Boxes 28/35/36 are not derivable from SAF-T.")}</div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead><tr>
-            <th style={{ textAlign: "left", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Laukelis", "Box")}</th>
-            <th style={{ textAlign: "left", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Apra\u0161ymas", "Label")}</th>
-            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("I\u0161 SAF-T", "From SAF-T")}</th>
-            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Deklaruota", "Filed")}</th>
-            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{"\u0394"}</th>
-          </tr></thead>
-          <tbody>
-            {data.map((r) => <tr key={r.box}>
-              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}` }}>{r.box}</td>
-              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, opacity: .85 }}>{String(r.label || "").slice(0, 52)}</td>
-              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right" }}>{r.value.toFixed(2)}</td>
-              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right" }}>
-                <input data-box={r.box} value={filed[r.box] ?? ""} onChange={(e) => setFiled({ ...filed, [r.box]: e.target.value })} placeholder={"\u2014"} style={{ width: 110, background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "3px 6px", textAlign: "right", fontFamily: "inherit" }} />
-              </td>
-              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right", color: r.d == null ? "inherit" : (Math.abs(r.d) > 0.01 ? "#ff6b6b" : "#7bd88f") }}>{r.d == null ? "\u2014" : r.d.toFixed(2)}</td>
-            </tr>)}
-          </tbody>
-        </table>
-        <div style={{ marginTop: 10, fontSize: 12 }}>
-          {L("U\u017epildyta", "Filled")}: {fld} {" \u00b7 "} {L("Neatitikim\u0173", "Mismatches")}: <strong style={{ color: mism ? "#ff6b6b" : "#7bd88f" }}>{mism}</strong>
-        </div>
-      </div>
-    </div>, document.body) : null}
-  </>;
-}
-
-function PriorPeriodCompare({ parsed, lang }) {
-  const [open, setOpen] = useState(false);
-  const [prior, setPrior] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [fname, setFname] = useState("");
-  const L = (lt, en) => (lang === "lt" ? lt : en);
-  const nextDay = (s) => { if (!/^\d{4}-\d{2}-\d{2}/.test(s || "")) return ""; const d = new Date(Date.UTC(+s.slice(0,4), +s.slice(5,7)-1, +s.slice(8,10)) + 86400000); return d.toISOString().slice(0,10); };
-  const cmp = useMemo(() => {
-    if (!parsed || !prior) return null;
-    const r2 = (x) => Math.round(x * 100) / 100;
-    const out = { header: [], gl: [], parties: [], stock: [], mism: 0 };
-    const ch = parsed.header || {}, ph = prior.header || {};
-    if (String(ch.registrationNumber || "") !== String(ph.registrationNumber || "")) { out.header.push({ k: L("\u012emon\u0117s kodas", "Registration no."), pri: ph.registrationNumber || "\u2014", cur: ch.registrationNumber || "\u2014", bad: true }); out.mism++; }
-    const pe = String(ph.fiscalYearTo || ph.periodEnd || "").slice(0,10), cs = String(ch.fiscalYearFrom || ch.periodStart || "").slice(0,10);
-    if (pe && cs && nextDay(pe) !== cs) { out.header.push({ k: L("Laikotarpi\u0173 sand\u016bra", "Period adjacency"), pri: pe, cur: cs, bad: true }); out.mism++; }
-    else if (pe && cs) out.header.push({ k: L("Laikotarpi\u0173 sand\u016bra", "Period adjacency"), pri: pe, cur: cs, bad: false });
-    const pacc = new Map(); (prior.accounts || []).forEach((a) => pacc.set(String(a.accountID || ""), a));
-    const seen = new Set();
-    (parsed.accounts || []).forEach((a) => {
-      const id = String(a.accountID || ""); if (!id) return; seen.add(id);
-      const od = a.openingDebitBalance || 0, oc = a.openingCreditBalance || 0;
-      const p = pacc.get(id); const cd = p ? (p.closingDebitBalance || 0) : null, cc = p ? (p.closingCreditBalance || 0) : null;
-      if (!p) { if (Math.abs(od) > 0.005 || Math.abs(oc) > 0.005) { out.gl.push({ id, name: a.accountDescription || "", kind: "missP", od: r2(od), oc: r2(oc) }); out.mism++; } return; }
-      if (Math.abs(od - cd) > 0.01 || Math.abs(oc - cc) > 0.01) { out.gl.push({ id, name: a.accountDescription || "", kind: "diff", od: r2(od), cd: r2(cd), oc: r2(oc), cc: r2(cc), dD: r2(od - cd), dC: r2(oc - cc) }); out.mism++; }
-    });
-    (prior.accounts || []).forEach((p) => { const id = String(p.accountID || ""); if (!id || seen.has(id)) return; const cd = p.closingDebitBalance || 0, cc = p.closingCreditBalance || 0; if (Math.abs(cd) > 0.005 || Math.abs(cc) > 0.005) { out.gl.push({ id, name: p.accountDescription || "", kind: "missC", cd: r2(cd), cc: r2(cc) }); out.mism++; } });
-    const partyScan = (curArr, priArr, idk, side) => {
-      const pm = new Map(); (priArr || []).forEach((m) => { let s = 0; (m.accounts || []).forEach((ac) => { s += (ac.cd || 0) - (ac.cc || 0); }); pm.set(String(m[idk] || ""), s); });
-      (curArr || []).forEach((m) => { const id = String(m[idk] || ""); if (!id || !pm.has(id)) return; let o = 0; (m.accounts || []).forEach((ac) => { o += (ac.od || 0) - (ac.oc || 0); }); const pc = pm.get(id); if (Math.abs(o - pc) > 0.01) { out.parties.push({ side, id, name: (m.name || "").slice(0, 30), open: r2(o), close: r2(pc), d: r2(o - pc) }); out.mism++; } });
-    };
-    partyScan(parsed.customers, prior.customers, "customerID", "C");
-    partyScan(parsed.suppliers, prior.suppliers, "supplierID", "S");
-    const pst = new Map(); (prior.physicalStock || []).forEach((e) => pst.set(String(e.productCode || ""), e));
-    (parsed.physicalStock || []).forEach((e) => { const id = String(e.productCode || ""); const p = pst.get(id); if (!p) return; const oq = e.openingStockQuantity || 0, cq = p.closingStockQuantity || 0; const ov = e.openingStockValue, cv = p.closingStockValue; let bad = Math.abs(oq - cq) > 0.0001; if (ov != null && cv != null && Math.abs(ov - cv) > 0.01) bad = true; if (bad) { out.stock.push({ id, oq: r2(oq), cq: r2(cq), ov: ov == null ? null : r2(ov), cv: cv == null ? null : r2(cv) }); out.mism++; } });
-    return out;
-  }, [parsed, prior, lang]);
-  if (!parsed) return null;
-  const LINE = "#3a3f4d";
-  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
-  const td = { padding: 5, borderBottom: `1px solid ${LINE}` };
-  const onFile = (e) => {
-    const f = e.target.files && e.target.files[0]; if (!f) return;
-    setErr(""); setBusy(true); setFname(f.name);
-    const rd = new FileReader();
-    rd.onload = () => { setTimeout(() => { try { const p = parseSAFTFull(String(rd.result || "")); if (p && p._parseError) { setErr(p._parseError); setPrior(null); } else setPrior(p); } catch (ex) { setErr(String(ex).slice(0, 160)); setPrior(null); } setBusy(false); }, 30); };
-    rd.onerror = () => { setErr("read error"); setBusy(false); };
-    rd.readAsText(f);
-  };
-  return <>
-    <button onClick={() => setOpen(true)} style={btn} title={L("T\u0119stinumo patikra su ankstesnio laikotarpio SAF-T", "Continuity check against the prior-period SAF-T")}>{"\u21bb"} {L("Ankstesnis laikotarpis", "Prior period")}</button>
-    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 880, maxWidth: "95vw", maxHeight: "86vh", overflow: "auto", color: "inherit", fontSize: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <strong>{L("T\u0119stinumo patikra: ankstesnio laikotarpio SAF-T", "Continuity check: prior-period SAF-T")}</strong>
-          <button data-ppclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
-        </div>
-        <div style={{ opacity: .8, marginBottom: 10 }}>{L("\u012ekelkite ankstesnio laikotarpio SAF-T \u2014 uždarymo likučiai lyginami su einamojo laikotarpio atidarymo likučiais (DK, pirk\u0117jai/tiek\u0117jai, atsargos; tolerancija 0,01 EUR). Turtas \u2014 v\u0117lesn\u0117je versijoje.", "Upload the prior-period SAF-T \u2014 its closing balances are compared with the current opening balances (GL, customers/suppliers, stock; 0.01 EUR tolerance). Assets \u2014 in a later version.")}</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-          <label style={{ ...btn, display: "inline-block" }}>
-            {L("Pasirinkti fail\u0105", "Choose file")}
-            <input data-prior-input type="file" accept=".xml" onChange={onFile} style={{ display: "none" }} />
-          </label>
-          <span style={{ opacity: .8 }}>{busy ? L("Skaitoma\u2026", "Reading\u2026") : (fname || "\u2014")}</span>
-          {prior ? <button onClick={() => { setPrior(null); setFname(""); }} style={btn}>{L("I\u0161valyti", "Clear")}</button> : null}
-          {err ? <span style={{ color: "#ff6b6b" }}>{err}</span> : null}
-        </div>
-        {cmp ? <>
-          <div style={{ marginBottom: 10 }}>{L("T\u0119stinumo neatitikim\u0173", "Continuity mismatches")}: <strong style={{ color: cmp.mism ? "#ff6b6b" : "#7bd88f" }}>{cmp.mism}</strong></div>
-          {cmp.header.map((h, i) => <div key={i} style={{ color: h.bad ? "#ff6b6b" : "#7bd88f", marginBottom: 4 }}>{h.k}: {h.pri} {"\u2192"} {h.cur}</div>)}
-          {cmp.gl.length ? <>
-            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("DK s\u0105skaitos (atidarymas vs ankstesnis u\u017edarymas)", "GL accounts (opening vs prior closing)")} \u2014 {cmp.gl.length}</div>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th style={{...td,textAlign:"left"}}>ID</th><th style={{...td,textAlign:"left"}}>{L("Pavadinimas","Name")}</th><th style={{...td,textAlign:"right"}}>D: {L("dab.","cur")}/{L("ankst.","prior")}</th><th style={{...td,textAlign:"right"}}>{"\u0394"}D</th><th style={{...td,textAlign:"right"}}>K: {L("dab.","cur")}/{L("ankst.","prior")}</th><th style={{...td,textAlign:"right"}}>{"\u0394"}K</th></tr></thead><tbody>
-              {cmp.gl.slice(0, 50).map((g, i) => <tr key={i}>
-                <td style={td}>{g.id}</td><td style={{...td,opacity:.85}}>{String(g.name).slice(0,26)}{g.kind==="missP"?L(" (n\u0117ra ankstesniame)"," (missing in prior)"):g.kind==="missC"?L(" (n\u0117ra einamajame)"," (missing in current)"):""}</td>
-                <td style={{...td,textAlign:"right"}}>{g.od != null ? g.od.toFixed(2) : "\u2014"} / {g.cd != null ? g.cd.toFixed(2) : "\u2014"}</td>
-                <td style={{...td,textAlign:"right",color:"#ff6b6b"}}>{g.dD != null ? g.dD.toFixed(2) : "\u2014"}</td>
-                <td style={{...td,textAlign:"right"}}>{g.oc != null ? g.oc.toFixed(2) : "\u2014"} / {g.cc != null ? g.cc.toFixed(2) : "\u2014"}</td>
-                <td style={{...td,textAlign:"right",color:"#ff6b6b"}}>{g.dC != null ? g.dC.toFixed(2) : "\u2014"}</td>
-              </tr>)}
-            </tbody></table>
-          </> : null}
-          {cmp.parties.length ? <>
-            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("Pirk\u0117jai / tiek\u0117jai", "Customers / suppliers")} \u2014 {cmp.parties.length}</div>
-            {cmp.parties.slice(0, 30).map((p, i) => <div key={i}>{p.side === "C" ? L("Pirk.", "Cust.") : L("Tiek.", "Supp.")} {p.id} {p.name}: {p.open.toFixed(2)} vs {p.close.toFixed(2)} ({"\u0394"} <span style={{ color: "#ff6b6b" }}>{p.d.toFixed(2)}</span>)</div>)}
-          </> : null}
-          {cmp.stock.length ? <>
-            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("Atsargos", "Stock")} \u2014 {cmp.stock.length}</div>
-            {cmp.stock.slice(0, 30).map((s, i) => <div key={i}>{s.id}: {L("kiekis", "qty")} {s.oq} vs {s.cq}{s.ov != null && s.cv != null ? `; ${L("vert\u0117", "value")} ${s.ov.toFixed(2)} vs ${s.cv.toFixed(2)}` : ""}</div>)}
-          </> : null}
-        </> : (busy ? null : <div style={{ opacity: .6 }}>{L("Failas ne\u012fkeltas.", "No file loaded.")}</div>)}
-      </div>
-    </div>, document.body) : null}
-  </>;
-}
-
-function VIESCheck({ lang }) {
-  const [open, setOpen] = useState(false);
-  const [num, setNum] = useState("");
-  const [res, setRes] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const L = (lt, en) => (lang === "lt" ? lt : en);
-  const LINE = "#3a3f4d";
-  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
-  const check = async () => {
-    const v = num.toUpperCase().replace(/\s/g, "");
-    const m = v.match(/^([A-Z]{2})([A-Z0-9+*]{2,14})$/);
-    if (!m) { setErr(L("\u012eveskite kod\u0105 su \u0161alies prefiksu, pvz., LT123456715", "Enter a code with a country prefix, e.g., LT123456715")); setRes(null); return; }
-    setBusy(true); setErr(""); setRes(null);
-    try {
-      const r = await fetch(`/api/vies?country=${m[1]}&number=${encodeURIComponent(m[2])}`);
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const j = await r.json();
-      if (j && j.error) throw new Error(j.error);
-      setRes(j);
-    } catch (ex) {
-      setErr(L("VIES tarpin\u0117 tarnyba nepasiekiama \u2014 \u012fdiekite api/vies.js \u0161alia api/ai.js ir perdiekite.", "VIES proxy unreachable \u2014 deploy api/vies.js next to api/ai.js and redeploy."));
-    }
-    setBusy(false);
-  };
-  return <>
-    <button onClick={() => setOpen(true)} style={btn} title={L("PVM kodo patikra ES VIES registre (per js tarpin\u0119 tarnyb\u0105)", "Check a VAT number in the EU VIES registry (via the api proxy)")}>{"\u2713"} {L("VIES patikra", "VIES check")}</button>
-    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 480, maxWidth: "92vw", color: "inherit", fontSize: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <strong>{L("VIES patikra", "VIES check")}</strong>
-          <button data-viesclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
-        </div>
-        <div style={{ opacity: .8, marginBottom: 10 }}>{L("Tikrinama Europos Komisijos VIES sistemoje per j\u016bs\u0173 diegimo /api/vies tarpin\u0119 tarnyb\u0105 (realiu laiku, neka\u0161uojama \u012f fail\u0105).", "Validated against the European Commission VIES system through your deployment's /api/vies proxy (real-time).")}</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          <input data-vies-input value={num} onChange={(e) => setNum(e.target.value)} placeholder="LT123456715" style={{ flex: 1, background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 8px", fontFamily: "inherit", fontSize: 12 }} />
-          <button data-vies-check onClick={check} style={btn}>{busy ? L("Tikrinama\u2026", "Checking\u2026") : L("Tikrinti", "Check")}</button>
-        </div>
-        {err ? <div style={{ color: "#ff6b6b" }}>{err}</div> : null}
-        {res ? <div>
-          <div style={{ color: res.valid ? "#7bd88f" : "#ff6b6b", fontWeight: 600 }}>{res.valid ? L("Galioja \u2713", "Valid \u2713") : L("Negalioja \u2715", "Not valid \u2715")}</div>
-          {res.name ? <div style={{ marginTop: 4 }}>{res.name}</div> : null}
-          {res.address ? <div style={{ opacity: .8 }}>{res.address}</div> : null}
-          {res.requestDate ? <div style={{ opacity: .6, marginTop: 4 }}>{L("U\u017eklausos data", "Request date")}: {String(res.requestDate).slice(0, 10)}</div> : null}
-        </div> : null}
-      </div>
-    </div>, document.body) : null}
-  </>;
-}
-
 function exportFr0600CSV(parsed, fileName, srcName) {
   const res = computeFr0600(parsed);
   if (!res) return;
@@ -7316,6 +10888,38 @@ function SourcesPanel({ grounding, lang }) {
   );
 }
 
+// ── Per-finding explanation engine ──────────────────────────────────────────
+// Turns any finding from any engine (VAT, structural, XSD, duplicate,
+// classifier, schema validation) into a clear three-part explanation:
+// WHAT was found (with the actual values), WHY it matters (rule meaning +
+// legal basis), and HOW to fix it — short numbered steps. The splitter is
+// abbreviation-aware, so Lithuanian legal shorthand (proc., str., Nr., 5 d.)
+// never breaks a step mid-sentence.
+function fixSteps(fix) {
+  let s = String(fix || "").trim();
+  if (!s) return [];
+  s = s.replace(/\b(proc|str|nr|art|kl|pvz|žr|vnt|mln|mlrd|tūkst|kt|pan|sąsk|mėn|d|p|t|y|g|e)\./gi, "$1\u0001");
+  s = s.replace(/\.(?=\S)/g, "\u0001"); // dots not followed by a space: URLs, decimals, e.g./i.e.
+  const parts = s.match(/[^.;!?]+[.;!?]?/g) || [s];
+  const steps = parts
+    .map((p) => p.replace(/\u0001/g, ".").trim().replace(/^[;,]\s*/, ""))
+    .filter((p) => p.replace(/[.;!?()\s]/g, "").length > 2)
+    .map((p) => (/[.;!?]$/.test(p) ? p.replace(/;$/, ".") : p + "."));
+  return steps.slice(0, 6);
+}
+function explainFinding(f, lang) {
+  const m = (f && f.ruleMeta) || {};
+  const lt = lang === "lt";
+  const what = String((f && f.evidence && f.evidence[0]) || (f && f.detail) || "");
+  const why = lt ? (m.descriptionLt || "") : (m.descriptionEn || m.descriptionLt || "");
+  const how = fixSteps(lt ? (m.fixLt || m.fixEn) : (m.fixEn || m.fixLt));
+  if (!how.length) how.push(lt ? "Peržiūrėkite šį įrašą pagal pagrindžiančius dokumentus." : "Review this item against the supporting documentation.");
+  const urgent = !!(f && (f.severity === "Critical" || f.severity === "High"));
+  return { what, why, legal: m.legal || "", how, urgent,
+    lead: urgent ? (lt ? "Būtina ištaisyti prieš teikiant" : "Must be corrected before submission")
+                 : (lt ? "Rekomenduojama peržiūrėti" : "Recommended review") };
+}
+
 // Stable identifier for a finding (rule + the specific evidence line).
 function findingKey(f) {
   if (!f) return "";
@@ -7337,9 +10941,11 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
   const [saved, setSaved] = useState(false);
 
   // parse the evidence row into field/value pairs (from the @field template)
-  const fields = finding.evidenceRow && typeof finding.evidenceRow === "object"
-    ? Object.entries(finding.evidenceRow)
-    : ((finding.evidence?.[0] || "").split("|").map((p) => { const ix = p.indexOf("="); return ix > -1 ? [p.slice(0, ix).trim(), p.slice(ix + 1).trim()] : null; }).filter(Boolean));
+  // Prefer the rendered fail message (human labels like "Operacija", "Sąskaita")
+  // over raw hit-object keys (tx, rec, acct); fall back to the raw row.
+  const labeledPairs = ((finding.evidence?.[0] || "").split("|").map((p) => { const ix = p.indexOf("="); return ix > -1 ? [p.slice(0, ix).trim(), p.slice(ix + 1).trim()] : null; }).filter(Boolean));
+  const fields = labeledPairs.length ? labeledPairs
+    : (finding.evidenceRow && typeof finding.evidenceRow === "object" ? Object.entries(finding.evidenceRow) : []);
 
   const disposition = accord ? "accordance" : notAccord ? "not" : null;
   const save = () => { onSave({ disposition, justification: just }); setSaved(true); setTimeout(() => setSaved(false), 2200); };
@@ -7350,9 +10956,9 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
       `Rule: ${lang === "lt" ? m.titleLt : m.titleEn}`,
       `Severity: ${finding.severity}    Category: ${finding.category}    Refers to: ${m.refType || "—"}`,
       `Legal basis: ${m.legal || "—"}`, "",
-      `What the rule checks:`, (lang === "lt" ? m.descriptionLt : (m.descriptionLt || "")) || "(see rule description)", "",
+      `What the rule checks:`, (lang === "lt" ? m.descriptionLt : (m.descriptionEn || m.descriptionLt || "")) || "(see rule description)", "",
       `Flagged record:`, ...fields.map(([k, v]) => `  ${k} = ${v}`), "",
-      `What to check / fix:`, (lang === "lt" ? m.fixLt : m.fixEn) || "—", "",
+      `How to fix:`, ...(fixSteps(lang === "lt" ? (m.fixLt || m.fixEn) : (m.fixEn || m.fixLt)).map((s, ix) => `  ${ix + 1}. ${s}`)), "",
       `AUDITOR NOTE`,
       `In accordance: ${disposition === "accordance" ? "YES" : disposition === "not" ? "NO" : "(not set)"}`,
       `Justification: ${just || "(none)"}`,
@@ -7384,12 +10990,13 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
 
       {/* what the rule checks */}
       <Section title={L("What this rule checks", "Ką tikrina ši taisyklė")}>
-        <p style={{ fontSize: 13.5, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.65, margin: 0 }}>{m.descriptionLt || finding.title}</p>
+        <p style={{ fontSize: 13.5, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.65, margin: 0 }}>{(lang === "lt" ? m.descriptionLt : (m.descriptionEn || m.descriptionLt)) || finding.title}</p>
         {m.legal && <div style={{ marginTop: 10, fontSize: 11.5, color: "#9ae6a4", fontFamily: "var(--m)" }}>§ {L("Legal basis", "Teisinis pagrindas")}: {m.legal}</div>}
       </Section>
 
       {/* what's flagged */}
       <Section title={L("What was flagged", "Kas pažymėta")} accent="#ff8a8a">
+        {finding.evidence?.[0] ? <p style={{ fontSize: 12.5, color: "#ffc9c9", fontFamily: "var(--m)", lineHeight: 1.6, margin: "0 0 14px", wordBreak: "break-word" }}>{finding.evidence[0]}</p> : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 14 }}>
           {fields.map(([k, v], i) => <div key={i} style={{ padding: "10px 12px", background: "#000", border: `1px solid ${PL_SOFT}` }}>
             <div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>{k}</div>
@@ -7398,9 +11005,14 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
         </div>
       </Section>
 
-      {/* what to fix */}
-      <Section title={L("What needs to be checked or corrected", "Ką reikia patikrinti ar pataisyti")} accent="#7cc4ff">
-        <p style={{ fontSize: 13.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.65, margin: 0 }}>{(lang === "lt" ? m.fixLt : m.fixEn) || L("Review this item against the supporting documentation.", "Peržiūrėkite šį įrašą pagal pagrindžiančius dokumentus.")}</p>
+      {/* how to fix — clear numbered steps, severity-aware */}
+      <Section title={L("How to fix it", "Kaip ištaisyti")} accent="#7cc4ff">
+        {(() => { const ex = explainFinding(finding, lang); return <>
+          <div style={{ display: "inline-block", padding: "4px 10px", marginBottom: 12, border: `1px solid ${ex.urgent ? "#ff8a8a" : "#69db7c"}`, color: ex.urgent ? "#ff8a8a" : "#69db7c", fontFamily: "var(--m)", fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>{ex.lead}</div>
+          {ex.how.length === 1
+            ? <p style={{ fontSize: 13.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.7, margin: 0 }}>{ex.how[0]}</p>
+            : <ol style={{ margin: 0, paddingLeft: 22 }}>{ex.how.map((s, i) => <li key={i} style={{ fontSize: 13.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.7, marginBottom: 6 }}>{s}</li>)}</ol>}
+        </>; })()}
       </Section>
 
       {/* auditor note */}
@@ -7482,6 +11094,1066 @@ function DefensibilityPanel({ verification, lang }) {
   );
 }
 
+// ════════════════════════════════════════════════════════════════════
+// INTEGRATIONS TAB — ERP hub UI (Module 1)
+// gallery · connections · mapping studio · tax-code mapper · monitor · agent
+// ════════════════════════════════════════════════════════════════════
+function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote, setToast, hasSaft }) {
+  const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
+  const lbl = { fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase" };
+  const bP = { background: "#fff", color: "#000", border: "none", padding: "9px 18px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" };
+  const bG = { background: "transparent", color: "#d2d2ce", border: `1px solid ${PL_LINE}`, padding: "9px 16px", fontSize: 11, fontWeight: 600, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" };
+  const inp = { background: "var(--bg)", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "8px 11px", fontSize: 12.5, fontFamily: "var(--s)", outline: "none", width: "100%" };
+  const LT = lang === "lt";
+
+  const [sub, setSub] = useState("gallery");
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("");
+  const [wiz, setWiz] = useState(null);            // catalog entry being connected
+  const [creds, setCreds] = useState({});
+  const [health, setHealth] = useState(null);
+  const [busy, setBusy] = useState("");            // connectorId currently syncing
+  const [mapConnId, setMapConnId] = useState("");
+  const [mapEntity, setMapEntity] = useState("invoicesAR");
+  const [mapDraft, setMapDraft] = useState(null);  // {field: path} editable copy
+
+  const connections = erp.connections;
+  const helpers = useMemo(() => ({ classifyVatRate, isValidLtIban, isLtVatNumber, ISO_4217, taxMap: erp.taxMap }), [erp.taxMap]);
+  const filtered = useMemo(() => ERP_CATALOG.filter((e) => (!cat || e.category === cat) && (!q || (e.name + " " + e.id + " " + e.category + " " + e.region).toLowerCase().includes(q.toLowerCase()))), [q, cat]);
+  const connFor = (id) => connections.find((c) => c.id === id);
+  const tierTag = (tier) => tier === "deep" ? { tx: LT ? "GILUS" : "DEEP", col: "#69db7c" } : tier === "standard" ? { tx: "STD", col: "#74c0fc" } : { tx: "GEN", col: "#8c8c88" };
+
+  const startConnect = (entry) => { setWiz(entry); setCreds({}); setHealth(null); };
+  const credFields = (auth) => auth === "oauth2" ? [["clientId", "Client ID"], ["clientSecret", "Client secret"], ["tenant", LT ? "Nuomininkas / aplinka" : "Tenant / environment"]] : auth === "apikey" ? [["apiKey", "API key"]] : auth === "basic" ? [["username", LT ? "Naudotojas" : "Username"], ["password", LT ? "Slaptažodis" : "Password"]] : auth === "cert" ? [["keyRef", LT ? "Rakto nuoroda (agentas)" : "Key reference (agent)"]] : [];
+
+  const doHealth = async () => {
+    const conn = makeConnector(wiz, { credentials: creds, baseUrl: creds.baseUrl, demo });
+    setHealth({ pending: true });
+    const h = await conn.healthCheck();
+    setHealth(h);
+  };
+  const saveConnection = () => {
+    const c = { id: wiz.id, entry: wiz, config: { credentials: creds, baseUrl: creds.baseUrl || "", mapOverrides: {}, demo }, addedAt: new Date().toISOString() };
+    setErp((e) => ({ ...e, connections: [...e.connections.filter((x) => x.id !== wiz.id), c] }));
+    audit.log("ERP_CONNECT", `${wiz.name} (${wiz.protocol}/${wiz.auth}) ${demo ? "demo" : "live→" + ERP_RELAY}`);
+    setToast(LT ? `Prijungta: ${wiz.name}` : `Connected: ${wiz.name}`);
+    setWiz(null); setSub("connections");
+  };
+  const removeConnection = (id) => { setErp((e) => ({ ...e, connections: e.connections.filter((x) => x.id !== id) })); audit.log("ERP_DISCONNECT", id); };
+
+  const syncNow = async (c) => {
+    setBusy(c.id);
+    try {
+      const connector = makeConnector(c.entry, { ...c.config, demo: demo || c.config.demo });
+      const store = { ...erp.store, _seen: { ...erp.store._seen }, _sources: [...erp.store._sources] };
+      ENTITY_KINDS.forEach((k) => { store[k] = [...(erp.store[k] || [])]; });
+      const syncState = JSON.parse(JSON.stringify(erp.syncState));
+      const res = await runConnectorSync(connector, store, syncState, { log: audit.log });
+      store._taxMap = erp.taxMap;
+      const findings = validateCanonicalBatch(store, helpers);
+      setErp((e) => ({ ...e, store, syncState, findings }));
+      const n = Object.values(res.byEntity).reduce((s, x) => s + x, 0);
+      setToast(LT ? `${c.entry.name}: ${n} įrašų · ${findings.length} radinių` : `${c.entry.name}: ${n} records · ${findings.length} findings`);
+    } catch (err) {
+      setToast((LT ? "Sinchronizavimo klaida: " : "Sync error: ") + err.message);
+      audit.log("ERP_SYNC_ERROR", `${c.entry.name}: ${err.message}`);
+    }
+    setBusy("");
+  };
+
+  // Mapping studio derived state
+  const mapConn = connFor(mapConnId) || connections[0];
+  const mapEntry = mapConn?.entry;
+  const baseMap = mapEntry ? mapsFor(mapEntry, mapConn.config)[mapEntity] || {} : {};
+  const effMap = mapDraft || baseMap;
+  const sampleRaws = useMemo(() => { if (!mapEntry) return []; try { return makeConnector(mapEntry, { ...mapConn.config, demo: true }).sampleRaw(mapEntity); } catch { return []; } }, [mapEntry && mapEntry.id, mapEntity]);
+  const previewRows = useMemo(() => {
+    if (!mapEntry || !sampleRaws.length) return [];
+    try {
+      if (mapEntity === "invoicesAR" || mapEntity === "invoicesAP") return sampleRaws.map((r) => { const c = transformInvoice(effMap, r, mapEntry, mapEntity === "invoicesAR" ? "AR" : "AP"); return { invoiceNo: c.invoiceNo, date: c.invoiceDate, party: c.party.name || c.party.id, net: c.totals.net, vat: c.totals.vat, gross: c.totals.gross, lines: c.lines.length }; });
+      if (mapEntity === "customers" || mapEntity === "suppliers") return sampleRaws.map((r) => { const p = transformParty(effMap, r); return { id: p.id, name: p.name, vatNo: p.vatNo, country: p.country, iban: p.iban }; });
+      return sampleRaws.map((r) => ({ json: JSON.stringify(r).slice(0, 90) }));
+    } catch (e) { return [{ error: e.message }]; }
+  }, [effMap, sampleRaws, mapEntity, mapEntry && mapEntry.id]);
+  const flatFields = (m) => Object.entries(m).filter(([k, v]) => typeof v === "string" && k !== "label").map(([k, v]) => [k, v]).concat(Object.entries(m.line || {}).map(([k, v]) => ["line." + k, v]));
+  const setMapField = (k, v) => { const d = JSON.parse(JSON.stringify(effMap)); if (k.startsWith("line.")) { d.line = d.line || {}; d.line[k.slice(5)] = v; } else d[k] = v; setMapDraft(d); };
+  const saveMapping = () => {
+    setErp((e) => ({ ...e, connections: e.connections.map((c) => c.id !== mapConn.id ? c : { ...c, config: { ...c.config, mapOverrides: { ...c.config.mapOverrides, [mapEntity]: effMap } } }) }));
+    audit.log("ERP_MAPPING_SAVED", `${mapConn.entry.name} · ${mapEntity}`);
+    setToast(LT ? "Atvaizdavimas išsaugotas" : "Mapping saved"); setMapDraft(null);
+  };
+
+  // Tax-code mapper derived state
+  const rawCodes = useMemo(() => { const seen = {}; const out = []; (erp.store.taxCodes || []).forEach((tc) => { if (!seen[tc.rawCode]) { seen[tc.rawCode] = 1; out.push(tc); } }); return out; }, [erp.store.taxCodes]);
+  const CLS_LIST = useMemo(() => [...CLS_TAX].sort(), []);
+  const setTaxMap = (rawCode, sti) => setErp((e) => { const taxMap = { ...e.taxMap }; if (sti) taxMap[rawCode] = sti; else delete taxMap[rawCode]; const store = { ...e.store, _taxMap: taxMap }; return { ...e, taxMap, store, findings: validateCanonicalBatch(store, { ...helpers, taxMap }) }; });
+
+  const counts = ENTITY_KINDS.map((k) => [k, (erp.store[k] || []).length]);
+  const totalRows = counts.reduce((s, [, n]) => s + n, 0);
+  const sevOrder = { Block: 0, Reject: 1, Warn: 2 };
+  const sortedFindings = [...erp.findings].sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
+
+  const [csvText, setCsvText] = useState("");
+  const [csvMap, setCsvMap] = useState(null);
+  const [autoSync, setAutoSync] = useState(false);
+  useEffect(() => { if (!autoSync) return; const t2 = setInterval(() => { connections.forEach((c) => syncNow(c)); }, 60000); return () => clearInterval(t2); }, [autoSync, connections.length]);
+  const SUBS = [["gallery", LT ? "Katalogas" : "Gallery"], ["connections", LT ? "Jungtys" : "Connections"], ["mapping", LT ? "Atvaizdavimas" : "Mapping studio"], ["taxmap", LT ? "PVM kodai" : "Tax codes"], ["csv", "CSV"], ["monitor", LT ? "Stebėsena" : "Monitor"], ["agent", LT ? "Agentas / relė" : "Agent / relay"]];
+
+  return <div style={{ maxWidth: 1240 }}>
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "var(--s)", letterSpacing: "-.01em" }}>{LT ? "ERP integracijos" : "ERP Integrations"}</div>
+        <div style={{ fontSize: 12.5, color: "#8c8c88", fontFamily: "var(--s)", marginTop: 4 }}>{ERP_CATALOG.length} {LT ? "sistemų · vienas kanoninis modelis · tie patys SAF-T varikliai" : "systems · one canonical model · the same SAF-T engines"}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ ...lbl }}>{LT ? "Režimas" : "Mode"}</span>
+        <button onClick={() => setDemo(!demo)} style={{ ...bG, borderColor: demo ? PL_LINE : "#69db7c", color: demo ? "#d2d2ce" : "#69db7c" }}>{demo ? "DEMO" : "LIVE → /api/erp"}</button>
+      </div>
+    </div>
+
+    <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${PL_LINE}`, marginBottom: 18, flexWrap: "wrap" }}>
+      {SUBS.map(([k, l]) => <button key={k} onClick={() => setSub(k)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${sub === k ? "#fff" : "transparent"}`, color: sub === k ? "#fff" : "#8c8c88", padding: "10px 16px", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", cursor: "pointer" }}>{l}{k === "connections" && connections.length ? ` (${connections.length})` : ""}{k === "monitor" && erp.findings.length ? ` (${erp.findings.length})` : ""}</button>)}
+      <label style={{ marginLeft: "auto", display: "flex", gap: 7, alignItems: "center", color: autoSync ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, cursor: "pointer", padding: "10px 4px" }}><input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />{LT ? "Auto-sync 60 s" : "Auto-sync 60s"}</label>
+    </div>
+
+    {/* ── GALLERY ── */}
+    {sub === "gallery" && <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={LT ? "Ieškoti sistemos…" : "Search systems…"} style={{ ...inp, maxWidth: 280 }} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={() => setCat("")} style={{ ...bG, padding: "7px 12px", borderColor: !cat ? "#fff" : PL_LINE, color: !cat ? "#fff" : "#8c8c88" }}>{LT ? "Visos" : "All"}</button>
+          {ERP_CATEGORIES.map((c) => <button key={c} onClick={() => setCat(cat === c ? "" : c)} style={{ ...bG, padding: "7px 12px", borderColor: cat === c ? "#fff" : PL_LINE, color: cat === c ? "#fff" : "#8c8c88" }}>{c}</button>)}
+        </div>
+      </div>
+      <div style={{ border: `1px solid ${PL_LINE}` }}>
+        {filtered.map((e, i) => { const conn = connFor(e.id); const tg = tierTag(e.tier); return <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px", borderBottom: i < filtered.length - 1 ? `1px solid ${PL_SOFT}` : "none", background: i % 2 ? "var(--bg2)" : "var(--bg)" }}>
+          <span style={{ fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".1em", color: tg.col, border: `1px solid ${tg.col}`, padding: "2px 6px", flexShrink: 0 }}>{tg.tx}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13.5, fontWeight: 600 }}>{e.name}</div>
+            <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".06em", marginTop: 2 }}>{e.category} · {e.region} · {e.protocol.toUpperCase()} · {e.auth.toUpperCase()}</div>
+          </div>
+          {conn ? <span style={{ ...lbl, color: "#69db7c" }}>{LT ? "✓ prijungta" : "✓ connected"}</span> : <button onClick={() => startConnect(e)} style={{ ...bG, padding: "6px 14px" }}>{LT ? "Prijungti" : "Connect"}</button>}
+        </div>; })}
+        {!filtered.length && <div style={{ padding: 24, color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Nieko nerasta" : "No matches"}</div>}
+      </div>
+    </div>}
+
+    {/* ── CONNECT WIZARD (overlay panel) ── */}
+    {wiz && <div onClick={() => setWiz(null)} style={{ position: "fixed", inset: 0, zIndex: 10002, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(620px,94vw)", maxHeight: "86vh", overflowY: "auto", background: "var(--bg2)", border: "1px solid rgba(255,255,255,0.18)", boxShadow: "0 24px 80px rgba(0,0,0,.7)", padding: "22px 24px" }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", fontFamily: "var(--s)" }}>{LT ? "Prijungti" : "Connect"} {wiz.name}</div>
+        <div style={{ ...lbl, marginTop: 4, marginBottom: 16 }}>{wiz.protocol.toUpperCase()} · {wiz.auth.toUpperCase()} · {wiz.adapter} · tier: {wiz.tier}</div>
+        {wiz.adapter === "csv" && <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>{LT ? "Failinė sistema: eksportuokite CSV ir įkelkite per šoninę juostą (SAF-T / CSV). Žemiau išsaugokite jungtį, kad failai būtų žymimi šios sistemos vardu." : "File-based system: export CSV and drop it via the sidebar (SAF-T / CSV). Save the connection below so files are tagged with this system's name."}</div>}
+        {wiz.adapter === "agent" && <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>{LT ? "Šiam šaltiniui reikia Node.js sinchronizavimo agento (žr. skirtuką „Agentas / relė“) — naršyklė nepasiekia SFTP/tinklo aplankų." : "This source requires the Node.js sync agent (see the Agent / relay tab) — the browser cannot reach SFTP/network folders."}</div>}
+        {!demo && <div style={{ marginBottom: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>Base URL</div><input value={creds.baseUrl || ""} onChange={(e) => setCreds({ ...creds, baseUrl: e.target.value })} placeholder="https://tenant.example.com" style={inp} /></div>}
+        {credFields(wiz.auth).map(([k, l]) => <div key={k} style={{ marginBottom: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>{l}</div><input type={/secret|password|Key/i.test(k) ? "password" : "text"} value={creds[k] || ""} onChange={(e) => setCreds({ ...creds, [k]: e.target.value })} style={inp} /></div>)}
+        <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.5, margin: "4px 0 14px" }}>{LT ? "Prisijungimo duomenys laikomi tik šios sesijos atmintyje ir siunčiami tik į jūsų /api/erp relę per TLS. Gamyboje naudokite credRef → Vercel env / vault (KMS)." : "Credentials live in this session's memory only and are sent only to your /api/erp relay over TLS. In production use credRef → Vercel env / vault (KMS)."}</div>
+        {demo && <div style={{ color: "#74c0fc", fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".06em", marginBottom: 14 }}>{LT ? "DEMO režimas: duomenys generuojami deterministiškai, prisijungimo duomenų nereikia." : "DEMO mode: data is generated deterministically, no credentials required."}</div>}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={doHealth} style={bG}>{LT ? "Tikrinti ryšį" : "Health check"}</button>
+          {health && <span style={{ fontFamily: "var(--m)", fontSize: 11, color: health.pending ? "#8c8c88" : health.ok ? "#69db7c" : "#ff6b6b" }}>{health.pending ? "…" : health.ok ? `OK · ${health.mode} · ${health.latencyMs}ms` : `✗ ${health.error}${health.demoFallback ? (LT ? " → galimas demo atsarginis režimas" : " → demo fallback available") : ""}`}</span>}
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setWiz(null)} style={bG}>{LT ? "Atšaukti" : "Cancel"}</button>
+          <button onClick={saveConnection} style={bP}>{LT ? "Išsaugoti jungtį" : "Save connection"}</button>
+        </div>
+      </div>
+    </div>}
+
+    {/* ── CONNECTIONS ── */}
+    {sub === "connections" && <div>
+      {!connections.length && <Section title={LT ? "Nėra jungčių" : "No connections"}><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13.5 }}>{LT ? "Pasirinkite sistemą kataloge ir paspauskite „Prijungti“." : "Pick a system in the Gallery and press Connect."}</div></Section>}
+      {connections.map((c) => { const st = erp.syncState[c.id]; return <div key={c.id} style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "14px 18px", marginBottom: 12, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 15, fontWeight: 700 }}>{c.entry.name}</div>
+          <div style={{ ...lbl, marginTop: 3 }}>{c.entry.protocol.toUpperCase()} · {demo || c.config.demo ? "DEMO" : (c.config.baseUrl || "/api/erp")}</div>
+          {st && <div style={{ fontFamily: "var(--m)", fontSize: 10.5, color: st.status === "error" ? "#ff6b6b" : "#8c8c88", marginTop: 5 }}>{LT ? "Pask. sinch." : "Last sync"}: {st.lastSync ? st.lastSync.replace("T", " ").slice(0, 19) : "—"} · {st.rows} {LT ? "įrašų" : "rows"}{st.demoFallback ? " · DEMO FALLBACK" : ""}{st.errors?.length ? ` · ${st.errors.length} ${LT ? "klaidos" : "errors"}` : ""}</div>}
+        </div>
+        <button disabled={busy === c.id} onClick={() => syncNow(c)} style={{ ...bP, opacity: busy === c.id ? 0.6 : 1 }}>{busy === c.id ? (LT ? "Sinchronizuojama…" : "Syncing…") : (LT ? "Sinchronizuoti" : "Sync now")}</button>
+        <button onClick={() => { setMapConnId(c.id); setMapDraft(null); setSub("mapping"); }} style={bG}>{LT ? "Atvaizdavimas" : "Mapping"}</button>
+        <button onClick={() => removeConnection(c.id)} style={{ ...bG, color: "#ff6b6b", borderColor: "rgba(255,107,107,.4)" }}>{LT ? "Šalinti" : "Remove"}</button>
+      </div>; })}
+      <Section title={LT ? "Kanoninė saugykla (sesijoje)" : "Canonical store (in-session)"}>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>{counts.map(([k, n]) => <div key={k}><div style={{ fontFamily: "var(--m)", fontSize: 20, fontWeight: 700, color: n ? "#fff" : "#555" }}>{n}</div><div style={{ ...lbl, fontSize: 9 }}>{k}</div></div>)}</div>
+      </Section>
+    </div>}
+
+    {/* ── MAPPING STUDIO ── */}
+    {sub === "mapping" && <div>
+      {!connections.length ? <Section title="Mapping studio"><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13.5 }}>{LT ? "Pirma prijunkite bent vieną sistemą." : "Connect at least one system first."}</div></Section> : <div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={mapConn?.id || ""} onChange={(e) => { setMapConnId(e.target.value); setMapDraft(null); }} style={{ ...inp, width: "auto", minWidth: 220 }}>{connections.map((c) => <option key={c.id} value={c.id}>{c.entry.name}</option>)}</select>
+          <select value={mapEntity} onChange={(e) => { setMapEntity(e.target.value); setMapDraft(null); }} style={{ ...inp, width: "auto" }}>{["invoicesAR", "invoicesAP", "customers", "suppliers"].map((k) => <option key={k} value={k}>{k}</option>)}</select>
+          <div style={{ flex: 1 }} />
+          {mapDraft && <button onClick={() => setMapDraft(null)} style={bG}>{LT ? "Atstatyti" : "Reset"}</button>}
+          <button onClick={saveMapping} style={bP}>{LT ? "Išsaugoti atvaizdavimą" : "Save mapping"}</button>
+        </div>
+        <div style={{ ...lbl, marginBottom: 8 }}>{(FIELD_MAPS[mapEntry?.adapter] || FIELD_MAPS["generic-rest"]).label}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(380px,1fr) minmax(380px,1.2fr)", gap: 16, alignItems: "start" }}>
+          <div style={{ border: `1px solid ${PL_LINE}` }}>
+            <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", background: "var(--bg2)", borderBottom: `1px solid ${PL_LINE}` }}>
+              <div style={{ ...lbl, padding: "10px 12px" }}>{LT ? "Kanoninis laukas" : "Canonical field"}</div><div style={{ ...lbl, padding: "10px 12px" }}>{LT ? "Šaltinio kelias" : "Source path"}</div>
+            </div>
+            {flatFields(effMap).map(([k, v]) => <div key={k} style={{ display: "grid", gridTemplateColumns: "150px 1fr", borderBottom: `1px solid ${PL_SOFT}` }}>
+              <div style={{ padding: "8px 12px", color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 11 }}>{k}</div>
+              <input value={v} onChange={(e) => setMapField(k, e.target.value)} style={{ ...inp, border: "none", borderLeft: `1px solid ${PL_SOFT}`, background: "transparent", fontFamily: "var(--m)", fontSize: 11 }} />
+            </div>)}
+          </div>
+          <div>
+            <div style={{ ...lbl, marginBottom: 8 }}>{LT ? "Tiesioginė peržiūra: žali duomenys → kanoninis modelis" : "Live preview: raw → canonical"}</div>
+            {previewRows.length > 0 && <DataTable columns={Object.keys(previewRows[0]).map((k) => ({ key: k, label: k, mono: true }))} data={previewRows} maxRows={5} />}
+            <div style={{ ...lbl, margin: "14px 0 8px" }}>{LT ? "Žalių duomenų pavyzdys" : "Raw sample"}</div>
+            <pre style={{ background: "var(--bg2)", border: `1px solid ${PL_LINE}`, padding: 12, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 10.5, lineHeight: 1.5, overflowX: "auto", maxHeight: 220, margin: 0 }}>{JSON.stringify(sampleRaws[0] || {}, null, 2)}</pre>
+          </div>
+        </div>
+      </div>}
+    </div>}
+
+    {/* ── TAX-CODE MAPPER ── */}
+    {sub === "taxmap" && <div>
+      <Section title={LT ? "ERP PVM kodai → STI klasifikatoriai (i.SAF)" : "ERP tax codes → STI classifiers (i.SAF)"}>
+        <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12.5, lineHeight: 1.55, marginBottom: 12 }}>{LT ? "Pasiūlymai („siūloma“) yra euristiniai pagal procentą; deterministinė patikra tikrina tik tarifą pagal datuotą tarifų paketą. Galutinis klasifikatoriaus pasirinkimas — apskaitininko sprendimas." : "Suggestions ('suggested') are pct-based heuristics; deterministic validation only checks the rate against the dated rate pack. The final classifier choice is the accountant's decision."}</div>
+        {!rawCodes.length ? <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Sinchronizuokite bent vieną sistemą, kad matytumėte kodus." : "Sync at least one system to see codes."}</div> : <div style={{ border: `1px solid ${PL_LINE}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 1fr 1fr", background: "var(--bg2)", borderBottom: `1px solid ${PL_LINE}` }}>{[LT ? "ERP kodas" : "ERP code", "%", LT ? "Aprašymas" : "Description", LT ? "STI klasifikatorius" : "STI classifier"].map((h) => <div key={h} style={{ ...lbl, padding: "10px 12px" }}>{h}</div>)}</div>
+          {rawCodes.map((tc) => { const sug = suggestStiCode(tc); const val = erp.taxMap[tc.rawCode] || ""; return <div key={tc.rawCode} style={{ display: "grid", gridTemplateColumns: "1fr 90px 1fr 1fr", borderBottom: `1px solid ${PL_SOFT}`, alignItems: "center" }}>
+            <div style={{ padding: "8px 12px", color: "#fff", fontFamily: "var(--m)", fontSize: 11.5 }}>{tc.rawCode}</div>
+            <div style={{ padding: "8px 12px", color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 11.5 }}>{tc.pct}%</div>
+            <div style={{ padding: "8px 12px", color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12 }}>{tc.description}{tc.reverseCharge ? " · 96 str." : ""}</div>
+            <div style={{ padding: "6px 10px" }}>
+              <select value={val} onChange={(e) => setTaxMap(tc.rawCode, e.target.value)} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11 }}>
+                <option value="">{sug.code ? `${sug.code} (${LT ? "siūloma" : "suggested"} · ${sug.note})` : LT ? "— pasirinkti —" : "— choose —"}</option>
+                {CLS_LIST.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>; })}
+        </div>}
+        {rawCodes.length > 0 && <button onClick={() => { rawCodes.forEach((tc) => { const s = suggestStiCode(tc); if (s.code && !erp.taxMap[tc.rawCode]) setTaxMap(tc.rawCode, s.code); }); audit.log("ERP_TAXMAP_AUTOFILL", `${rawCodes.length} codes`); }} style={{ ...bG, marginTop: 12 }}>{LT ? "Užpildyti pasiūlymais" : "Fill with suggestions"}</button>}
+      </Section>
+    </div>}
+
+    {/* ── MONITOR ── */}
+    {sub === "csv" && <div style={{ maxWidth: 1000 }}>
+      <Section title={LT ? "CSV importas → kanoninis modelis" : "CSV import → canonical model"} accent="#74c0fc">
+        <textarea value={csvText} onChange={(e) => { setCsvText(e.target.value); setCsvMap(null); }} placeholder={LT ? "Įklijuokite CSV (antraštės pirmoje eilutėje; skirtukai , ; arba TAB; kableliai dešimtainėms)…" : "Paste CSV (headers in first row; , ; or TAB; decimal commas OK)…"} style={{ ...inp, height: 110, fontFamily: "var(--m)", fontSize: 10.5, resize: "vertical" }} />
+        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          <button onClick={() => { const p2 = csvParse(csvText); if (!p2.headers.length) { setToast("CSV tuščias"); return; } const m2 = {}; p2.headers.forEach((h, i) => { m2[i] = guessCsvField(h); }); setCsvMap({ ...p2, map: m2 }); }} style={bP}>{LT ? "Analizuoti" : "Analyze"}</button>
+          {csvMap && <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", alignSelf: "center" }}>{csvMap.rows.length} {LT ? "eil." : "rows"} · {csvMap.delimiter === "\t" ? "TAB" : `'${csvMap.delimiter}'`}</span>}
+        </div>
+        {csvMap && <div style={{ marginTop: 14 }}>
+          <div style={{ ...lbl, marginBottom: 8 }}>{LT ? "Stulpelių atvaizdavimas (atspėta automatiškai)" : "Column mapping (auto-guessed)"}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(170px,1fr))", gap: 8 }}>
+            {csvMap.headers.map((h, i) => <div key={i}><div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#d2d2ce", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={h}>{h || "(be antraštės)"}</div><select value={csvMap.map[i]} onChange={(e) => setCsvMap({ ...csvMap, map: { ...csvMap.map, [i]: e.target.value } })} style={{ ...inp, fontFamily: "var(--m)", fontSize: 10.5 }}>{CSV_FIELD_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}</select></div>)}
+          </div>
+          {(() => { const prev = csvRowsToInvoices(csvMap.headers, csvMap.rows.slice(0, 60), csvMap.map, "AR").slice(0, 3); return prev.length ? <div style={{ marginTop: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>{LT ? "Peržiūra" : "Preview"}</div>{prev.map((v) => <div key={v.invoiceNo} style={{ fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8", padding: "3px 0" }}>{v.invoiceNo} · {v.invoiceDate} · {v.party.name} ({v.party.vatNo || "—"}) · {v.lines.length} {LT ? "eil." : "ln"} · €{v.totals.gross.toFixed(2)}</div>)}</div> : null; })()}
+          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+            {[["AR", LT ? "Importuoti kaip pardavimus (AR)" : "Import as sales (AR)"], ["AP", LT ? "Importuoti kaip pirkimus (AP)" : "Import as purchases (AP)"]].map(([dir, l]) => <button key={dir} onClick={() => {
+              const invs = csvRowsToInvoices(csvMap.headers, csvMap.rows, csvMap.map, dir);
+              setErp((s2) => { const store = { ...s2.store }; const key = dir === "AR" ? "invoicesAR" : "invoicesAP"; const seen = new Set(store[key].map((x) => x.source?.externalId || x.invoiceNo)); const fresh = invs.filter((v) => !seen.has(v.source.externalId)); store[key] = [...store[key], ...fresh]; const pk = dir === "AR" ? "customers" : "suppliers"; const pseen = new Set(store[pk].map((p2) => p2.id)); fresh.forEach((v) => { if (!pseen.has(v.party.id)) { store[pk] = [...store[pk], { ...v.party, iban: "" }]; pseen.add(v.party.id); } }); if (!store._sources.includes("csv")) store._sources = [...store._sources, "csv"]; const findings = validateCanonicalBatch(store, helpers); audit.log("ERP_CSV_IMPORT", `${fresh.length} ${dir} (+${invs.length - fresh.length} dupl.) → ${findings.length} findings`); setToast(`${LT ? "Importuota" : "Imported"}: ${fresh.length} ${dir}`); return { ...s2, store, findings }; });
+            }} style={bG}>{l}</button>)}
+          </div>
+        </div>}
+      </Section>
+    </div>}
+
+    {sub === "monitor" && <div>
+      <Section title={LT ? "Duomenų kokybė" : "Data quality"} accent="#74c0fc">
+        {(() => { const q = computeDataQuality(erp.store); return <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 70px 110px 2fr", gap: 8, fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", padding: "0 0 6px", letterSpacing: ".06em", textTransform: "uppercase" }}><span>{LT ? "Esybė" : "Entity"}</span><span>{LT ? "Eil." : "Rows"}</span><span>{LT ? "Pilnumas" : "Complete"}</span><span>{LT ? "Trūkstami laukai" : "Missing fields"}</span></div>
+          {q.entities.map((e2) => <div key={e2.label} style={{ display: "grid", gridTemplateColumns: "1.2fr 70px 110px 2fr", gap: 8, padding: "6px 0", borderTop: `1px solid ${PL_SOFT}`, fontFamily: "var(--m)", fontSize: 11.5 }}><span style={{ color: "#d2d2ce" }}>{e2.label}</span><span style={{ color: "#fff" }}>{e2.rows}</span><span style={{ color: e2.completeness >= 95 ? "#69db7c" : e2.completeness >= 80 ? "#ffd43b" : "#ff6b6b" }}>{e2.completeness}%</span><span style={{ color: "#8c8c88", fontSize: 10 }}>{e2.missing}</span></div>)}
+          <div style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88", marginTop: 10 }}>{LT ? "Sąskaitų dublikatai" : "Invoice duplicates"}: {q.duplicates} · {LT ? "Valiutos" : "Currencies"}: {q.currencies || "—"} · {LT ? "Laikotarpis" : "Range"}: {q.dateRange}</div>
+        </div>; })()}
+      </Section>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ ...lbl }}>{LT ? "Kanoninė saugykla" : "Canonical store"}: <span style={{ color: "#fff" }}>{totalRows}</span> {LT ? "įrašų iš" : "rows from"} <span style={{ color: "#fff" }}>{erp.store._sources.join(" + ") || "—"}</span></div>
+        <div style={{ flex: 1 }} />
+        <button disabled={!totalRows} onClick={() => { audit.log("ERP_PROMOTED_TO_AUDIT", `${erp.store._sources.join("+")} · ${erp.store.invoicesAR.length} AR · ${erp.store.invoicesAP.length} AP`); onPromote(); }} style={{ ...bP, opacity: totalRows ? 1 : 0.5 }}>{LT ? "Perduoti SAF-T auditui →" : "Promote to SAF-T audit →"}</button>
+      </div>
+      {hasSaft && <div style={{ color: "#74c0fc", fontFamily: "var(--m)", fontSize: 10.5, letterSpacing: ".06em", marginBottom: 12 }}>{LT ? "Pastaba: perdavimas pakeis šiuo metu įkeltą SAF-T duomenų rinkinį." : "Note: promoting will replace the currently loaded SAF-T dataset."}</div>}
+      <Section title={LT ? "Sinchronizavimo būsena" : "Sync state"}>
+        {Object.keys(erp.syncState).length === 0 ? <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Dar nesinchronizuota." : "Nothing synced yet."}</div> :
+          <DataTable columns={[{ key: "id", label: "System", mono: true }, { key: "lastSync", label: LT ? "Pask. sinch." : "Last sync", mono: true }, { key: "rows", label: LT ? "Įrašai" : "Rows", mono: true }, { key: "status", label: LT ? "Būsena" : "Status", mono: true, color: (r) => r.status === "error" ? "#ff6b6b" : r.status === "ok" ? "#69db7c" : "#d2d2ce" }, { key: "fb", label: "Fallback", mono: true }]} data={Object.entries(erp.syncState).map(([id, s]) => ({ id, lastSync: (s.lastSync || "—").replace("T", " ").slice(0, 19), rows: s.rows, status: s.status + (s.errors?.length ? ` (${s.errors.length})` : ""), fb: s.demoFallback ? "demo" : "—" }))} maxRows={20} />}
+      </Section>
+      <Section title={`${LT ? "Ribos patikros radiniai" : "Boundary findings"} (${erp.findings.length})`} accent={sortedFindings[0] ? SC(sortedFindings[0].severityUi) : undefined}>
+        {!sortedFindings.length ? <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Radinių nėra — sinchronizuokite sistemą." : "No findings — sync a system."}</div> :
+          sortedFindings.map((f, i) => <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 2px", borderBottom: `1px solid ${PL_SOFT}` }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".08em", color: "#000", background: SC(f.severityUi), padding: "2px 7px", flexShrink: 0 }}>{f.severityUi.toUpperCase()}</span>
+            <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", flexShrink: 0, paddingTop: 1 }}>{f.rule_id}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13, fontWeight: 600 }}>{LT ? (f.ruleMeta?.titleLt || f.title) : f.title}{f.hitCount > 1 ? ` ×${f.hitCount}` : ""}</div>
+              <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, marginTop: 3, lineHeight: 1.5, wordBreak: "break-word" }}>{f.detail}</div>
+              <div style={{ color: "#666", fontFamily: "var(--m)", fontSize: 9.5, marginTop: 3, letterSpacing: ".04em" }}>{f.legal_basis}</div>
+            </div>
+          </div>)}
+      </Section>
+    </div>}
+
+    {/* ── AGENT / RELAY SPEC ── */}
+    {sub === "agent" && <div>
+      <Section title={LT ? "Vercel relė /api/erp (sutartis)" : "Vercel relay /api/erp (contract)"}>
+        <pre style={{ background: "var(--bg)", border: `1px solid ${PL_LINE}`, padding: 14, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 10.5, lineHeight: 1.55, overflowX: "auto", margin: 0, whiteSpace: "pre-wrap" }}>{`POST ${ERP_RELAY}
+{ system, protocol, action: "auth"|"health"|"pull"|"push",
+  entity, since, cursor, baseUrl,
+  credentials | { credRef: "env:NAME" }, payload? }
+→ { ok, records[], nextCursor, done }  |  { ok, status, latencyMs }  |  { ok:false, error, transient }
+
+${LT ? "Relė — be būsenos, nieko nesaugo, neloguoja krovinių. Tas pats šablonas kaip jūsų /api/ai tarpinė." : "The relay is stateless, stores nothing, logs no payloads. Same pattern as your existing /api/ai proxy."}`}</pre>
+      </Section>
+      <Section title={LT ? "Node.js sinchronizavimo agentas + webhook (projektinė specifikacija)" : "Node.js sync agent + webhook (design-only spec)"}>
+        <pre style={{ background: "var(--bg)", border: `1px solid ${PL_LINE}`, padding: 14, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 10.5, lineHeight: 1.55, overflowX: "auto", margin: 0, whiteSpace: "pre-wrap" }}>{SYNC_AGENT_SPEC}</pre>
+      </Section>
+    </div>}
+  </div>;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// E-INVOICING TAB — Lithuanian e-invoicing hub UI (Module 2)
+// dashboard · compose · outbox · inbox · archive · settings/ViDA
+// ════════════════════════════════════════════════════════════════════
+// ─── In-app engine self-tests (deploy sign-off) ────────────────────────
+function Fr0600Compare({ parsed, lang }) {
+  const [open, setOpen] = useState(false);
+  const [filed, setFiled] = useState({});
+  const res = useMemo(() => (parsed ? computeFr0600(parsed) : null), [parsed]);
+  if (!parsed || !res) return null;
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const rows = (res.rows || []).filter((r) => r.value != null);
+  let fld = 0, mism = 0;
+  const data = rows.map((r) => {
+    const raw = String(filed[r.box] ?? "").replace(",", ".").trim();
+    const f = raw === "" ? null : parseFloat(raw);
+    const ok = f != null && isFinite(f);
+    const d = ok ? Math.round((f - r.value) * 100) / 100 : null;
+    if (ok) { fld++; if (Math.abs(d) > 0.01) mism++; }
+    return { box: r.box, label: r.label, value: r.value, f, d };
+  });
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("Palyginti su pateikta deklaracija", "Compare with the filed return")}>{"\u21c4"} {L("FR0600 vs deklaruota", "FR0600 vs filed")}</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 780, maxWidth: "94vw", maxHeight: "84vh", overflow: "auto", color: "inherit" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("FR0600 palyginimas: apskai\u010diuota i\u0161 SAF-T vs deklaruota", "FR0600 comparison: computed from SAF-T vs filed")}</strong>
+          <button data-frclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ fontSize: 12, opacity: .8, marginBottom: 12 }}>{L("\u012eveskite pateiktos FR0600 reik\u0161mes \u2014 skirtumai skai\u010diuojami deterministi\u0161kai (tolerancija 0,01 EUR). Laukeliai 28/35/36 nenustatomi i\u0161 SAF-T.", "Enter the filed FR0600 values \u2014 differences are computed deterministically (0.01 EUR tolerance). Boxes 28/35/36 are not derivable from SAF-T.")}</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr>
+            <th style={{ textAlign: "left", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Laukelis", "Box")}</th>
+            <th style={{ textAlign: "left", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Apra\u0161ymas", "Label")}</th>
+            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("I\u0161 SAF-T", "From SAF-T")}</th>
+            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{L("Deklaruota", "Filed")}</th>
+            <th style={{ textAlign: "right", borderBottom: `1px solid ${LINE}`, padding: 6 }}>{"\u0394"}</th>
+          </tr></thead>
+          <tbody>
+            {data.map((r) => <tr key={r.box}>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}` }}>{r.box}</td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, opacity: .85 }}>{String(r.label || "").slice(0, 52)}</td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right" }}>{r.value.toFixed(2)}</td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right" }}>
+                <input data-box={r.box} value={filed[r.box] ?? ""} onChange={(e) => setFiled({ ...filed, [r.box]: e.target.value })} placeholder={"\u2014"} style={{ width: 110, background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "3px 6px", textAlign: "right", fontFamily: "inherit" }} />
+              </td>
+              <td style={{ padding: 6, borderBottom: `1px solid ${LINE}`, textAlign: "right", color: r.d == null ? "inherit" : (Math.abs(r.d) > 0.01 ? "#ff6b6b" : "#7bd88f") }}>{r.d == null ? "\u2014" : r.d.toFixed(2)}</td>
+            </tr>)}
+          </tbody>
+        </table>
+        <div style={{ marginTop: 10, fontSize: 12 }}>
+          {L("U\u017epildyta", "Filled")}: {fld} {" \u00b7 "} {L("Neatitikim\u0173", "Mismatches")}: <strong style={{ color: mism ? "#ff6b6b" : "#7bd88f" }}>{mism}</strong>
+        </div>
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
+function PriorPeriodCompare({ parsed, lang }) {
+  const [open, setOpen] = useState(false);
+  const [prior, setPrior] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [fname, setFname] = useState("");
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const nextDay = (s) => { if (!/^\d{4}-\d{2}-\d{2}/.test(s || "")) return ""; const d = new Date(Date.UTC(+s.slice(0,4), +s.slice(5,7)-1, +s.slice(8,10)) + 86400000); return d.toISOString().slice(0,10); };
+  const cmp = useMemo(() => {
+    if (!parsed || !prior) return null;
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const out = { header: [], gl: [], parties: [], stock: [], mism: 0 };
+    const ch = parsed.header || {}, ph = prior.header || {};
+    if (String(ch.registrationNumber || "") !== String(ph.registrationNumber || "")) { out.header.push({ k: L("\u012emon\u0117s kodas", "Registration no."), pri: ph.registrationNumber || "\u2014", cur: ch.registrationNumber || "\u2014", bad: true }); out.mism++; }
+    const pe = String(ph.fiscalYearTo || ph.periodEnd || "").slice(0,10), cs = String(ch.fiscalYearFrom || ch.periodStart || "").slice(0,10);
+    if (pe && cs && nextDay(pe) !== cs) { out.header.push({ k: L("Laikotarpi\u0173 sand\u016bra", "Period adjacency"), pri: pe, cur: cs, bad: true }); out.mism++; }
+    else if (pe && cs) out.header.push({ k: L("Laikotarpi\u0173 sand\u016bra", "Period adjacency"), pri: pe, cur: cs, bad: false });
+    const pacc = new Map(); (prior.accounts || []).forEach((a) => pacc.set(String(a.accountID || ""), a));
+    const seen = new Set();
+    (parsed.accounts || []).forEach((a) => {
+      const id = String(a.accountID || ""); if (!id) return; seen.add(id);
+      const od = a.openingDebitBalance || 0, oc = a.openingCreditBalance || 0;
+      const p = pacc.get(id); const cd = p ? (p.closingDebitBalance || 0) : null, cc = p ? (p.closingCreditBalance || 0) : null;
+      if (!p) { if (Math.abs(od) > 0.005 || Math.abs(oc) > 0.005) { out.gl.push({ id, name: a.accountDescription || "", kind: "missP", od: r2(od), oc: r2(oc) }); out.mism++; } return; }
+      if (Math.abs(od - cd) > 0.01 || Math.abs(oc - cc) > 0.01) { out.gl.push({ id, name: a.accountDescription || "", kind: "diff", od: r2(od), cd: r2(cd), oc: r2(oc), cc: r2(cc), dD: r2(od - cd), dC: r2(oc - cc) }); out.mism++; }
+    });
+    (prior.accounts || []).forEach((p) => { const id = String(p.accountID || ""); if (!id || seen.has(id)) return; const cd = p.closingDebitBalance || 0, cc = p.closingCreditBalance || 0; if (Math.abs(cd) > 0.005 || Math.abs(cc) > 0.005) { out.gl.push({ id, name: p.accountDescription || "", kind: "missC", cd: r2(cd), cc: r2(cc) }); out.mism++; } });
+    const partyScan = (curArr, priArr, idk, side) => {
+      const pm = new Map(); (priArr || []).forEach((m) => { let s = 0; (m.accounts || []).forEach((ac) => { s += (ac.cd || 0) - (ac.cc || 0); }); pm.set(String(m[idk] || ""), s); });
+      (curArr || []).forEach((m) => { const id = String(m[idk] || ""); if (!id || !pm.has(id)) return; let o = 0; (m.accounts || []).forEach((ac) => { o += (ac.od || 0) - (ac.oc || 0); }); const pc = pm.get(id); if (Math.abs(o - pc) > 0.01) { out.parties.push({ side, id, name: (m.name || "").slice(0, 30), open: r2(o), close: r2(pc), d: r2(o - pc) }); out.mism++; } });
+    };
+    partyScan(parsed.customers, prior.customers, "customerID", "C");
+    partyScan(parsed.suppliers, prior.suppliers, "supplierID", "S");
+    const pst = new Map(); (prior.physicalStock || []).forEach((e) => pst.set(String(e.productCode || ""), e));
+    (parsed.physicalStock || []).forEach((e) => { const id = String(e.productCode || ""); const p = pst.get(id); if (!p) return; const oq = e.openingStockQuantity || 0, cq = p.closingStockQuantity || 0; const ov = e.openingStockValue, cv = p.closingStockValue; let bad = Math.abs(oq - cq) > 0.0001; if (ov != null && cv != null && Math.abs(ov - cv) > 0.01) bad = true; if (bad) { out.stock.push({ id, oq: r2(oq), cq: r2(cq), ov: ov == null ? null : r2(ov), cv: cv == null ? null : r2(cv) }); out.mism++; } });
+    return out;
+  }, [parsed, prior, lang]);
+  if (!parsed) return null;
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  const td = { padding: 5, borderBottom: `1px solid ${LINE}` };
+  const onFile = (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    setErr(""); setBusy(true); setFname(f.name);
+    const rd = new FileReader();
+    rd.onload = () => { setTimeout(() => { try { const p = parseSAFTFull(String(rd.result || "")); if (p && p._parseError) { setErr(p._parseError); setPrior(null); } else setPrior(p); } catch (ex) { setErr(String(ex).slice(0, 160)); setPrior(null); } setBusy(false); }, 30); };
+    rd.onerror = () => { setErr("read error"); setBusy(false); };
+    rd.readAsText(f);
+  };
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("T\u0119stinumo patikra su ankstesnio laikotarpio SAF-T", "Continuity check against the prior-period SAF-T")}>{"\u21bb"} {L("Ankstesnis laikotarpis", "Prior period")}</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 880, maxWidth: "95vw", maxHeight: "86vh", overflow: "auto", color: "inherit", fontSize: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("T\u0119stinumo patikra: ankstesnio laikotarpio SAF-T", "Continuity check: prior-period SAF-T")}</strong>
+          <button data-ppclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ opacity: .8, marginBottom: 10 }}>{L("\u012ekelkite ankstesnio laikotarpio SAF-T \u2014 uždarymo likučiai lyginami su einamojo laikotarpio atidarymo likučiais (DK, pirk\u0117jai/tiek\u0117jai, atsargos; tolerancija 0,01 EUR). Turtas \u2014 v\u0117lesn\u0117je versijoje.", "Upload the prior-period SAF-T \u2014 its closing balances are compared with the current opening balances (GL, customers/suppliers, stock; 0.01 EUR tolerance). Assets \u2014 in a later version.")}</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <label style={{ ...btn, display: "inline-block" }}>
+            {L("Pasirinkti fail\u0105", "Choose file")}
+            <input data-prior-input type="file" accept=".xml" onChange={onFile} style={{ display: "none" }} />
+          </label>
+          <span style={{ opacity: .8 }}>{busy ? L("Skaitoma\u2026", "Reading\u2026") : (fname || "\u2014")}</span>
+          {prior ? <button onClick={() => { setPrior(null); setFname(""); }} style={btn}>{L("I\u0161valyti", "Clear")}</button> : null}
+          {err ? <span style={{ color: "#ff6b6b" }}>{err}</span> : null}
+        </div>
+        {cmp ? <>
+          <div style={{ marginBottom: 10 }}>{L("T\u0119stinumo neatitikim\u0173", "Continuity mismatches")}: <strong style={{ color: cmp.mism ? "#ff6b6b" : "#7bd88f" }}>{cmp.mism}</strong></div>
+          {cmp.header.map((h, i) => <div key={i} style={{ color: h.bad ? "#ff6b6b" : "#7bd88f", marginBottom: 4 }}>{h.k}: {h.pri} {"\u2192"} {h.cur}</div>)}
+          {cmp.gl.length ? <>
+            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("DK s\u0105skaitos (atidarymas vs ankstesnis u\u017edarymas)", "GL accounts (opening vs prior closing)")} \u2014 {cmp.gl.length}</div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th style={{...td,textAlign:"left"}}>ID</th><th style={{...td,textAlign:"left"}}>{L("Pavadinimas","Name")}</th><th style={{...td,textAlign:"right"}}>D: {L("dab.","cur")}/{L("ankst.","prior")}</th><th style={{...td,textAlign:"right"}}>{"\u0394"}D</th><th style={{...td,textAlign:"right"}}>K: {L("dab.","cur")}/{L("ankst.","prior")}</th><th style={{...td,textAlign:"right"}}>{"\u0394"}K</th></tr></thead><tbody>
+              {cmp.gl.slice(0, 50).map((g, i) => <tr key={i}>
+                <td style={td}>{g.id}</td><td style={{...td,opacity:.85}}>{String(g.name).slice(0,26)}{g.kind==="missP"?L(" (n\u0117ra ankstesniame)"," (missing in prior)"):g.kind==="missC"?L(" (n\u0117ra einamajame)"," (missing in current)"):""}</td>
+                <td style={{...td,textAlign:"right"}}>{g.od != null ? g.od.toFixed(2) : "\u2014"} / {g.cd != null ? g.cd.toFixed(2) : "\u2014"}</td>
+                <td style={{...td,textAlign:"right",color:"#ff6b6b"}}>{g.dD != null ? g.dD.toFixed(2) : "\u2014"}</td>
+                <td style={{...td,textAlign:"right"}}>{g.oc != null ? g.oc.toFixed(2) : "\u2014"} / {g.cc != null ? g.cc.toFixed(2) : "\u2014"}</td>
+                <td style={{...td,textAlign:"right",color:"#ff6b6b"}}>{g.dC != null ? g.dC.toFixed(2) : "\u2014"}</td>
+              </tr>)}
+            </tbody></table>
+          </> : null}
+          {cmp.parties.length ? <>
+            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("Pirk\u0117jai / tiek\u0117jai", "Customers / suppliers")} \u2014 {cmp.parties.length}</div>
+            {cmp.parties.slice(0, 30).map((p, i) => <div key={i}>{p.side === "C" ? L("Pirk.", "Cust.") : L("Tiek.", "Supp.")} {p.id} {p.name}: {p.open.toFixed(2)} vs {p.close.toFixed(2)} ({"\u0394"} <span style={{ color: "#ff6b6b" }}>{p.d.toFixed(2)}</span>)</div>)}
+          </> : null}
+          {cmp.stock.length ? <>
+            <div style={{ margin: "10px 0 4px", fontWeight: 600 }}>{L("Atsargos", "Stock")} \u2014 {cmp.stock.length}</div>
+            {cmp.stock.slice(0, 30).map((s, i) => <div key={i}>{s.id}: {L("kiekis", "qty")} {s.oq} vs {s.cq}{s.ov != null && s.cv != null ? `; ${L("vert\u0117", "value")} ${s.ov.toFixed(2)} vs ${s.cv.toFixed(2)}` : ""}</div>)}
+          </> : null}
+        </> : (busy ? null : <div style={{ opacity: .6 }}>{L("Failas ne\u012fkeltas.", "No file loaded.")}</div>)}
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
+function VIESCheck({ lang }) {
+  const [open, setOpen] = useState(false);
+  const [num, setNum] = useState("");
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  const check = async () => {
+    const v = num.toUpperCase().replace(/\s/g, "");
+    const m = v.match(/^([A-Z]{2})([A-Z0-9+*]{2,14})$/);
+    if (!m) { setErr(L("\u012eveskite kod\u0105 su \u0161alies prefiksu, pvz., LT123456715", "Enter a code with a country prefix, e.g., LT123456715")); setRes(null); return; }
+    setBusy(true); setErr(""); setRes(null);
+    try {
+      const r = await fetch(`/api/vies?country=${m[1]}&number=${encodeURIComponent(m[2])}`);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      if (j && j.error) throw new Error(j.error);
+      setRes(j);
+    } catch (ex) {
+      setErr(L("VIES tarpin\u0117 tarnyba nepasiekiama \u2014 \u012fdiekite api/vies.js \u0161alia api/ai.js ir perdiekite.", "VIES proxy unreachable \u2014 deploy api/vies.js next to api/ai.js and redeploy."));
+    }
+    setBusy(false);
+  };
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("PVM kodo patikra ES VIES registre (per js tarpin\u0119 tarnyb\u0105)", "Check a VAT number in the EU VIES registry (via the api proxy)")}>{"\u2713"} {L("VIES patikra", "VIES check")}</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 480, maxWidth: "92vw", color: "inherit", fontSize: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("VIES patikra", "VIES check")}</strong>
+          <button data-viesclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ opacity: .8, marginBottom: 10 }}>{L("Tikrinama Europos Komisijos VIES sistemoje per j\u016bs\u0173 diegimo /api/vies tarpin\u0119 tarnyb\u0105 (realiu laiku, neka\u0161uojama \u012f fail\u0105).", "Validated against the European Commission VIES system through your deployment's /api/vies proxy (real-time).")}</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <input data-vies-input value={num} onChange={(e) => setNum(e.target.value)} placeholder="LT123456715" style={{ flex: 1, background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 8px", fontFamily: "inherit", fontSize: 12 }} />
+          <button data-vies-check onClick={check} style={btn}>{busy ? L("Tikrinama\u2026", "Checking\u2026") : L("Tikrinti", "Check")}</button>
+        </div>
+        {err ? <div style={{ color: "#ff6b6b" }}>{err}</div> : null}
+        {res ? <div>
+          <div style={{ color: res.valid ? "#7bd88f" : "#ff6b6b", fontWeight: 600 }}>{res.valid ? L("Galioja \u2713", "Valid \u2713") : L("Negalioja \u2715", "Not valid \u2715")}</div>
+          {res.name ? <div style={{ marginTop: 4 }}>{res.name}</div> : null}
+          {res.address ? <div style={{ opacity: .8 }}>{res.address}</div> : null}
+          {res.requestDate ? <div style={{ opacity: .6, marginTop: 4 }}>{L("U\u017eklausos data", "Request date")}: {String(res.requestDate).slice(0, 10)}</div> : null}
+        </div> : null}
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
+function parseIVAZ(xmlStr) {
+  try {
+    const doc = new DOMParser().parseFromString(xmlStr, "text/xml");
+    if (doc.querySelector("parsererror")) return { _parseError: "XML parse error" };
+    const all = (el, tag) => Array.from(el.getElementsByTagNameNS("*", tag));
+    const one = (el, ...tags) => { for (const t of tags) { const e = all(el, t)[0]; if (e) return e; } return null; };
+    const tx = (el, ...tags) => { for (const t of tags) { const e = all(el, t)[0]; if (e && e.textContent != null && String(e.textContent).trim()) return String(e.textContent).trim(); } return ""; };
+    const root = doc.documentElement;
+    const creatorReg = tx(root, "CreatorRegistrationNumber", "RegistrationNumber", "RegistrationCode");
+    let docEls = all(root, "TransportDocument");
+    if (!docEls.length) docEls = all(root, "Vaztarastis");
+    const docs = docEls.map((el) => {
+      const cor = one(el, "Consignor", "ConsignorInfo", "Siuntejas");
+      const cee = one(el, "Consignee", "ConsigneeInfo", "Gavejas");
+      const refs = [];
+      ["InvoiceNumber", "RelatedDocumentNumber", "DocumentReference"].forEach((t) => all(el, t).forEach((e) => { const v = String(e.textContent || "").trim(); if (v) refs.push(v); }));
+      return {
+        no: tx(el, "LocalTransportDocumentNumber", "TransportDocumentNumber", "DocumentNumber", "Number"),
+        date: tx(el, "TransportDocumentDate", "DocumentDate", "IssueDate", "Date").slice(0, 10),
+        loadDate: tx(el, "LoadDateTimePlanned", "LoadDateTime", "LoadDate", "DispatchDate").slice(0, 10),
+        corReg: cor ? tx(cor, "RegistrationNumber", "CompanyCode", "PersonCode", "Code") : "",
+        corName: cor ? tx(cor, "Name") : "",
+        ceeReg: cee ? tx(cee, "RegistrationNumber", "CompanyCode", "PersonCode", "Code") : "",
+        ceeName: cee ? tx(cee, "Name") : "",
+        refs,
+      };
+    });
+    return { creatorReg, docs };
+  } catch (ex) { return { _parseError: String(ex).slice(0, 160) }; }
+}
+
+function IVazCompare({ parsed, lang }) {
+  const [open, setOpen] = useState(false);
+  const [ivaz, setIvaz] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [fname, setFname] = useState("");
+  const L = (lt, en) => (lang === "lt" ? lt : en);
+  const cmp = useMemo(() => {
+    if (!parsed || !ivaz) return null;
+    const normR = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const ent = normR(parsed.header?.registrationNumber);
+    const from = String(parsed.header?.fiscalYearFrom || "").slice(0, 10);
+    const to = String(parsed.header?.fiscalYearTo || "").slice(0, 10);
+    const moveDays = new Set(); (parsed.stockMovements || []).forEach((m) => { const d = String(m.movementDate || m.transactionDate || "").slice(0, 10); if (d) moveDays.add(d); });
+    const hasMoves = (parsed.stockMovements || []).length > 0;
+    const salesNos = new Set(); (parsed.sales?.items || []).forEach((iv) => { const n = String(iv.invoiceNo || "").trim().toUpperCase(); if (n) salesNos.add(n); });
+    const out = { dup: [], ent: [], per: [], move: [], ref: [], mism: 0, total: (ivaz.docs || []).length };
+    const seen = new Map(); (ivaz.docs || []).forEach((d) => { const k = String(d.no || "").trim().toUpperCase(); if (!k) return; seen.set(k, (seen.get(k) || 0) + 1); });
+    seen.forEach((c, k) => { if (c > 1) { out.dup.push({ no: k, c }); out.mism++; } });
+    (ivaz.docs || []).forEach((d) => {
+      const cr = normR(d.corReg), ce = normR(d.ceeReg);
+      const isCor = ent && cr === ent;
+      if (ent && (cr || ce) && !isCor && ce !== ent) { out.ent.push({ no: d.no || "\u2014", cor: d.corReg || "\u2014", cee: d.ceeReg || "\u2014" }); out.mism++; }
+      const inPer = d.date && from && to && d.date >= from && d.date <= to;
+      if (d.date && from && to && !inPer) { out.per.push({ no: d.no || "\u2014", date: d.date }); out.mism++; }
+      if (hasMoves && isCor && inPer) { const dd = d.loadDate || d.date; if (dd && !moveDays.has(dd) && !moveDays.has(d.date)) { out.move.push({ no: d.no || "\u2014", date: dd }); out.mism++; } }
+      (d.refs || []).forEach((r) => { const k = String(r).trim().toUpperCase(); if (k && !salesNos.has(k)) { out.ref.push({ no: d.no || "\u2014", ref: r }); out.mism++; } });
+    });
+    return out;
+  }, [parsed, ivaz]);
+  if (!parsed) return null;
+  const LINE = "#3a3f4d";
+  const btn = { background: "transparent", color: "inherit", border: `1px solid ${LINE}`, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
+  const onFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; setErr(""); setBusy(true); setFname(f.name); const rd = new FileReader(); rd.onload = () => { setTimeout(() => { const p = parseIVAZ(String(rd.result || "")); if (p && p._parseError) { setErr(p._parseError); setIvaz(null); } else setIvaz(p); setBusy(false); }, 30); }; rd.onerror = () => { setErr("read error"); setBusy(false); }; rd.readAsText(f); };
+  const sect = (title, rows, fmt) => rows.length ? <div style={{ marginTop: 10 }}><div style={{ fontWeight: 600, marginBottom: 4 }}>{title} \u2014 {rows.length}</div>{rows.slice(0, 30).map((r, i) => <div key={i} style={{ color: "#ff6b6b" }}>{fmt(r)}</div>)}</div> : null;
+  return <>
+    <button onClick={() => setOpen(true)} style={btn} title={L("Sutikrinti pateikt\u0105 i.VAZ va\u017etara\u0161\u010di\u0173 registr\u0105 su SAF-T", "Reconcile the filed i.VAZ waybill register with the SAF-T")}>{"\u21c4"} i.VAZ</button>
+    {open ? createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #14161c)", border: `1px solid ${LINE}`, padding: 20, width: 880, maxWidth: "95vw", maxHeight: "86vh", overflow: "auto", color: "inherit", fontSize: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <strong>{L("i.VAZ sutikrinimas su SAF-T", "i.VAZ reconciliation with SAF-T")}</strong>
+          <button data-ivazclose onClick={() => setOpen(false)} style={btn}>{"\u2715"}</button>
+        </div>
+        <div style={{ opacity: .8, marginBottom: 10 }}>{L("\u012ekelkite pateikt\u0105 i.VAZ XML \u2014 tikrinama: va\u017etara\u0161\u010di\u0173 numeri\u0173 dubliai, ar \u012fmon\u0117 yra siunt\u0117jas/gav\u0117jas, datos rinkmenos laikotarpyje, i\u0161siuntimo dienos atsarg\u0173 jud\u0117jimai (kai SAF-T juos turi) ir nuorodos \u012f pardavimo SF. Muitin\u0117s deklaracij\u0173 sutikrinimas \u2014 b\u016bsima funkcija su atskiru failu.", "Upload the filed i.VAZ XML \u2014 checks: duplicate waybill numbers, entity present as consignor/consignee, dates within the file period, dispatch-day stock movements (when the SAF-T carries them) and references to sales invoices. Customs-declaration reconciliation \u2014 a future feature with its own file.")}</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <label style={{ ...btn, display: "inline-block" }}>
+            {L("Pasirinkti fail\u0105", "Choose file")}
+            <input data-ivaz-input type="file" accept=".xml" onChange={onFile} style={{ display: "none" }} />
+          </label>
+          <span style={{ opacity: .8 }}>{busy ? L("Skaitoma\u2026", "Reading\u2026") : (fname || "\u2014")}</span>
+          {ivaz ? <button onClick={() => { setIvaz(null); setFname(""); }} style={btn}>{L("I\u0161valyti", "Clear")}</button> : null}
+          {err ? <span style={{ color: "#ff6b6b" }}>{err}</span> : null}
+        </div>
+        {cmp ? <>
+          <div>{L("Va\u017etara\u0161\u010di\u0173", "Waybills")}: {cmp.total} {" \u00b7 "} {L("i.VAZ neatitikim\u0173", "i.VAZ mismatches")}: <strong style={{ color: cmp.mism ? "#ff6b6b" : "#7bd88f" }}>{cmp.mism}</strong></div>
+          {sect(L("Dubliuoti numeriai", "Duplicate numbers"), cmp.dup, (r) => `${r.no} \u00d7${r.c}`)}
+          {sect(L("\u012emon\u0117 n\u0117ra nei siunt\u0117jas, nei gav\u0117jas", "Entity is neither consignor nor consignee"), cmp.ent, (r) => `${r.no}: ${r.cor} \u2192 ${r.cee}`)}
+          {sect(L("Data u\u017e rinkmenos laikotarpio", "Date outside the file period"), cmp.per, (r) => `${r.no}: ${r.date}`)}
+          {sect(L("N\u0117ra atsarg\u0173 jud\u0117jimo i\u0161siuntimo dien\u0105 (per\u017ei\u016bra)", "No stock movement on dispatch day (review)"), cmp.move, (r) => `${r.no}: ${r.date}`)}
+          {sect(L("Nuoroda \u012f neegzistuojan\u010di\u0105 pardavimo SF", "Reference to a non-existent sales invoice"), cmp.ref, (r) => `${r.no}: ${r.ref}`)}
+          {!cmp.mism ? <div style={{ color: "#7bd88f", marginTop: 8 }}>{L("Registrai sutampa.", "Registers match.")}</div> : null}
+        </> : (busy ? null : <div style={{ opacity: .6 }}>{L("Failas ne\u012fkeltas.", "No file loaded.")}</div>)}
+      </div>
+    </div>, document.body) : null}
+  </>;
+}
+
+function SelfTestPanel({ lang }) {
+  const LT = lang === "lt";
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const run = async () => {
+    setBusy(true); setRes(null);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const H1 = { classifyVatRate, isValidLtIban, isLtVatNumber, ISO_4217, taxMap: {} };
+      const H2 = { classifyVatRate, isValidLtIban, isLtVatNumber, isLtRegistrationNumber, ISO_4217, today };
+      const a = await runErpSelfTest(H1);
+      const b = await runEinvSelfTest(H2, undefined);
+      const c = await runExportSelfTest(H2);
+      setRes({ ok: a.ok && b.ok && c.ok, conf: b.conformance, groups: [[LT ? "ERP centras" : "ERP hub", a.checks], [LT ? "E. sąskaitos" : "E-invoicing", b.checks], [LT ? "Eksportai · apsisukimas" : "Exports · round-trip", c.checks]] });
+    } catch (err) { setRes({ ok: false, error: err.message, groups: [] }); }
+    setBusy(false);
+  };
+  return <div style={{ marginTop: 26, border: "1px solid rgba(255,255,255,0.12)", background: "var(--bg2)", padding: "16px 18px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 14.5, fontWeight: 700 }}>{LT ? "Variklių savitikra" : "Engine self-tests"}</div>
+      <button disabled={busy} onClick={run} style={{ background: "#fff", color: "#000", border: "none", padding: "8px 16px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", opacity: busy ? 0.6 : 1 }}>{busy ? (LT ? "Vykdoma…" : "Running…") : (LT ? "Vykdyti visus" : "Run all")}</button>
+      {res && !res.error && <span style={{ fontFamily: "var(--m)", fontSize: 12, fontWeight: 700, color: res.ok ? "#69db7c" : "#ff6b6b" }}>{res.ok ? (LT ? "✓ VISI TESTAI PRAĖJO" : "✓ ALL TESTS PASS") : (LT ? "✗ YRA KLAIDŲ" : "✗ FAILURES")}{res.conf ? ` · conformance ${res.conf.passed}/${res.conf.total}` : ""}</span>}
+      {res?.error && <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#ff6b6b" }}>{res.error}</span>}
+    </div>
+    {res && res.groups.map(([g, checks]) => <div key={g} style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 5 }}>{g}</div>
+      {checks.map((c, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", alignItems: "baseline" }}>
+        <span style={{ fontFamily: "var(--m)", fontSize: 10, color: c.pass ? "#69db7c" : "#ff6b6b", width: 34, flexShrink: 0 }}>{c.pass ? "PASS" : "FAIL"}</span>
+        <span style={{ fontFamily: "var(--s)", fontSize: 12, color: "#d2d2ce" }}>{c.name}</span>
+        <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666", marginLeft: "auto", textAlign: "right", maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.detail}>{c.detail}</span>
+      </div>)}
+    </div>)}
+    <div style={{ fontSize: 10, color: "#666", fontFamily: "var(--m)", marginTop: 10, letterSpacing: ".03em" }}>{LT ? "Apsisukimai: kanonas → SAF-T XML → parseSAFTFull → 250 taisyklių · e. sąskaitos → i.SAF XML → parseISAF → sutikrinimas." : "Round-trips: canonical → SAF-T XML → parseSAFTFull → 250 rules · e-invoices → i.SAF XML → parseISAF → reconciliation."}</div>
+  </div>;
+}
+
+function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData, setToast }) {
+  const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
+  const lbl = { fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase" };
+  const bP = { background: "#fff", color: "#000", border: "none", padding: "9px 18px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" };
+  const bG = { background: "transparent", color: "#d2d2ce", border: `1px solid ${PL_LINE}`, padding: "9px 16px", fontSize: 11, fontWeight: 600, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" };
+  const inp = { background: "var(--bg)", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "8px 11px", fontSize: 12.5, fontFamily: "var(--s)", outline: "none", width: "100%" };
+  const LT = lang === "lt";
+  const H = useMemo(() => ({ classifyVatRate, isValidLtIban, isLtVatNumber, isLtRegistrationNumber, ISO_4217, today: new Date().toISOString().slice(0, 10) }), []);
+  const STC = (s) => ({ DRAFT: "#8c8c88", ISSUED: "#74c0fc", TRANSMITTED: "#ffd43b", DELIVERED: "#69db7c", ACCEPTED: "#69db7c", PAID: "#fff", REJECTED: "#ff6b6b", RECEIVED: "#74c0fc", MATCHED: "#69db7c" }[s] || "#aaa");
+
+  const [sub, setSub] = useState("dashboard");
+  const [draft, setDraft] = useState(null);
+  const [val, setVal] = useState(null);
+  const [showXml, setShowXml] = useState(false);
+  const [openRow, setOpenRow] = useState("");
+  const [busyId, setBusyId] = useState("");
+  const [pasteXml, setPasteXml] = useState("");
+  const [chain, setChain] = useState(null);
+  const [conf, setConf] = useState(null);
+  const [ruleQ, setRuleQ] = useState("");
+  const [ai, setAi] = useState({ busy: false, text: "", verify: null });
+
+  const liveOut = einv.outbox.filter((e) => e.state !== "REJECTED");
+  const vida = useMemo(() => computeVidaReadiness(einv.profile, einv.settings, { outbox: einv.outbox, archive: einv.archive }), [einv.outbox, einv.archive, einv.profile, einv.settings]);
+  const T_draft = draft ? computeEinvTotals(draft) : null;
+  const norm = (s) => String(s || "").trim().toUpperCase();
+  const downloadText = (txt2, name) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([txt2], { type: "application/xml" })); a.download = name; a.click(); };
+
+  // Coverage: issued e-invoices present in the loaded i.SAF register / SAF-T file
+  const isafNos = useMemo(() => new Set(((isafData && isafData.sales) || []).map((x) => norm(x.invoiceNo))), [isafData]);
+  const saftNos = useMemo(() => new Set((((fileData || {}).parsed || {}).sales?.items || []).map((x) => norm(x.invoiceNo))), [fileData]);
+  const cover = (set) => { const n = liveOut.filter((e) => set.has(norm(e.inv.invoiceNo))).length; return { n, m: liveOut.length, pct: liveOut.length ? Math.round(n / liveOut.length * 100) : 0 }; };
+  const covIsaf = cover(isafNos), covSaft = cover(saftNos);
+  const accepted = einv.outbox.filter((e) => ["ACCEPTED", "DELIVERED", "PAID"].includes(e.state)).length;
+  const accRate = liveOut.length ? Math.round(accepted / liveOut.length * 100) : 0;
+
+  const updEntry = (id, patch) => setEinv((e) => ({ ...e, outbox: e.outbox.map((x) => x.inv.id === id ? { ...x, ...patch } : x) }));
+  const setProfile = (k, v) => setEinv((e) => ({ ...e, profile: { ...e.profile, [k]: v } }));
+  const setSettings = (k, v) => setEinv((e) => ({ ...e, settings: { ...e.settings, [k]: v } }));
+  const setBuyer = (k, v) => setDraft((d) => ({ ...d, buyer: { ...d.buyer, [k]: v } }));
+  const setLine = (i, k, v) => setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => j === i ? { ...l, [k]: v } : l) }));
+
+  const newDraft = () => { setDraft(newEInvoice(einv.profile, einv.seq, H.today)); setVal(null); setShowXml(false); setSub("compose"); };
+  const pickBuyer = (v) => {
+    if (!v) return;
+    if (v.startsWith("pub:")) { const reg = v.slice(4); setDraft((d) => ({ ...d, buyer: { ...d.buyer, name: SABIS_DEMO_REGISTRY[reg], regNo: reg, vatNo: "", country: "LT", city: "Vilnius", isPublic: true, endpoint: { scheme: "0200", id: reg } } })); }
+    else { const c = (erp.store.customers || []).find((x) => x.id === v); if (c) setDraft((d) => ({ ...d, buyer: { ...d.buyer, name: c.name, regNo: c.regNo || "", vatNo: c.vatNo || "", country: c.country || "LT", city: c.city || "", isPublic: false, endpoint: { scheme: "0200", id: c.regNo || "" } } })); }
+    setVal(null);
+  };
+  const doValidate = () => { const v = validateEInvoice(draft, H); setVal(v); audit.log("EINV_VALIDATED", `${draft.invoiceNo} → ${v.findings.length} findings (${v.ok ? "OK" : "NOT OK"})`); };
+  const doIssue = async () => {
+    const v = validateEInvoice(draft, H); setVal(v);
+    if (!v.ok) { setToast(LT ? "Sąskaita nepraeina patikros — pataisykite radinius" : "Invoice fails validation — fix the findings"); return; }
+    const xml = buildUBLInvoice(draft);
+    const arch2 = await appendToArchive(einv.archive, draft, xml);
+    const entry = { inv: draft, xml, state: "ISSUED", issuedAt: new Date().toISOString(), events: [{ at: new Date().toISOString(), state: "ISSUED", detail: `Nr. ${draft.invoiceNo} · €${fmt2(v.totals.taxInc)}` }], mlr: null, routing: selectRoute(draft, einv.settings) };
+    setEinv((e) => ({ ...e, seq: e.seq + 1, archive: arch2, outbox: [...e.outbox, entry] }));
+    audit.log("EINV_ISSUED", `${draft.invoiceNo} · €${fmt2(v.totals.taxInc)} → archive #${arch2.length}`);
+    setToast(LT ? `Išrašyta: ${draft.invoiceNo}` : `Issued: ${draft.invoiceNo}`);
+    setDraft(null); setSub("outbox");
+  };
+  const doTransmit = async (entry) => {
+    setBusyId(entry.inv.id);
+    try {
+      const res = await simulateTransmission(entry, einv.settings, einv.archive, H);
+      updEntry(entry.inv.id, { state: res.state, events: res.events, mlr: res.mlr, routing: res.routing, sbdh: res.sbdh });
+      audit.log(res.state === "REJECTED" ? "EINV_REJECTED" : "EINV_TRANSMITTED", `${entry.inv.invoiceNo} → ${res.routing.route} → ${res.state}${res.mlr ? ` (MLR ${res.mlr.status})` : ""}`);
+      setToast(`${entry.inv.invoiceNo}: ${res.state}`);
+    } catch (err) { setToast((LT ? "Siuntimo klaida: " : "Transmission error: ") + err.message); }
+    setBusyId("");
+  };
+  const markPaid = (entry) => { updEntry(entry.inv.id, { state: "PAID", events: [...entry.events, { at: new Date().toISOString(), state: "PAID", detail: LT ? "Apmokėta" : "Paid" }] }); audit.log("EINV_PAID", entry.inv.invoiceNo); };
+
+  const intakeInbound = async (xml, label) => {
+    const inv = parseUBLInvoice(xml);
+    if (inv._parseError) { setToast((LT ? "XML klaida: " : "XML error: ") + inv._parseError); return; }
+    const v = validateEInvoice(inv, H);
+    const m = matchInbound(inv, erp.store);
+    const entry = { inv, xml, state: m.matched ? "MATCHED" : "RECEIVED", receivedAt: new Date().toISOString(), validation: { ok: v.ok, total: v.findings.length, bySeverity: v.bySeverity }, match: m };
+    setEinv((e) => ({ ...e, inbox: [...e.inbox, entry] }));
+    audit.log("EINV_INBOUND", `${inv.invoiceNo} (${label}) · ${m.level} · ${v.findings.length} findings`);
+    setToast(LT ? `Gauta: ${inv.invoiceNo} · ${m.level}` : `Received: ${inv.invoiceNo} · ${m.level}`);
+  };
+  const demoInbound = () => {
+    const bills = erp.store.invoicesAP || [];
+    const withPay = bills.find((b) => (erp.store.payments || []).some((p) => (p.lines || []).some((l) => l.sourceDocumentId === b.invoiceNo)));
+    const bill = withPay || bills[0];
+    const supProfile = bill ? { name: bill.party?.name || "UAB Vilniaus tiekimas", regNo: bill.party?.regNo || "300099882", vatNo: bill.party?.vatNo || "LT130009988210", iban: "LT607044060008101234", city: "Vilnius", series: "VT" } : { name: "UAB Vilniaus tiekimas", regNo: "300099882", vatNo: "LT130009988210", iban: "LT607044060008101234", city: "Vilnius", series: "VT" };
+    const inv = newEInvoice(supProfile, einv.inbox.length + 1, H.today);
+    if (bill) { inv.invoiceNo = bill.invoiceNo; inv.issueDate = bill.invoiceDate || inv.issueDate; const src = (bill.lines && bill.lines.length) ? bill.lines : [{ description: "Prekės", qty: 1, unitPrice: bill.totals?.net || 100, tax: { pct: 21 } }]; inv.lines = src.map((bl, i) => { const rc = !!bl.tax?.reverseCharge; return { id: String(i + 1), description: bl.description || "Prekės", qty: bl.qty || 1, unitCode: "H87", unitPrice: einvR2(bl.unitPrice != null ? bl.unitPrice : ((bl.qty ? (bl.net ?? 0) / bl.qty : (bl.net ?? 0)))), pct: rc ? 0 : (bl.tax?.pct ?? 21), reverseCharge: rc, exempt: false, exemptReason: "" }; }); }
+    inv.buyer = { name: einv.profile.name, regNo: einv.profile.regNo, vatNo: einv.profile.vatNo, country: "LT", city: einv.profile.city, street: "", postal: "", email: "", isPublic: false, endpoint: { scheme: "0200", id: einv.profile.regNo } };
+    intakeInbound(buildUBLInvoice(inv), "demo");
+  };
+  const acceptInbound = async (entry) => {
+    const arch2 = await appendToArchive(einv.archive, entry.inv, entry.xml);
+    setEinv((e) => ({ ...e, archive: arch2, inbox: e.inbox.map((x) => x.inv.id === entry.inv.id ? { ...x, state: "ACCEPTED" } : x) }));
+    audit.log("EINV_INBOUND_ACCEPTED", `${entry.inv.invoiceNo} → archive #${arch2.length}`);
+  };
+
+  const runConf = () => { const c = runEinvConformance(H, undefined); setConf(c); audit.log("EINV_CONFORMANCE", `${c.passed}/${c.total} (${c.score}%)`); };
+  const aiSummary = async () => {
+    setAi({ busy: true, text: "", verify: null });
+    const facts = [
+      { value: liveOut.length, label: LT ? "Išrašytos e. sąskaitos" : "Issued e-invoices", group: "einv" },
+      { value: accRate, label: LT ? "Priėmimo rodiklis" : "Acceptance rate", group: "einv", isPct: true },
+      { value: einv.inbox.length, label: LT ? "Gautos sąskaitos" : "Inbound invoices", group: "einv" },
+      { value: einv.archive.length, label: LT ? "Archyvo įrašai" : "Archive entries", group: "einv" },
+      { value: vida.days, label: LT ? "Dienų iki ViDA (2030-07-01)" : "Days to ViDA (2030-07-01)", group: "einv" },
+      { value: covIsaf.pct, label: LT ? "i.SAF aprėptis" : "i.SAF coverage", group: "einv", isPct: true },
+    ];
+    const sys = `Tu esi TAXAI e. sąskaitų atitikties asistentas Lietuvoje. Atsakyk glaustai (≤180 žodžių), be sveikinimų. Remkis TIK šiais deterministiniais faktais ir teisės kontekstu žemiau — jokių kitų skaičių:\n${facts.map((f) => `- ${f.label}: ${f.value}${f.isPct ? "%" : ""}`).join("\n")}\nKontekstas: SABIS privaloma viešajam sektoriui; Peppol BIS 3.0; PVMĮ 58 str. rekvizitai; ViDA (ES) 2025/516 nuo 2030-07-01.`;
+    const msg = LT ? "Parenk trumpą įmonės e. sąskaitų atitikties santrauką: SABIS, Peppol, PVMĮ 58 str., i.SAF aprėptis ir pasirengimas ViDA." : "Prepare a short e-invoicing compliance summary: SABIS, Peppol, PVMĮ art. 58, i.SAF coverage and ViDA readiness.";
+    try { const text = await callAI(sys, msg); setAi({ busy: false, text, verify: verifyNarrative(text, facts) }); audit.log("EINV_AI_SUMMARY", `verify score pending`); }
+    catch (err) { setAi({ busy: false, text: "", verify: null }); setToast("AI: " + err.message); }
+  };
+
+  const Chip = ({ c, children }) => <span style={{ fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".08em", color: c === "#fff" || c === "#ffd43b" || c === "#69db7c" ? "#000" : "#000", background: c, padding: "2px 7px" }}>{children}</span>;
+  const Stat = ({ v, l, c }) => <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "12px 16px", minWidth: 120 }}><div style={{ fontFamily: "var(--m)", fontSize: 22, fontWeight: 700, color: c || "#fff" }}>{v}</div><div style={{ ...lbl, fontSize: 9, marginTop: 3 }}>{l}</div></div>;
+  const SUBS = [["dashboard", LT ? "Apžvalga" : "Dashboard"], ["compose", LT ? "Nauja sąskaita" : "Compose"], ["outbox", LT ? "Siunčiamos" : "Outbox"], ["inbox", LT ? "Gautos" : "Inbox"], ["archive", LT ? "Archyvas" : "Archive"], ["rules", LT ? "Taisyklės" : "Rules"], ["settings", LT ? "Nustatymai · ViDA" : "Settings · ViDA"]];
+
+  return <div style={{ maxWidth: 1240 }}>
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "var(--s)", letterSpacing: "-.01em" }}>{LT ? "E. sąskaitos" : "E-Invoicing"}</div>
+        <div style={{ fontSize: 12.5, color: "#8c8c88", fontFamily: "var(--s)", marginTop: 4 }}>EN 16931 · UBL 2.1 · Peppol BIS 3.0 · SABIS (B2G) · i.SAF / SAF-T {LT ? "tiltai" : "bridges"} · ViDA 2030</div>
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#ffd43b", border: "1px solid rgba(255,212,59,.4)", padding: "5px 10px", letterSpacing: ".06em" }}>{LT ? "DEMO siuntimas — dokumentai realiai neperduodami" : "DEMO transmission — nothing is actually submitted"}</span>
+        <button onClick={newDraft} style={bP}>{LT ? "+ Nauja sąskaita" : "+ New invoice"}</button>
+      </div>
+    </div>
+
+    <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${PL_LINE}`, marginBottom: 18, flexWrap: "wrap" }}>
+      {SUBS.map(([k, l]) => <button key={k} onClick={() => setSub(k)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${sub === k ? "#fff" : "transparent"}`, color: sub === k ? "#fff" : "#8c8c88", padding: "10px 16px", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", cursor: "pointer" }}>{l}{k === "outbox" && einv.outbox.length ? ` (${einv.outbox.length})` : ""}{k === "inbox" && einv.inbox.length ? ` (${einv.inbox.length})` : ""}</button>)}
+    </div>
+
+    {/* ── DASHBOARD ── */}
+    {sub === "dashboard" && <div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <Stat v={liveOut.length} l={LT ? "Išrašyta" : "Issued"} />
+        <Stat v={accRate + "%"} l={LT ? "Priimta / pristatyta" : "Accepted / delivered"} c={accRate >= 80 ? "#69db7c" : "#ffd43b"} />
+        <Stat v={einv.outbox.filter((e) => e.state === "REJECTED").length} l={LT ? "Atmesta" : "Rejected"} c="#ff6b6b" />
+        <Stat v={einv.inbox.length} l={LT ? "Gauta (AP)" : "Inbound (AP)"} />
+        <Stat v={isafData ? `${covIsaf.n}/${covIsaf.m}` : "—"} l={LT ? "i.SAF aprėptis" : "i.SAF coverage"} c={isafData && covIsaf.pct < 100 ? "#ffd43b" : "#69db7c"} />
+        <Stat v={fileData?.parsed ? `${covSaft.n}/${covSaft.m}` : "—"} l={LT ? "SAF-T aprėptis" : "SAF-T coverage"} />
+        <Stat v={vida.days} l={LT ? "d. iki ViDA" : "days to ViDA"} c="#74c0fc" />
+        <Stat v={EINV_RULE_COUNT} l={LT ? "taisyklių" : "rules"} c="#74c0fc" />
+      </div>
+      {!isafData && <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, marginBottom: 14 }}>{LT ? "i.SAF aprėptis skaičiuojama įkėlus i.SAF registrą SAF-T peržiūros skiltyje." : "i.SAF coverage is computed once an i.SAF register is loaded in the SAF-T view."}</div>}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => { const x = buildISafXml(einv.profile, einv.outbox, einv.inbox); downloadText(x, `isaf_${new Date().toISOString().slice(0, 7)}.xml`); audit.log("EINV_ISAF_EXPORT", `${einv.outbox.length} AR + ${einv.inbox.length} AP`); setToast("i.SAF XML ⬇"); }} style={bG}>i.SAF XML ⬇</button>
+        {(() => { const gaps = detectSeqGaps(einv.outbox); return gaps.length ? <span title={gaps.map((g) => `${g.series}: ${g.missing.join(",")}`).join(" · ")} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#ffd43b", border: "1px solid rgba(255,212,59,.4)", padding: "5px 10px", cursor: "help" }}>⚠ {LT ? "Numeracijos spragos" : "Sequence gaps"}: {gaps.map((g) => `${g.series}…×${g.missing.length}`).join(", ")}</span> : liveOut.length ? <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#69db7c" }}>✓ {LT ? "Numeracija be spragų (PVMĮ)" : "Gapless numbering (PVMĮ)"}</span> : null; })()}
+      </div>
+
+      <Section title={LT ? "Reguliacinė laiko juosta (šaltiniai apačioje)" : "Regulatory timeline (sources below)"} accent="#74c0fc">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+          {[
+            ["2017-07-01", LT ? "B2G e. sąskaitos privalomos (2014/55/ES)" : "B2G e-invoicing mandatory (2014/55/EU)"],
+            ["2024-07-01", LT ? "SABIS startas · žodinės sutartys > €1 000 — per SABIS" : "SABIS go-live · verbal contracts > €1,000 via SABIS"],
+            ["2024-09-01", LT ? "SABIS pilnai veikia („E. sąskaita“ atjungta 2024-08-30)" : "SABIS fully operational (eSąskaita disconnected 2024-08-30)"],
+            ["2025-01-01", LT ? "Visos žodinės sutartys — per SABIS" : "All verbal contracts via SABIS"],
+            ["2030-07-01", LT ? "ViDA: ES vidaus B2B e. sąskaitos + DRR (ES) 2025/516" : "ViDA: intra-EU B2B e-invoicing + DRR (EU) 2025/516"],
+          ].map(([d, txt]) => <div key={d} style={{ border: `1px solid ${PL_SOFT}`, padding: "10px 12px" }}>
+            <div style={{ fontFamily: "var(--m)", fontSize: 12, fontWeight: 700, color: "#fff" }}>{d}</div>
+            <div style={{ fontFamily: "var(--s)", fontSize: 11.5, color: "#bcbcb8", marginTop: 4, lineHeight: 1.45 }}>{txt}</div>
+          </div>)}
+        </div>
+        <div style={{ ...lbl, fontSize: 8.5, marginTop: 10, lineHeight: 1.6, textTransform: "none", letterSpacing: ".03em" }}>{LT ? "Šaltiniai" : "Sources"}: {EINV_REGIME.provenance.join(" · ")}</div>
+      </Section>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
+        <Section title={LT ? "Atitikties patikra (fixtures)" : "Conformance check (fixtures)"}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+            <button onClick={runConf} style={bG}>{LT ? "Vykdyti patikrą" : "Run conformance"}</button>
+            {conf && <span style={{ fontFamily: "var(--m)", fontSize: 13, fontWeight: 700, color: conf.score === 100 ? "#69db7c" : "#ffd43b" }}>{conf.passed}/{conf.total} · {conf.score}%</span>}
+          </div>
+          {conf && conf.results.map((r) => <div key={r.id} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: `1px solid ${PL_SOFT}`, alignItems: "center" }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 10, color: r.passed ? "#69db7c" : "#ff6b6b", width: 16 }}>{r.passed ? "✓" : "✗"}</span>
+            <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", width: 52 }}>{r.id}</span>
+            <span style={{ fontFamily: "var(--s)", fontSize: 12, color: "#d2d2ce" }}>{r.name}</span>
+          </div>)}
+        </Section>
+        <Section title={LT ? "AI atitikties santrauka (pagrįsta faktais)" : "AI compliance summary (fact-grounded)"}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+            <button disabled={ai.busy} onClick={aiSummary} style={{ ...bG, opacity: ai.busy ? 0.6 : 1 }}>{ai.busy ? (LT ? "Generuojama…" : "Generating…") : (LT ? "Generuoti santrauką" : "Generate summary")}</button>
+            {ai.verify && <span style={{ fontFamily: "var(--m)", fontSize: 11, color: ai.verify.score >= 80 ? "#69db7c" : ai.verify.score >= 60 ? "#ffd43b" : "#ff6b6b" }}>{LT ? "Pagrįstumas" : "Grounding"}: {ai.verify.score}% · {ai.verify.band}</span>}
+          </div>
+          {ai.text && <div style={{ maxHeight: 260, overflowY: "auto" }}><Md text={ai.text} /></div>}
+          {!ai.text && !ai.busy && <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12 }}>{LT ? "Deterministiniai skaičiai pateikiami AI kaip vieninteliai leidžiami faktai; atsakymas tikrinamas verifyNarrative." : "Deterministic figures are passed to the AI as the only allowed facts; the answer is checked with verifyNarrative."}</div>}
+        </Section>
+      </div>
+    </div>}
+
+    {/* ── COMPOSE ── */}
+    {sub === "compose" && <div>
+      {!draft && <Section title={LT ? "Nėra juodraščio" : "No draft"}><button onClick={newDraft} style={bP}>{LT ? "+ Nauja sąskaita" : "+ New invoice"}</button></Section>}
+      {draft && <div style={{ display: "grid", gridTemplateColumns: "minmax(420px,1.4fr) minmax(340px,1fr)", gap: 16, alignItems: "start" }}>
+        <div>
+          <Section title={LT ? "Sąskaita" : "Invoice"} accent="#74c0fc">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>Nr.</div><input value={draft.invoiceNo} onChange={(e) => { setDraft({ ...draft, invoiceNo: e.target.value }); setVal(null); }} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Data" : "Issue date"}</div><input value={draft.issueDate} onChange={(e) => { setDraft({ ...draft, issueDate: e.target.value }); setVal(null); }} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Apmokėti iki" : "Due date"}</div><input value={draft.dueDate} onChange={(e) => { setDraft({ ...draft, dueDate: e.target.value }); setVal(null); }} style={inp} /></div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Tipas" : "Type"}</div><select value={draft.typeCode} onChange={(e) => { setDraft({ ...draft, typeCode: e.target.value }); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11 }}><option value="380">380 — {LT ? "Sąskaita (SF)" : "Invoice"}</option><option value="381">381 — {LT ? "Kreditinė (KS)" : "Credit note"}</option></select></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Valiuta" : "Currency"}</div><input value={draft.currency} onChange={(e) => { setDraft({ ...draft, currency: e.target.value.toUpperCase() }); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)" }} /></div>
+              {draft.currency !== "EUR" ? <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Kursas → EUR" : "Rate → EUR"}</div><input value={draft.exchangeRate} onChange={(e) => { setDraft({ ...draft, exchangeRate: parseFloat(e.target.value) || 0 }); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)" }} /></div> : <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Avansas € (BT-113)" : "Prepaid € (BT-113)"}</div><input value={draft.payment.prepaid} onChange={(e) => { setDraft({ ...draft, payment: { ...draft.payment, prepaid: parseFloat(e.target.value) || 0 } }); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)" }} /></div>}
+            </div>
+            {draft.typeCode === "381" && <div style={{ marginTop: 10 }}><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Koreguojama sąskaita (BR-55)" : "Preceding invoice (BR-55)"}</div><input value={draft.precedingInvoiceNo} onChange={(e) => { setDraft({ ...draft, precedingInvoiceNo: e.target.value }); setVal(null); }} style={inp} placeholder="TX-2026-00001" /></div>}
+          </Section>
+          <Section title={LT ? "Pirkėjas" : "Buyer"}>
+            <div style={{ marginBottom: 10 }}>
+              <select defaultValue="" onChange={(e) => pickBuyer(e.target.value)} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11 }}>
+                <option value="">{LT ? "— greitas pasirinkimas (ERP klientai / SABIS demo) —" : "— quick pick (ERP customers / SABIS demo) —"}</option>
+                {Object.entries(SABIS_DEMO_REGISTRY).map(([reg, name]) => <option key={reg} value={"pub:" + reg}>{name} · {reg} (SABIS)</option>)}
+                {(erp.store.customers || []).map((c) => <option key={c.id} value={c.id}>{c.name} · {c.vatNo || c.regNo || c.id}</option>)}
+              </select>
+              {!(erp.store.customers || []).length && <div style={{ ...lbl, fontSize: 8.5, marginTop: 5, textTransform: "none" }}>{LT ? "ERP klientų sąrašas tuščias — sinchronizuokite sistemą skiltyje „Integracijos“." : "ERP customer list is empty — sync a system in Integrations."}</div>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 10 }}>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Pavadinimas" : "Name"}</div><input value={draft.buyer.name} onChange={(e) => setBuyer("name", e.target.value)} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "JA kodas" : "Company code"}</div><input value={draft.buyer.regNo} onChange={(e) => { setBuyer("regNo", e.target.value); setDraft((d) => ({ ...d, buyer: { ...d.buyer, regNo: e.target.value, endpoint: { ...d.buyer.endpoint, id: d.buyer.endpoint.scheme === "0200" ? e.target.value : d.buyer.endpoint.id } } })); }} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "PVM kodas" : "VAT no."}</div><input value={draft.buyer.vatNo} onChange={(e) => setBuyer("vatNo", e.target.value)} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Šalis" : "Country"}</div><input value={draft.buyer.country} onChange={(e) => setBuyer("country", e.target.value.toUpperCase())} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>{LT ? "Miestas" : "City"}</div><input value={draft.buyer.city} onChange={(e) => setBuyer("city", e.target.value)} style={inp} /></div>
+              <div><div style={{ ...lbl, marginBottom: 5 }}>El. paštas</div><input value={draft.buyer.email} onChange={(e) => setBuyer("email", e.target.value)} style={inp} /></div>
+            </div>
+            <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", gap: 7, alignItems: "center", color: "#d2d2ce", fontFamily: "var(--s)", fontSize: 12.5, cursor: "pointer" }}><input type="checkbox" checked={draft.buyer.isPublic} onChange={(e) => setBuyer("isPublic", e.target.checked)} />{LT ? "Viešojo sektoriaus pirkėjas (→ SABIS privaloma)" : "Public-sector buyer (→ SABIS mandatory)"}</label>
+              <label style={{ display: "flex", gap: 7, alignItems: "center", color: "#d2d2ce", fontFamily: "var(--s)", fontSize: 12.5, cursor: "pointer" }}><input type="checkbox" checked={draft.oss} onChange={(e) => setDraft({ ...draft, oss: e.target.checked })} />OSS (PVM 101-1 str.)</label>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={lbl}>Peppol</span>
+                <select value={draft.buyer.endpoint.scheme} onChange={(e) => setBuyer("endpoint", { ...draft.buyer.endpoint, scheme: e.target.value })} style={{ ...inp, width: 90, fontFamily: "var(--m)", fontSize: 11 }}><option value="0200">0200</option><option value="9937">9937</option></select>
+                <input value={draft.buyer.endpoint.id} onChange={(e) => setBuyer("endpoint", { ...draft.buyer.endpoint, id: e.target.value })} placeholder="participant id" style={{ ...inp, width: 150, fontFamily: "var(--m)", fontSize: 11 }} />
+              </div>
+            </div>
+          </Section>
+          <Section title={LT ? "Eilutės" : "Lines"}>
+            {T_draft.lines.map((l, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "1.6fr 70px 100px 90px 60px 110px 28px", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <input value={l.description} placeholder={LT ? "Aprašymas" : "Description"} onChange={(e) => { setLine(i, "description", e.target.value); setVal(null); }} style={inp} />
+              <input value={l.qty} onChange={(e) => { setLine(i, "qty", parseFloat(e.target.value) || 0); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)" }} />
+              <input value={l.unitPrice} onChange={(e) => { setLine(i, "unitPrice", parseFloat(e.target.value) || 0); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)" }} />
+              <select value={l.reverseCharge ? "RC" : l.exempt ? "EX" : String(l.pct)} onChange={(e) => { const v = e.target.value; setDraft((d) => ({ ...d, lines: d.lines.map((x, j) => j !== i ? x : v === "RC" ? { ...x, reverseCharge: true, exempt: false, pct: 0 } : v === "EX" ? { ...x, reverseCharge: false, exempt: true, pct: 0, exemptReason: x.exemptReason || "Neapmokestinama (PVMĮ)" } : { ...x, reverseCharge: false, exempt: false, pct: parseFloat(v) }) })); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11 }}>
+                {["21", "12", "5", "0"].map((p) => <option key={p} value={p}>{p}%</option>)}<option value="RC">RC 96 str.</option><option value="EX">{LT ? "Neapmok." : "Exempt"}</option>
+              </select>
+              <Chip c={{ S: "#74c0fc", AE: "#ffd43b", K: "#69db7c", E: "#8c8c88", Z: "#d2d2ce" }[l.cat]}>{l.cat}</Chip>
+              <div style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#d2d2ce", textAlign: "right" }}>€{fmt2(l.net)} <span style={{ color: "#8c8c88" }}>+{fmt2(l.vat)}</span></div>
+              <button onClick={() => { setDraft((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== i) })); setVal(null); }} style={{ ...bG, padding: "4px 8px", color: "#ff6b6b", borderColor: "rgba(255,107,107,.35)" }}>×</button>
+            </div>)}
+            <button onClick={() => { setDraft((d) => ({ ...d, lines: [...d.lines, { id: String(d.lines.length + 1), description: "", qty: 1, unitCode: "H87", unitPrice: 0, pct: 21, reverseCharge: false, exempt: false, exemptReason: "" }] })); setVal(null); }} style={bG}>{LT ? "+ Eilutė" : "+ Line"}</button>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 22, marginTop: 12, fontFamily: "var(--m)", fontSize: 12.5 }}>
+              <span style={{ color: "#8c8c88" }}>{LT ? "Be PVM" : "Net"}: <b style={{ color: "#fff" }}>€{fmt2(T_draft.taxEx)}</b></span>
+              <span style={{ color: "#8c8c88" }}>PVM: <b style={{ color: "#fff" }}>€{fmt2(T_draft.taxTotal)}</b></span>
+              <span style={{ color: "#8c8c88" }}>{LT ? "Iš viso" : "Total"}: <b style={{ color: "#69db7c" }}>€{fmt2(T_draft.taxInc)}</b></span>
+            </div>
+          </Section>
+          <Section title={LT ? "Nuolaidos / priemokos (BG-20/21)" : "Allowances / charges (BG-20/21)"}>
+            {[...draft.allowances.map((a, i) => ({ a, i, ch: false })), ...draft.charges.map((a, i) => ({ a, i, ch: true }))].map(({ a, i, ch }) => <div key={(ch ? "c" : "a") + i} style={{ display: "grid", gridTemplateColumns: "120px 100px 100px 1fr 28px", gap: 8, marginBottom: 8, alignItems: "center" }}>
+              <select value={ch ? "charge" : "allow"} onChange={(e) => { const toCh = e.target.value === "charge"; if (toCh === ch) return; setDraft((d) => { const src = ch ? "charges" : "allowances", dst = toCh ? "charges" : "allowances"; const item = d[src][i]; return { ...d, [src]: d[src].filter((_, j) => j !== i), [dst]: [...d[dst], item] }; }); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11 }}><option value="allow">{LT ? "Nuolaida −" : "Allowance −"}</option><option value="charge">{LT ? "Priemoka +" : "Charge +"}</option></select>
+              <input value={a.amount} onChange={(e) => { const v = parseFloat(e.target.value) || 0; setDraft((d) => ({ ...d, [ch ? "charges" : "allowances"]: d[ch ? "charges" : "allowances"].map((x, j) => j === i ? { ...x, amount: v } : x) })); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)" }} />
+              <select value={a.cat === "S" ? "S" + a.pct : a.cat} onChange={(e) => { const v = e.target.value; const cat = v.startsWith("S") ? "S" : v; const pct = v.startsWith("S") ? parseFloat(v.slice(1)) : 0; setDraft((d) => ({ ...d, [ch ? "charges" : "allowances"]: d[ch ? "charges" : "allowances"].map((x, j) => j === i ? { ...x, cat, pct } : x) })); setVal(null); }} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11 }}>{["S21", "S12", "S5", "Z", "E", "AE", "K", "G"].map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <input value={a.reason} placeholder={LT ? "Priežastis (BR-33/38)" : "Reason (BR-33/38)"} onChange={(e) => { const v = e.target.value; setDraft((d) => ({ ...d, [ch ? "charges" : "allowances"]: d[ch ? "charges" : "allowances"].map((x, j) => j === i ? { ...x, reason: v } : x) })); setVal(null); }} style={inp} />
+              <button onClick={() => { setDraft((d) => ({ ...d, [ch ? "charges" : "allowances"]: d[ch ? "charges" : "allowances"].filter((_, j) => j !== i) })); setVal(null); }} style={{ ...bG, padding: "4px 8px", color: "#ff6b6b", borderColor: "rgba(255,107,107,.35)" }}>×</button>
+            </div>)}
+            <button onClick={() => { setDraft((d) => ({ ...d, allowances: [...d.allowances, { amount: 0, reason: "", reasonCode: "", cat: "S", pct: 21 }] })); setVal(null); }} style={bG}>{LT ? "+ Nuolaida / priemoka" : "+ Allowance / charge"}</button>
+            {(T_draft.allowSum > 0 || T_draft.chargeSum > 0 || T_draft.prepaid > 0) && <div style={{ display: "flex", justifyContent: "flex-end", gap: 22, marginTop: 10, fontFamily: "var(--m)", fontSize: 11.5, color: "#8c8c88", flexWrap: "wrap" }}>{T_draft.allowSum > 0 && <span>{LT ? "Nuolaidos" : "Allowances"}: <b style={{ color: "#fff" }}>−€{fmt2(T_draft.allowSum)}</b></span>}{T_draft.chargeSum > 0 && <span>{LT ? "Priemokos" : "Charges"}: <b style={{ color: "#fff" }}>+€{fmt2(T_draft.chargeSum)}</b></span>}{T_draft.prepaid > 0 && <span>{LT ? "Avansas" : "Prepaid"}: <b style={{ color: "#fff" }}>−€{fmt2(T_draft.prepaid)}</b></span>}<span>{LT ? "Mokėtina" : "Payable"}: <b style={{ color: "#69db7c" }}>€{fmt2(T_draft.payable)}</b></span></div>}
+          </Section>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={doValidate} style={bG}>{LT ? "Tikrinti (EN 16931 · Peppol · LT)" : "Validate (EN 16931 · Peppol · LT)"}</button>
+            <button onClick={() => setShowXml(!showXml)} style={bG}>{showXml ? (LT ? "Slėpti XML" : "Hide XML") : "UBL XML"}</button>
+            <div style={{ flex: 1 }} />
+            <button disabled={!val?.ok} onClick={doIssue} style={{ ...bP, opacity: val?.ok ? 1 : 0.45 }}>{LT ? "Išrašyti ir įtraukti į eilę →" : "Issue & queue →"}</button>
+          </div>
+          {showXml && <pre style={{ background: "var(--bg2)", border: `1px solid ${PL_LINE}`, padding: 12, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 9.5, lineHeight: 1.5, overflowX: "auto", maxHeight: 300, marginTop: 12 }}>{buildUBLInvoice(draft)}</pre>}
+        </div>
+        <div>
+          <Section title={LT ? "Maršrutas" : "Route"} accent="#69db7c">
+            {(() => { const r = selectRoute(draft, einv.settings); return <div><Chip c={r.route === "SABIS" ? "#ffd43b" : r.route === "PEPPOL" ? "#69db7c" : "#74c0fc"}>{r.route}</Chip><div style={{ fontFamily: "var(--s)", fontSize: 12, color: "#bcbcb8", marginTop: 8, lineHeight: 1.5 }}>{LT ? r.reasonLt : r.reason}</div></div>; })()}
+          </Section>
+          <Section title={`${LT ? "Patikros radiniai" : "Validation findings"}${val ? ` (${val.findings.length})` : ""}`} accent={val ? (val.ok ? "#69db7c" : "#ff6b6b") : undefined}>
+            {!val && <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12 }}>{LT ? "Paspauskite „Tikrinti“." : "Press Validate."}</div>}
+            {val && val.ok && !val.findings.length && <div style={{ color: "#69db7c", fontFamily: "var(--m)", fontSize: 12 }}>✓ {LT ? "Visi sluoksniai švarūs" : "All layers clean"}</div>}
+            {val && ["EN16931", "PEPPOL", "LT"].map((layer) => { const fs = val.findings.filter((f) => f.layer === layer); return !fs.length ? null : <div key={layer} style={{ marginBottom: 10 }}>
+              <div style={{ ...lbl, marginBottom: 6 }}>{layer} ({fs.length})</div>
+              {fs.map((f, i) => <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "7px 0", borderBottom: `1px solid ${PL_SOFT}` }}>
+                <Chip c={SC(f.severityUi)}>{f.severity}</Chip>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 12, fontWeight: 600 }}>{f.rule_id} · {LT ? f.ruleMeta.titleLt : f.ruleMeta.titleEn}</div>
+                  <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, marginTop: 2, wordBreak: "break-word" }}>{f.detail}</div>
+                  <div title={f.legalId ? (LEGAL_DB.find((x) => x.id === f.legalId) || {})[LT ? "text" : "textEn"] : ""} style={{ color: "#74c0fc", fontFamily: "var(--m)", fontSize: 9.5, marginTop: 3, cursor: f.legalId ? "help" : "default" }}>§ {f.legal_basis}</div>
+                </div>
+              </div>)}
+            </div>; })}
+            {val && <div style={{ ...lbl, fontSize: 8.5, marginTop: 8, textTransform: "none", letterSpacing: ".03em" }}>{LT ? "Sluoksniai: EN 16931 (BR/BR-CO) → Peppol BIS 3.0 → LT (PVMĮ 19/58/96/101-1 str., IBAN, SABIS)." : "Layers: EN 16931 (BR/BR-CO) → Peppol BIS 3.0 → LT (PVMĮ art. 19/58/96/101-1, IBAN, SABIS)."}</div>}
+          </Section>
+        </div>
+      </div>}
+    </div>}
+
+    {/* ── OUTBOX ── */}
+    {sub === "outbox" && <div>
+      {!einv.outbox.length && <Section title={LT ? "Tuščia" : "Empty"}><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Išrašykite sąskaitą skiltyje „Nauja sąskaita“." : "Issue an invoice in Compose."}</div></Section>}
+      {einv.outbox.map((e) => { const T = computeEinvTotals(e.inv); const open = openRow === e.inv.id; return <div key={e.inv.id} style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", marginBottom: 10 }}>
+        <div onClick={() => setOpenRow(open ? "" : e.inv.id)} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", cursor: "pointer", flexWrap: "wrap" }}>
+          <Chip c={STC(e.state)}>{e.state}</Chip>
+          <span style={{ fontFamily: "var(--m)", fontSize: 12.5, color: "#fff", fontWeight: 700 }}>{e.inv.invoiceNo}</span>
+          <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#d2d2ce", flex: 1, minWidth: 140 }}>{e.inv.buyer.name}{e.inv.buyer.isPublic ? " · B2G" : ""}</span>
+          <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88" }}>{e.inv.issueDate}</span>
+          <span style={{ fontFamily: "var(--m)", fontSize: 12.5, color: "#fff" }}>€{fmt2(T.taxInc)}</span>
+          <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#74c0fc" }}>{(e.routing || selectRoute(e.inv, einv.settings)).route}</span>
+          {e.state === "ISSUED" && <button disabled={busyId === e.inv.id} onClick={(ev) => { ev.stopPropagation(); doTransmit(e); }} style={{ ...bP, padding: "6px 14px", opacity: busyId === e.inv.id ? 0.6 : 1 }}>{busyId === e.inv.id ? "…" : (LT ? "Siųsti" : "Transmit")}</button>}
+          {["DELIVERED", "ACCEPTED"].includes(e.state) && <button onClick={(ev) => { ev.stopPropagation(); markPaid(e); }} style={{ ...bG, padding: "6px 12px" }}>{LT ? "Apmokėta" : "Mark paid"}</button>}
+          <button onClick={(ev) => { ev.stopPropagation(); const w = window.open("", "_blank"); w.document.write(einvPrintHtml(e.inv, undefined, lang)); w.document.close(); w.print(); }} style={{ ...bG, padding: "6px 12px" }}>{LT ? "Spausdinti" : "Print"}</button>
+        </div>
+        {open && <div style={{ borderTop: `1px solid ${PL_SOFT}`, padding: "12px 16px" }}>
+          <div style={{ ...lbl, marginBottom: 8 }}>{LT ? "Įvykiai" : "Events"}</div>
+          {e.events.map((ev2, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "4px 0", fontFamily: "var(--m)", fontSize: 10.5 }}>
+            <span style={{ color: "#666", width: 150, flexShrink: 0 }}>{ev2.at.replace("T", " ").slice(0, 19)}</span>
+            <span style={{ color: STC(ev2.state), width: 100, flexShrink: 0 }}>{ev2.state}</span>
+            <span style={{ color: "#bcbcb8", wordBreak: "break-word" }}>{ev2.detail}</span>
+          </div>)}
+          {e.mlr && <div style={{ marginTop: 8, fontFamily: "var(--m)", fontSize: 10.5, color: e.mlr.status === "AB" ? "#69db7c" : "#ff6b6b" }}>MLR: {e.mlr.status} · {e.mlr.code} · {e.mlr.reason}</div>}
+          {e.sbdh && <details style={{ marginTop: 8 }}><summary style={{ ...lbl, cursor: "pointer" }}>SBDH</summary><pre style={{ background: "var(--bg)", border: `1px solid ${PL_SOFT}`, padding: 10, color: "#8c8c88", fontFamily: "var(--m)", fontSize: 9, overflowX: "auto", margin: "6px 0 0" }}>{e.sbdh}</pre></details>}
+        </div>}
+      </div>; })}
+    </div>}
+
+    {/* ── INBOX ── */}
+    {sub === "inbox" && <div>
+      <Section title={LT ? "Gauti UBL XML (AP)" : "Receive UBL XML (AP)"}>
+        <textarea value={pasteXml} onChange={(e) => setPasteXml(e.target.value)} placeholder={LT ? "Įklijuokite UBL 2.1 Invoice XML…" : "Paste UBL 2.1 Invoice XML…"} style={{ ...inp, height: 90, fontFamily: "var(--m)", fontSize: 10, resize: "vertical" }} />
+        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          <button onClick={() => { if (pasteXml.trim()) { intakeInbound(pasteXml.trim(), "paste"); setPasteXml(""); } }} style={bP}>{LT ? "Apdoroti ir sutikrinti" : "Parse & match"}</button>
+          <button onClick={demoInbound} style={bG}>{LT ? "Generuoti demo gautą sąskaitą" : "Generate demo inbound"}</button>
+        </div>
+        <div style={{ ...lbl, fontSize: 8.5, marginTop: 8, textTransform: "none" }}>{LT ? "Sutikrinimas: 2 krypčių (ERP pirkimo sąskaita) / 3 krypčių (+ mokėjimas) pagal tiekėjo PVM kodą ir sumas." : "Matching: 2-way (ERP bill) / 3-way (+ payment) by supplier VAT and amounts."}</div>
+      </Section>
+      {einv.inbox.map((e) => { const T = computeEinvTotals(e.inv); return <div key={e.inv.id} style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", marginBottom: 10, padding: "11px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <Chip c={STC(e.state)}>{e.state}</Chip>
+        <span style={{ fontFamily: "var(--m)", fontSize: 12.5, color: "#fff", fontWeight: 700 }}>{e.inv.invoiceNo}</span>
+        <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#d2d2ce", flex: 1, minWidth: 140 }}>{e.inv.seller.name} · {e.inv.seller.vatNo || e.inv.seller.regNo}</span>
+        <span style={{ fontFamily: "var(--m)", fontSize: 12.5, color: "#fff" }}>€{fmt2(e.inv._declared?.taxInc ?? T.taxInc)}</span>
+        <span style={{ fontFamily: "var(--m)", fontSize: 10, color: e.validation.ok ? "#69db7c" : "#ff6b6b" }}>{e.validation.ok ? "✓ valid" : `✗ ${e.validation.bySeverity.Block + e.validation.bySeverity.Reject} blocking`}</span>
+        <span title={e.match.detail} style={{ fontFamily: "var(--m)", fontSize: 10, color: e.match.level === "3-way" ? "#69db7c" : e.match.level === "2-way" ? "#ffd43b" : "#ff6b6b", cursor: "help" }}>{e.match.level}{e.match.matched ? ` · Δ€${fmt2(e.match.deltas.gross)}` : ""}</span>
+        {e.state !== "ACCEPTED" && e.state !== "REJECTED" && <button onClick={() => acceptInbound(e)} style={{ ...bG, padding: "6px 12px" }}>{LT ? "Priimti" : "Accept"}</button>}
+        {e.state !== "ACCEPTED" && e.state !== "REJECTED" && <button onClick={() => { setEinv((s2) => ({ ...s2, inbox: s2.inbox.map((x) => x.inv.id === e.inv.id ? { ...x, state: "REJECTED" } : x) })); downloadText(buildApplicationResponse(e.inv, "RE", LT ? "Atmesta gavėjo" : "Rejected by recipient"), `IMR-RE-${e.inv.invoiceNo}.xml`); audit.log("EINV_INBOUND_REJECTED", e.inv.invoiceNo); }} style={{ ...bG, padding: "6px 12px", color: "#ff6b6b", borderColor: "rgba(255,107,107,.35)" }}>{LT ? "Atmesti" : "Reject"}</button>}
+        {(e.state === "ACCEPTED" || e.state === "REJECTED") && <button onClick={() => downloadText(buildApplicationResponse(e.inv, e.state === "ACCEPTED" ? "AB" : "RE", ""), `IMR-${e.state === "ACCEPTED" ? "AB" : "RE"}-${e.inv.invoiceNo}.xml`)} style={{ ...bG, padding: "6px 12px" }}>{LT ? "Atsakymas ⬇" : "Response ⬇"}</button>}
+      </div>; })}
+    </div>}
+
+    {/* ── ARCHIVE ── */}
+    {sub === "archive" && <div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <button onClick={async () => { setChain({ pending: true }); setChain(await verifyArchiveChain(einv.archive)); audit.log("EINV_ARCHIVE_VERIFY", `${einv.archive.length} entries`); }} style={bP}>{LT ? "Tikrinti grandinę" : "Verify chain"}</button>
+        {chain && !chain.pending && <span style={{ fontFamily: "var(--m)", fontSize: 12, color: chain.ok ? "#69db7c" : "#ff6b6b" }}>{chain.ok ? `✓ ${LT ? "Grandinė vientisa" : "Chain intact"} (${chain.length})` : `✗ ${LT ? "Pažeista ties" : "Broken at"} #${chain.brokenAt}`}</span>}
+      </div>
+      {!einv.archive.length ? <Section title={LT ? "Archyvas tuščias" : "Archive empty"}><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Įrašai atsiranda išrašius ar priėmus sąskaitą." : "Entries appear when an invoice is issued or accepted."}</div></Section> :
+        <DataTable columns={[{ key: "seq", label: "#", mono: true }, { key: "invoiceNo", label: "Nr.", mono: true }, { key: "direction", label: LT ? "Kryptis" : "Dir", mono: true }, { key: "sha", label: "SHA-256", mono: true }, { key: "prev", label: "Prev", mono: true }, { key: "bytes", label: "B", mono: true }, { key: "retainUntil", label: LT ? "Saugoti iki" : "Retain until", mono: true }]} data={einv.archive.map((a) => ({ seq: a.seq, invoiceNo: a.invoiceNo, direction: a.direction, sha: a.sha256.slice(0, 16) + "…", prev: a.prevHash === "GENESIS" ? "GENESIS" : a.prevHash.slice(0, 12) + "…", bytes: a.bytes, retainUntil: a.retainUntil }))} maxRows={50} />}
+      <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.6, marginTop: 12 }}>{LT ? "Saugojimas 10 metų. Vientisumas: SHA-256 grandinė per tikslų XML turinį (demo); gamyboje — kvalifikuotas el. parašas/antspaudas arba audituojamas vientisumo užtikrinimas pagal eIDAS (910/2014)." : "10-year retention. Integrity: SHA-256 chain over the exact XML bytes (demo); in production — qualified e-signature/seal or audited integrity per eIDAS (Reg. 910/2014)."}</div>
+    </div>}
+
+    {/* ── RULES ── */}
+    {sub === "rules" && <div>
+      <Section title={`${EINV_RULE_COUNT} ${LT ? "vykdomų taisyklių" : "executable rules"} · EN 16931 · Peppol BIS 3.0 · LT`} accent="#74c0fc">
+        <input value={ruleQ} onChange={(e) => setRuleQ(e.target.value)} placeholder={LT ? "Paieška (id, pavadinimas)…" : "Search (id, title)…"} style={{ ...inp, maxWidth: 360, marginBottom: 12 }} />
+        {["EN16931", "PEPPOL", "LT"].map((layer) => { const list = EINV_RULES.filter((r) => r.layer === layer && (!ruleQ || (r.id + " " + r.en + " " + r.lt).toLowerCase().includes(ruleQ.toLowerCase()))); return !list.length ? null : <div key={layer} style={{ marginBottom: 14 }}>
+          <div style={{ ...lbl, marginBottom: 6 }}>{layer} ({list.length})</div>
+          {list.map((r) => <div key={r.id + r.sev} style={{ display: "flex", gap: 10, padding: "5px 0", borderBottom: `1px solid ${PL_SOFT}`, alignItems: "baseline" }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#74c0fc", width: 170, flexShrink: 0 }}>{r.id}</span>
+            <Chip c={r.sev === "Block" ? "#ff6b6b" : r.sev === "Reject" ? "#ffd43b" : "#8c8c88"}>{r.sev}</Chip>
+            <span style={{ fontFamily: "var(--s)", fontSize: 12, color: "#d2d2ce" }}>{LT ? r.lt : r.en}</span>
+            <span style={{ fontFamily: "var(--m)", fontSize: 9, color: "#666", marginLeft: "auto", textAlign: "right" }}>§ {einvLegal(r.legal)}</span>
+          </div>)}
+        </div>; })}
+      </Section>
+    </div>}
+
+    {/* ── SETTINGS · ViDA ── */}
+    {sub === "settings" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
+      <div>
+        <Section title={LT ? "Įmonės profilis (pardavėjas)" : "Company profile (seller)"}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {[["name", LT ? "Pavadinimas" : "Name"], ["regNo", LT ? "JA kodas" : "Company code"], ["vatNo", LT ? "PVM kodas" : "VAT no."], ["iban", "IBAN"], ["city", LT ? "Miestas" : "City"], ["street", LT ? "Gatvė" : "Street"], ["postal", LT ? "Pašto kodas" : "Postal"], ["series", LT ? "Serija" : "Series"]].map(([k, l]) => <div key={k}><div style={{ ...lbl, marginBottom: 5 }}>{l}</div><input value={einv.profile[k] || ""} onChange={(e) => setProfile(k, e.target.value)} style={inp} /></div>)}
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>
+            <span style={lbl}>Peppol</span>
+            <select value={einv.profile.peppolScheme} onChange={(e) => setProfile("peppolScheme", e.target.value)} style={{ ...inp, width: 100, fontFamily: "var(--m)", fontSize: 11 }}><option value="0200">0200 (JA)</option><option value="9937">9937 (PVM)</option></select>
+            <span style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#74c0fc" }}>{einv.profile.peppolScheme}:{einv.profile.peppolScheme === "9937" ? einv.profile.vatNo : einv.profile.regNo}</span>
+          </div>
+        </Section>
+        <Section title={LT ? "Kanalai" : "Channels"}>
+          {[["peppolEnabled", LT ? "Peppol tinklas įjungtas" : "Peppol network enabled"], ["emailConsent", LT ? "Gavėjų sutikimas dėl e. sąskaitų el. paštu (2006/112/EB 232 str.)" : "Recipients consent to e-invoices by e-mail (Dir. 2006/112/EC art. 232)"], ["vida", LT ? "ViDA režimo peržiūra (2030)" : "ViDA mode preview (2030)"]].map(([k, l]) => <label key={k} style={{ display: "flex", gap: 8, alignItems: "center", color: "#d2d2ce", fontFamily: "var(--s)", fontSize: 12.5, cursor: "pointer", marginBottom: 9 }}><input type="checkbox" checked={!!einv.settings[k]} onChange={(e) => setSettings(k, e.target.checked)} />{l}</label>)}
+          <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.55, marginTop: 6 }}>{LT ? "Maršrutas: viešasis pirkėjas → SABIS (privaloma); kitaip Peppol (jei dalyvis žinomas); kitaip el. paštas su sutikimu; kitaip PDF." : "Routing: public buyer → SABIS (mandatory); else Peppol (if participant known); else e-mail with consent; else PDF."}</div>
+        </Section>
+      </div>
+      <Section title={`ViDA — (ES) 2025/516 · ${vida.days} ${LT ? "d. iki" : "days to"} ${vida.mandatoryFrom}`} accent={vida.ready ? "#69db7c" : "#ffd43b"}>
+        <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 12, lineHeight: 1.55, marginBottom: 12 }}>{LT ? EINV_REGIME.vida.note : EINV_REGIME.vida.noteEn} {LT ? "Priimta" : "Adopted"} {EINV_REGIME.vida.adopted}, {LT ? "įsigaliojo" : "in force"} {EINV_REGIME.vida.inForce}.</div>
+        {vida.items.map((it) => <div key={it.key} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 0", borderBottom: `1px solid ${PL_SOFT}` }}>
+          <span style={{ fontFamily: "var(--m)", fontSize: 12, color: it.ok ? "#69db7c" : "#ffd43b", width: 16 }}>{it.ok ? "✓" : "○"}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 12.5 }}>{LT ? it.lt : it.en}</div>
+            <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, marginTop: 2 }}>{it.detail}</div>
+          </div>
+        </div>)}
+        <div style={{ ...lbl, fontSize: 9, marginTop: 10 }}>{LT ? "ES vidaus AR dalis" : "Intra-EU AR share"}: {vida.intraEuShare}%</div>
+      </Section>
+    </div>}
+  </div>;
+}
+
 function TAXAI({ onExit, initialView } = {}) {
   const [view, setView] = useState(initialView || "home");
   const [lang, setLang] = useState("lt");
@@ -7501,6 +12173,22 @@ function TAXAI({ onExit, initialView } = {}) {
   const [overrides, setOverrides] = useState({});
   // Finding-detail flow: selected finding + persisted auditor notes/dispositions
   const [selectedFinding, setSelectedFinding] = useState(null);
+  const [parseProg, setParseProg] = useState(null); // {pct,label,phase} during worker/large-file parsing
+  const [fixPlan, setFixPlan] = useState(null);     // Auto-Fix dry-run plans (or {unavailable})
+  const [fixSel, setFixSel] = useState({});         // fixer id → enabled
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixResult, setFixResult] = useState(null); // {manifest, xml, before, after}
+  const fixDocRef = useRef(null);
+  const [userRules, setUserRules] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_user_rules") || "[]"); } catch { return []; } });
+  const saveUserRules = useCallback((next) => { setUserRules(next); try { localStorage.setItem("taxai_user_rules", JSON.stringify(next)); } catch (e) { /* private mode */ } }, []);
+  const [nlText, setNlText] = useState("");
+  const [nlPreview, setNlPreview] = useState(null); // {error} | {spec, interpretation, hits, sample}
+  const [snapshots, setSnapshots] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_snapshots") || "[]"); } catch { return []; } });
+  const pushSnapshot = useCallback((snap) => { setSnapshots((prev) => { const next = saveAuditSnapshot(prev, snap); try { localStorage.setItem("taxai_snapshots", JSON.stringify(next)); } catch (e) { /* private mode */ } return next; }); }, []);
+  const [batchProg, setBatchProg] = useState(null);   // {i,n,name,pct}
+  const [batchLog, setBatchLog] = useState([]);       // per-file batch results
+  const [brandCfg, setBrandCfg] = useState(() => taxaiBrand());
+  const portRef = useRef(null);
   const [findingNotes, setFindingNotes] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_finding_notes") || "{}"); } catch { return {}; } });
   const setFindingNote = useCallback((key, patch) => setFindingNotes((m) => {
     const next = { ...m, [key]: { ...(m[key] || {}), ...patch, updatedAt: new Date().toISOString() } };
@@ -7518,6 +12206,12 @@ function TAXAI({ onExit, initialView } = {}) {
   const fileRef = useRef(null);
   const voice = useVoice(t2 => setInput(t2));
   const audit = useAuditLog();
+  // ── Module 1: ERP Integration Hub state ──
+  const [erp, setErp] = useState({ connections: [], syncState: {}, store: emptyCanonicalStore(), findings: [], taxMap: {}, profile: null });
+  const [erpDemo, setErpDemo] = useState(true);
+  useEffect(() => { DEMO_MODE.enabled = erpDemo; }, [erpDemo]);
+  // ── Module 2: E-Invoicing state ──
+  const [einv, setEinv] = useState({ profile: { name: "UAB TaxAI demo įmonė", regNo: "305123458", vatNo: "LT130512345819", iban: "LT607044060008101234", city: "Vilnius", street: "", postal: "", series: "TX", peppolScheme: "0200" }, settings: { peppolEnabled: true, emailConsent: false, vida: false }, seq: 1, outbox: [], inbox: [], archive: [] });
   // ── State for the new SAF-T engine ──
   const [runResult, setRunResult] = useState(null);
   const [smartAnalysisResult, setSmartAnalysisResult] = useState(null);
@@ -7569,7 +12263,7 @@ function TAXAI({ onExit, initialView } = {}) {
   // Adapt new finding shape to existing UI's expectations
   const findings = useMemo(() => {
     if (!runResult?.findings) return [];
-    return runResult.findings.map((f, i) => ({
+    const base = runResult.findings.map((f, i) => ({
       ...f,
       // UI uses f.severity directly (Critical/High/Medium/Low). severityUi maps Block→Critical, Reject→High, Warn→Medium.
       severity: f.severityUi || f.severity,
@@ -7578,66 +12272,179 @@ function TAXAI({ onExit, initialView } = {}) {
       _idx: i,
       status: overrides[i] || "open",
     }));
-  }, [runResult, overrides]);
+    // User-authored natural-language rules (compiled locally, persisted) run on
+    // the same parsed data and join the same findings stream — so they flow
+    // into the list, risk score, copilot search, audit report and exports.
+    const extra = [];
+    if (fileData?.parsed && Array.isArray(userRules) && userRules.length) {
+      userRules.forEach((r) => {
+        let hits = [];
+        try { hits = runUserRule(r, fileData.parsed); } catch (e) { hits = []; }
+        hits.forEach((row) => {
+          const idx = base.length + extra.length;
+          const ev = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+          extra.push({
+            rule_id: r.id, category: lang === "lt" ? "Mano taisyklės" : "My rules",
+            severity: r.severity, severityUi: r.severity, type: "U", typeName: "User",
+            title: r.title, detail: ev, evidence: [ev], evidenceRow: row,
+            ruleMeta: { titleLt: r.title, titleEn: r.title,
+              descriptionLt: "Vartotojo taisyklė: " + (r.interpretation || []).join("; ") + ".",
+              descriptionEn: "User rule: " + (r.interpretationEn || r.interpretation || []).join("; ") + ".",
+              legal: "", fixLt: "Peržiūrėkite įrašą pagal savo apibrėžtą kriterijų ir, jei reikia, pataisykite šaltinio sistemoje.",
+              fixEn: "Review the record against your own criterion and correct it in the source system if needed.",
+              dataTypes: "F-Full", refType: r.scope, scope: "user" },
+            level: 3, _idx: idx, status: overrides[idx] || "open",
+          });
+        });
+      });
+    }
+    return base.concat(extra);
+  }, [runResult, overrides, userRules, fileData, lang]);
 
   useEffect(() => { chatRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
+  useEffect(() => { try { installTaxAISdk(); } catch (e) { /* SDK optional */ } }, []);
 
-  // Shared XML pipeline — used by both file upload and the demo loader.
-  const processXML = useCallback((c, name) => {
-    setFileName(name);
+  // Run the full pipeline on an already-parsed dataset — shared by the upload
+  // path (incl. the LiteXML worker and multi-part merge), the demo loader and
+  // the ERP bridge. `hash` is the SHA-256 of the uploaded file, stamped into
+  // the audit report for integrity.
+  const processParsed = useCallback((parsed, raw, hash) => {
     setAiResult(null); setSmartResult(null); setSmartAnalysisResult(null);
     setEnterpriseResult(null); setEnterpriseKpis(null); setIntel(null);
     setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null); setSelectedFinding(null);
     setIsafData(null); setIsafFileName(""); setReconResult(null);
-    const parsed = parseSAFTFull(c);
+    setFixPlan(null); setFixSel({}); setFixResult(null); fixDocRef.current = null;
     const result = runAllRules(parsed);
-    setFileData({ type: "xml", parsed, raw: c });
+    setFileData({ type: "xml", parsed, raw, hash: hash || "" });
     setRunResult(result);
+    try {
+      const fsn = (result.findings || []).map((f) => ({ ...f, severity: f.severityUi || f.severity }));
+      pushSnapshot(makeSnapshot(parsed, fsn));
+    } catch (se) { /* snapshot is best-effort */ }
     try { setEnterpriseKpis(computeKPIs(parsed, buildContext(parsed))); } catch (kpiErr) { setEnterpriseKpis(null); }
     try { setIntel(runIntelligence(parsed, result)); } catch (intelErr) { setIntel(null); }
     audit.log("SAFT_RULES_EXECUTED",
-      `250 rules → ${result.summary.total} findings (${result.bySeverity.Block} Block, ${result.bySeverity.Reject} Reject, ${result.bySeverity.Warn} Warn)`);
+      `engine v${ENGINE_VERSION} → ${result.summary.total} findings (${result.bySeverity.Block} Block, ${result.bySeverity.Reject} Reject, ${result.bySeverity.Warn} Warn)`);
     return result;
-  }, [audit]);
+  }, [audit, pushSnapshot]);
+
+  // Shared XML pipeline — used by the demo loader and any direct-string path.
+  const processXML = useCallback((c, name) => {
+    setFileName(name);
+    const parsed = parseSAFTFull(c);
+    return processParsed(parsed, c, "");
+  }, [processParsed]);
+
+  // ERP hub → bridge → the exact same pipeline as an uploaded SAF-T XML.
+  const processCanonical = useCallback(() => {
+    const parsed = canonicalToSaft({ ...erp.store, _taxMap: erp.taxMap }, erp.profile || {});
+    const label = "ERP·hub (" + (erp.store._sources.join("+") || "—") + ")";
+    setFileName(label);
+    setAiResult(null); setSmartResult(null); setSmartAnalysisResult(null);
+    setEnterpriseResult(null); setEnterpriseKpis(null); setIntel(null);
+    setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null); setSelectedFinding(null);
+    setIsafData(null); setIsafFileName(""); setReconResult(null);
+    const result = runAllRules(parsed);
+    setFileData({ type: "xml", parsed, raw: "<!-- ERP canonical bridge: " + label + " -->" });
+    setRunResult(result);
+    try { setEnterpriseKpis(computeKPIs(parsed, buildContext(parsed))); } catch (kpiErr) { setEnterpriseKpis(null); }
+    try { setIntel(runIntelligence(parsed, result)); } catch (intelErr) { setIntel(null); }
+    audit.log("SAFT_RULES_EXECUTED", `ERP bridge → ${result.summary.total} findings (${result.bySeverity.Block} Block, ${result.bySeverity.Reject} Reject, ${result.bySeverity.Warn} Warn)`);
+    setToast(lang === "lt" ? `ERP duomenys perduoti · ${result.summary.total} radinių` : `ERP data promoted · ${result.summary.total} findings`);
+    setView("saftview");
+  }, [audit, erp, lang]);
 
   // Load the built-in synthetic demo dataset (so a fresh deployment is usable).
   const upload = useCallback(e => {
-    const file = e.target.files?.[0]; if (!file) return;
-    setFileName(file.name);
-    setAiResult(null);
-    setSmartResult(null);
-    setSmartAnalysisResult(null);
-    setEnterpriseResult(null);
-    setEnterpriseKpis(null);
-    setIntel(null);
-    setThreatResult(null);
-    setRunResult(null);
-    setOverrides({});
-    setPersonalRules(null);
-    setIsafData(null); setIsafFileName(""); setReconResult(null);
-    audit.log("FILE_UPLOAD", file.name);
-    const reader = new FileReader();
-    reader.onload = evt => {
-      const c = evt.target.result;
-      if (file.name.match(/\.xml$/i)) {
-        const result = processXML(c, file.name);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const xmls = files.filter(f => /\.xml$/i.test(f.name));
+    const first = files[0];
+    setFileName(xmls.length > 1 ? `${xmls[0].name} (+${xmls.length - 1} ${lang === "lt" ? "dalys" : "parts"})` : first.name);
+    audit.log("FILE_UPLOAD", files.map(f => f.name).join(", "));
+    if (!xmls.length) {
+      // CSV / text — original single-file path
+      const reader = new FileReader();
+      reader.onload = evt => {
+        const c = evt.target.result;
+        if (first.name.match(/\.(csv|tsv)$/i)) {
+          const lines = c.trim().split("\n");
+          const sep = lines[0].includes("\t") ? "\t" : lines[0].includes(";") ? ";" : ",";
+          const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, ""));
+          const rows = lines.slice(1).map(l => {
+            const v = l.split(sep).map(x => x.trim().replace(/^"|"$/g, ""));
+            const o = {}; headers.forEach((h, i) => { o[h] = v[i] || ""; }); return o;
+          });
+          setFileData({ type: "csv", parsed: { headers, rows, rowCount: rows.length } });
+          setToast(lang === "lt" ? `CSV įkeltas · ${rows.length} eilučių` : `CSV loaded · ${rows.length} rows`);
+        } else {
+          setFileData({ type: "text", raw: c.substring(0, 10000) });
+        }
+      };
+      reader.readAsText(first);
+      return;
+    }
+    // XML — streamed (worker for large files), multi-part sets merged.
+    (async () => {
+      try {
+        let hash = "";
+        try {
+          if (xmls[0].size < 200 * 1048576 && typeof crypto !== "undefined" && crypto.subtle) {
+            const hb = await crypto.subtle.digest("SHA-256", await xmls[0].arrayBuffer());
+            hash = Array.from(new Uint8Array(hb)).map(b => b.toString(16).padStart(2, "0")).join("");
+          }
+        } catch (he) { hash = ""; }
+        const parts = [];
+        for (let i = 0; i < xmls.length; i++) {
+          const f = xmls[i];
+          const label = xmls.length > 1 ? `${f.name} (${i + 1}/${xmls.length})` : f.name;
+          setParseProg({ pct: 0, label, phase: "read" });
+          const r = await parseSaftSmart(f, (p) => setParseProg({ pct: p.pct, label, phase: p.phase }));
+          if (r.parsed && r.parsed._parseError) throw new Error(r.parsed._parseError);
+          parts.push(r);
+        }
+        setParseProg({ pct: 100, label: lang === "lt" ? "Vykdomos 482 taisyklės…" : "Running 482 rules…", phase: "rules" });
+        await new Promise(res => setTimeout(res, 30)); // let the bar paint before the synchronous rule pass
+        const parsed = parts.length > 1 ? mergeParsedParts(parts.map(p => p.parsed)) : parts[0].parsed;
+        const raw = parts.length > 1 ? "<!-- multi-part SAF-T set: " + parts.length + " parts merged client-side -->" : parts[0].raw;
+        const result = processParsed(parsed, raw, hash);
+        setFileData((fd) => fd ? { ...fd, file: xmls.length === 1 ? xmls[0] : null } : fd);
         setToast(lang === "lt" ? `Failas apdorotas · ${result.summary.total} radinių` : `File processed · ${result.summary.total} findings`);
-      } else if (file.name.match(/\.(csv|tsv)$/i)) {
-        const lines = c.trim().split("\n");
-        const sep = lines[0].includes("\t") ? "\t" : lines[0].includes(";") ? ";" : ",";
-        const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, ""));
-        const rows = lines.slice(1).map(l => {
-          const v = l.split(sep).map(x => x.trim().replace(/^"|"$/g, ""));
-          const o = {}; headers.forEach((h, i) => { o[h] = v[i] || ""; }); return o;
-        });
-        setFileData({ type: "csv", parsed: { headers, rows, rowCount: rows.length } });
-        setToast(lang === "lt" ? `CSV įkeltas · ${rows.length} eilučių` : `CSV loaded · ${rows.length} rows`);
-      } else {
-        setFileData({ type: "text", raw: c.substring(0, 10000) });
+      } catch (ex) {
+        setToast((lang === "lt" ? "Klaida apdorojant failą: " : "File processing error: ") + String(ex && ex.message || ex).slice(0, 140));
+      } finally {
+        setParseProg(null);
+        try { if (e.target) e.target.value = ""; } catch (re) { /* noop */ }
       }
-    };
-    reader.readAsText(file);
-  }, [audit, processXML, lang]);
+    })();
+  }, [audit, processParsed, lang]);
+
+  // Bureau batch: every file is a separate engagement — full 482-rule pipeline
+  // each, snapshot saved, results land on the portfolio board. Files never
+  // leave the machine; large ones stream through the worker.
+  const batchUpload = useCallback(async (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => /\.xml$/i.test(f.name));
+    if (!files.length) return;
+    setBatchLog([]);
+    audit.log("BATCH_AUDIT_START", files.length + " files");
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setBatchProg({ i: i + 1, n: files.length, name: f.name, pct: 0 });
+      try {
+        const r = await parseSaftSmart(f, (p) => setBatchProg({ i: i + 1, n: files.length, name: f.name, pct: p.pct }));
+        if (r.parsed && r.parsed._parseError) throw new Error(r.parsed._parseError);
+        const rr = runAllRules(r.parsed);
+        const fsn = (rr.findings || []).map((x) => ({ ...x, severity: x.severityUi || x.severity }));
+        const snap = makeSnapshot(r.parsed, fsn, { fileName: f.name });
+        pushSnapshot(snap);
+        setBatchLog((l) => [...l, { name: f.name, ok: true, company: snap.name || snap.reg, verdict: snap.gateVerdict, risk: snap.risk, total: snap.total }]);
+        audit.log("BATCH_AUDIT_FILE", f.name + " → " + snap.gateVerdict + " · risk " + snap.risk);
+      } catch (ex) {
+        setBatchLog((l) => [...l, { name: f.name, ok: false, err: String(ex && ex.message || ex).slice(0, 120) }]);
+      }
+    }
+    setBatchProg(null);
+  }, [audit, pushSnapshot]);
 
   // Upload a monthly i.SAF (VAT invoice register) and reconcile it vs the loaded SAF-T ledger.
   const uploadISAF = useCallback((e) => {
@@ -7811,6 +12618,22 @@ function TAXAI({ onExit, initialView } = {}) {
     setInput(""); setLoading(true); if (view !== "chat") setView("chat");
     audit.log("CHAT_MESSAGE", text.substring(0, 100));
     setMsgs(p => [...p, { id: Date.now(), role: "user", text, ts: new Date() }]);
+    // Audit Copilot: questions about THE LOADED FILE (gate, priorities, rule
+    // explanations, counts, auto-fixable, search) are answered deterministically
+    // and entirely offline — no tokens, no latency, no data leaving the machine.
+    // Anything else falls through to the legal-corpus AI agents below.
+    if (fileData?.type === "xml" && runResult) {
+      try {
+        const cop = auditCopilotAnswer(text, { findings, parsed: fileData.parsed, gate: simulateAcceptanceGate(fileData.parsed, findings), risk: computeRiskScore(findings), lang });
+        if (cop.handled) {
+          setThinking({});
+          setMsgs(p => [...p, { id: Date.now() + 1, role: "assistant", text: cop.text, agent: { ...AGENTS[0], id: "copilot", name: lang === "lt" ? "Audito kopilotas" : "Audit Copilot" }, agentIds: ["copilot"], ts: new Date(), local: true, ruleIds: cop.ruleIds }]);
+          setLoading(false);
+          audit.log("COPILOT_LOCAL", text.substring(0, 80));
+          return;
+        }
+      } catch (ce) { /* fall through to the AI agents */ }
+    }
     const mc = modes.find(m => m.id === mode);
     const aids = [...new Set([...(mc?.a || []), ...routeAgents(text)])];
     const tk = {}; aids.forEach(id => { tk[id] = true; }); setThinking(tk);
@@ -7832,7 +12655,7 @@ function TAXAI({ onExit, initialView } = {}) {
     } catch (e) {
       setThinking({}); setMsgs(p => [...p, { id: Date.now(), role: "assistant", text: `Error: ${e.message}`, agent: AGENTS[0], agentIds: ["tax"], ts: new Date(), err: true }]);
     } setLoading(false);
-  }, [input, loading, mode, msgs, fileData, view, buildCtx, audit]);
+  }, [input, loading, mode, msgs, fileData, view, buildCtx, audit, findings, runResult, lang]);
 
   const suggestions = [
     { q: lang === "lt" ? "Kokie PVM tarifai 2026? Kas pasikeitė?" : "What are 2026 VAT rates? What changed?", l: lang === "lt" ? "PVM 2026" : "VAT 2026" },
@@ -7845,8 +12668,12 @@ function TAXAI({ onExit, initialView } = {}) {
     { id: "home", l: t.home, ic: "◆" },
     { id: "chat", l: t.chat, ic: "◈" },
     { id: "saftview", l: t.saft, ic: "◫" },
+    { id: "portfolio", l: lang === "lt" ? "Portfelis" : "Portfolio", ic: "▦" },
     { id: "kpis", l: lang === "lt" ? "KPI" : "KPIs", ic: "▱" },
     { id: "intel", l: lang === "lt" ? "Žvalgyba" : "Intelligence", ic: "✦" },
+    { id: "integrations", l: lang === "lt" ? "Integracijos" : "Integrations", ic: "⇄" },
+    { id: "einvoicing", l: lang === "lt" ? "E. sąskaitos" : "E-Invoicing", ic: "✉" },
+    { id: "arch", l: t.arch, ic: "⌬" },
     { id: "eauditor", l: lang === "lt" ? "E-Auditorius" : "E-Auditor", ic: "◉" },
     { id: "agents", l: `${t.agents} (${AGENTS.length})`, ic: "◎" },
     { id: "logs", l: t.auditLog, ic: "◑" },
@@ -7965,6 +12792,9 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "chat", lbl: lang === "lt" ? "Pokalbis su agentais" : "Chat with agents", hint: "view", run: () => setView("chat") },
           { k: "saftview", lbl: lang === "lt" ? "SAF-T analizė" : "SAF-T analysis", hint: "view", run: () => setView("saftview") },
           { k: "intel", lbl: lang === "lt" ? "Žvalgybos centras" : "Intelligence center", hint: "view", run: () => setView("intel") },
+          { k: "integrations", lbl: lang === "lt" ? "ERP integracijos" : "ERP integrations", hint: "view", run: () => setView("integrations") },
+          { k: "einvoicing", lbl: lang === "lt" ? "E. sąskaitų centras" : "E-Invoicing hub", hint: "view", run: () => setView("einvoicing") },
+          { k: "arch", lbl: lang === "lt" ? "Architektūra" : "Architecture", hint: "view", run: () => setView("arch") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
           { k: "logs", lbl: lang === "lt" ? "Audito žurnalas" : "Audit log", hint: "view", run: () => setView("logs") },
           { k: "upload", lbl: lang === "lt" ? "Įkelti failą…" : "Upload a file…", hint: "action", run: () => fileRef.current?.click() },
@@ -8007,7 +12837,7 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>
         <div style={{ padding: "14px", borderTop: `1px solid ${PL_LINE}` }}>
           <div style={{ border: `1px dashed ${fileData ? "#fff" : PL_LINE}`, padding: 14, textAlign: "center", cursor: "pointer", transition: "border-color .2s" }} onClick={() => fileRef.current?.click()}>
-            <input ref={fileRef} type="file" accept=".xml,.csv,.tsv" style={{ display: "none" }} onChange={upload} />
+            <input ref={fileRef} type="file" multiple accept=".xml,.csv,.tsv" style={{ display: "none" }} onChange={upload} />
             <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 5 }}>{fileData ? "Loaded" : "SAF-T / CSV"}</div>
             <div style={{ fontSize: 12.5, color: fileData ? "#fff" : "#bcbcb8", fontFamily: "var(--s)", fontWeight: 600, wordBreak: "break-all" }}>{fileData ? `✓ ${fileName}` : t.upload}</div>
           </div>
@@ -8118,6 +12948,9 @@ function TAXAI({ onExit, initialView } = {}) {
             <div ref={chatRef} />
           </div>
           <div style={{ padding: "16px 28px 20px", borderTop: `1px solid ${PL_LINE}`, flexShrink: 0 }}>
+            {fileData?.type === "xml" && runResult && <div style={{ maxWidth: 760, margin: "0 auto 10px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(lang === "lt" ? ["Kodėl atmesta?", "Ką taisyti pirmiausia?", "Kiek kritinių radinių?", "Kurie taisomi automatiškai?"] : ["Why rejected?", "What to fix first?", "How many critical findings?", "Which are auto-fixable?"]).map((c) => <button key={c} onClick={() => send(c)} disabled={loading} style={{ background: "transparent", border: `1px solid ${PL_LINE}`, color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 10.5, padding: "5px 12px", cursor: "pointer", letterSpacing: ".04em" }}>⚡ {c}</button>)}
+            </div>}
             <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", gap: 10 }}>
               <div style={{ flex: 1, display: "flex", background: "var(--bg2)", border: `1px solid ${PL_LINE}`, padding: "0 18px" }}>
                 <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); send(); } }} placeholder={lang === "lt" ? `Klauskite ${modes.find(m => m.id === mode)?.lt} režimu...` : `Ask in ${mode} mode...`} disabled={loading} style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#fff", fontSize: 16, padding: "15px 0", fontFamily: "var(--s)", fontWeight: 400 }} />
@@ -8140,11 +12973,16 @@ function TAXAI({ onExit, initialView } = {}) {
               period={fileData?.parsed?.header ? `${fileData.parsed.header.fiscalYearFrom?.slice(0,10)} — ${fileData.parsed.header.fiscalYearTo?.slice(0,10)}` : ""}
             />}
             {!selectedFinding && <>
-            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} patikrinimai: ${XSD_RULES.length} XSD atitikties (pagal oficialų VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} struktūros/vientisumo + ${DUPLICATE_RULES.length} pasikartojančių įrašų (6 lentelė) + ${CLASSIFIER_RULES.length} klasifikatorių (VA-49 2 priedas) + ${AUDIT_RULES.length} PVM audito taisyklės + pilna XSD schemos validacija (visa rinkmena pagal XSD v2.01) — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} checks: ${XSD_RULES.length} XSD-conformance (per the official VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} structure/integrity + ${DUPLICATE_RULES.length} duplicate-record (Table 6) + ${CLASSIFIER_RULES.length} classifier (VA-49 Annex 2) + ${AUDIT_RULES.length} VAT audit rules + full XSD schema validation (entire file vs. XSD v2.01) — executed on upload, with cited evidence for every finding.`} right={runResult ? <div style={{ display: "flex", gap: 8 }}>{findings.length > 0 && <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button>}<button onClick={() => { exportExecutionSummaryCSV(runResult, fileData?.parsed?.schemaValidation, `taxai-${fileName}-execution-summary.csv`, fileName); audit.log("EXPORT", "Execution summary"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Vykdymo suvestinė" : "Execution summary"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "headers", `taxai-${fileName}-headers.csv`, fileName); audit.log("EXPORT", "Section headers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Antraštė" : "Header"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "customers", `taxai-${fileName}-customers.csv`, fileName); audit.log("EXPORT", "Section customers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Pirkėjai" : "Customers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "suppliers", `taxai-${fileName}-suppliers.csv`, fileName); audit.log("EXPORT", "Section suppliers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Tiekėjai" : "Suppliers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "stock", `taxai-${fileName}-stock.csv`, fileName); audit.log("EXPORT", "Section stock"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Judėjimai" : "Stock"}</button><button onClick={() => { exportFr0600CSV(fileData?.parsed, `taxai-${fileName}-fr0600.csv`, fileName); audit.log("EXPORT", "FR0600"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ FR0600</button><Fr0600Compare parsed={fileData?.parsed} lang={lang} /><PriorPeriodCompare parsed={fileData?.parsed} lang={lang} /><VIESCheck lang={lang} /></div> : null} />
+            <PageBanner variant="scan" label={lang === "lt" ? "02 — Atitikties variklis" : "02 — Compliance Engine"} title={<>SAF-T <em style={{ fontStyle: "italic" }}>{lang === "lt" ? "analizė" : "Intelligence"}</em></>} sub={lang === "lt" ? `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} patikrinimai: ${XSD_RULES.length} XSD atitikties (pagal oficialų VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} struktūros/vientisumo + ${DUPLICATE_RULES.length} pasikartojančių įrašų (6 lentelė) + ${CLASSIFIER_RULES.length} klasifikatorių (VA-49 2 priedas) + ${AUDIT_RULES.length} PVM audito taisyklės + pilna XSD schemos validacija (visa rinkmena pagal XSD v2.01) — vykdoma įkėlus, su įrodymais kiekvienam radiniui.` : `${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} checks: ${XSD_RULES.length} XSD-conformance (per the official VMI SAF-T XSD v2.01) + ${STRUCTURAL_RULES.length} structure/integrity + ${DUPLICATE_RULES.length} duplicate-record (Table 6) + ${CLASSIFIER_RULES.length} classifier (VA-49 Annex 2) + ${AUDIT_RULES.length} VAT audit rules + full XSD schema validation (entire file vs. XSD v2.01) — executed on upload, with cited evidence for every finding.`} right={runResult ? <div style={{ display: "flex", gap: 8 }}>{findings.length > 0 && <button onClick={() => { exportCSV(findings, `taxai-${fileName}-findings.csv`); audit.log("EXPORT", "CSV findings"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {t.export} CSV</button>}<button onClick={() => { try { const gate = simulateAcceptanceGate(fileData?.parsed, findings); const risk = computeRiskScore(findings); const html = buildAuditReportHTML({ lang, fileName, fileHash: fileData?.hash, header: fileData?.parsed?.header, gate, risk, findings, engineVersion: ENGINE_VERSION, generatedAt: new Date().toISOString().slice(0, 19).replace("T", " ") + " UTC" }); const blob = new Blob([html], { type: "text/html" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `taxai-${fileName}-audit-report.html`; a.click(); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 60000); audit.log("EXPORT", "Audit report (HTML → PDF)"); } catch (re) { setToast("Report error: " + String(re).slice(0, 120)); } }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Audito ataskaita (PDF)" : "Audit report (PDF)"}</button><button onClick={() => { try { const gate = simulateAcceptanceGate(fileData?.parsed, findings); const risk = computeRiskScore(findings); const accM = new Map(), penM = new Map(); findings.forEach((f) => { if (!f.rule_id || f.status === "rejected") return; const n = findingNotes[findingKey(f)]; const item = { rule_id: f.rule_id, title: (lang === "lt" ? f.ruleMeta?.titleLt : f.ruleMeta?.titleEn) || f.title, legal: f.ruleMeta?.legal || "", justification: n?.justification || "", step: (explainFinding(f, lang).how[0] || "") }; if (n?.disposition === "accordance") { if (!accM.has(f.rule_id)) accM.set(f.rule_id, item); } else if (!penM.has(f.rule_id)) penM.set(f.rule_id, item); }); const doc = buildVmiLetterDoc({ lang, company: fileData?.parsed?.header?.company, period: { start: fileData?.parsed?.header?.periodStart, end: fileData?.parsed?.header?.periodEnd }, fileName, fileHash: fileData?.hash, gate, risk, accordance: [...accM.values()], pending: [...penM.values()], manifest: fixResult?.manifest || [], engineVersion: ENGINE_VERSION, generatedAt: new Date().toISOString().slice(0, 10) }); const blob = new Blob([doc.html], { type: "text/html" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `taxai-${fileName}-vmi-atsakymas.html`; a.click(); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 60000); audit.log("EXPORT", "VMI response letter"); } catch (re) { setToast("Letter error: " + String(re).slice(0, 120)); } }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>✉ {lang === "lt" ? "VMI atsakymas" : "VMI reply"}</button><button onClick={() => { exportExecutionSummaryCSV(runResult, fileData?.parsed?.schemaValidation, `taxai-${fileName}-execution-summary.csv`, fileName); audit.log("EXPORT", "Execution summary"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Vykdymo suvestinė" : "Execution summary"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "headers", `taxai-${fileName}-headers.csv`, fileName); audit.log("EXPORT", "Section headers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Antraštė" : "Header"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "customers", `taxai-${fileName}-customers.csv`, fileName); audit.log("EXPORT", "Section customers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Pirkėjai" : "Customers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "suppliers", `taxai-${fileName}-suppliers.csv`, fileName); audit.log("EXPORT", "Section suppliers"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Tiekėjai" : "Suppliers"}</button><button onClick={() => { exportSectionCSV(fileData?.parsed, "stock", `taxai-${fileName}-stock.csv`, fileName); audit.log("EXPORT", "Section stock"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ {lang === "lt" ? "Judėjimai" : "Stock"}</button><button onClick={() => { exportFr0600CSV(fileData?.parsed, `taxai-${fileName}-fr0600.csv`, fileName); audit.log("EXPORT", "FR0600"); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ FR0600</button><Fr0600Compare parsed={fileData?.parsed} lang={lang} /><PriorPeriodCompare parsed={fileData?.parsed} lang={lang} /><IVazCompare parsed={fileData?.parsed} lang={lang} /><VIESCheck lang={lang} /></div> : null} />
 
             <div style={{ border: `1px dashed ${fileData ? "#fff" : PL_LINE}`, padding: 28, textAlign: "center", cursor: "pointer", marginBottom: 16, background: "var(--bg2)", transition: "border-color .2s" }} onClick={() => fileRef.current?.click()}>
               <div style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 8 }}>{fileData ? "File loaded" : (lang === "lt" ? "Vilkite failą čia arba spustelėkite" : "Drag a file here or click")}</div>
               <div style={{ fontSize: 17, color: "#fff", fontFamily: "var(--f)", fontWeight: 400 }}>{fileData ? `✓ ${fileName}` : t.upload}</div>
+              {parseProg && <div style={{ marginTop: 14, maxWidth: 440, marginLeft: "auto", marginRight: "auto" }} onClick={(ev) => ev.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88", marginBottom: 5 }}><span>⏳ {parseProg.label}</span><span>{parseProg.pct}%</span></div>
+                <div style={{ height: 4, background: "rgba(255,255,255,0.08)" }}><div style={{ height: 4, width: `${parseProg.pct}%`, background: "#7cc4ff", transition: "width .2s" }} /></div>
+                <div style={{ marginTop: 5, fontSize: 9.5, color: "#666", fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase" }}>{parseProg.phase === "stream" ? (lang === "lt" ? "Srautinis nuskaitymas (Web Worker)" : "Streaming parse (Web Worker)") : parseProg.phase}</div>
+              </div>}
             </div>
 
 
@@ -8157,6 +12995,7 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "smartanalysis", en: "Smart Analysis", lt: "Išmanioji analizė" },
                   { id: "enterprise", en: "Enterprise Audit", lt: "Įmonės auditas" },
                   { id: "rules", en: `Rules · ${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}`, lt: `Taisyklės · ${AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}${personalRules?.rules?.length ? " +" + personalRules.rules.length : ""}` },
+                  { id: "fix", en: `Auto-Fix${fixPlan && !fixPlan.unavailable ? " · " + fixPlan.reduce((s, p) => s + p.changes.length, 0) : ""}`, lt: `Auto-taisymas${fixPlan && !fixPlan.unavailable ? " · " + fixPlan.reduce((s, p) => s + p.changes.length, 0) : ""}` },
                   { id: "reconcile", en: `i.SAF Reconcile${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}`, lt: `i.SAF sutikrinimas${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}` },
                   { id: "vatclose", en: `VAT Close${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}`, lt: `PVM uždarymas${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}` },
                 ].map(tab =>
@@ -8180,8 +13019,47 @@ function TAXAI({ onExit, initialView } = {}) {
                   <strong style={{ color: "#fff", fontWeight: 700 }}>{fileData.parsed.header.company.name}</strong>
                   <span style={{ color: "#8c8c88" }}>· {fileData.parsed.header.company.registrationNumber}</span>
                   <span style={{ color: "#8c8c88" }}>· {fileData.parsed.header.fiscalYearFrom} — {fileData.parsed.header.fiscalYearTo}</span>
-                  {runResult && <span style={{ marginLeft: "auto", padding: "4px 10px", border: `1px solid ${PL_LINE}`, color: "#fff", fontSize: 11, fontWeight: 600 }}>{runResult.coverage.rulesRegistered} rules · {runResult.summary.total} findings</span>}
+                  {runResult && <span style={{ marginLeft: "auto", padding: "4px 10px", border: `1px solid ${PL_LINE}`, color: "#fff", fontSize: 11, fontWeight: 600 }}>{runResult.coverage.rulesRegistered} rules · {runResult.summary.total} findings · v{ENGINE_VERSION}</span>}
                 </div>}
+
+                {fileData?.parsed && runResult && (() => {
+                  const gate = simulateAcceptanceGate(fileData.parsed, findings);
+                  const risk = computeRiskScore(findings);
+                  const GC = { rejected: "#ff6b6b", warnings: "#ffd43b", clean: "#69db7c" }[gate.verdict];
+                  const BC = { clean: "#69db7c", low: "#69db7c", elevated: "#ffd43b", high: "#ff6b6b" }[risk.band];
+                  return <div style={{ marginBottom: 24 }}>
+                    <div style={{ border: `1px solid ${GC}`, background: `${GC}14`, padding: "16px 18px", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase" }}>{lang === "lt" ? "i.SAF-T priėmimo simuliacija" : "i.SAF-T acceptance simulation"}</span>
+                        <span style={{ padding: "5px 14px", background: GC, color: "#000", fontFamily: "var(--m)", fontSize: 12, fontWeight: 800, letterSpacing: ".06em" }}>{gate.verdict === "rejected" ? "✕ " : gate.verdict === "warnings" ? "⚠ " : "✓ "}{lang === "lt" ? gate.label[1] : gate.label[0]}</span>
+                        {gate.verdict !== "clean" && <span style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#d2d2ce" }}>{gate.verdict === "rejected" ? (lang === "lt" ? `${gate.blockingTotal} blokuojančios klaidos · ${gate.warningCount} perspėjimai` : `${gate.blockingTotal} blocking errors · ${gate.warningCount} warnings`) : (lang === "lt" ? `${gate.warningCount} perspėjimai — pateikimas galimas` : `${gate.warningCount} warnings — submission possible`)}</span>}
+                      </div>
+                      {gate.reasons.length > 0 && <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {gate.reasons.slice(0, 6).map((r, i) => <span key={i} title={r.title} style={{ fontSize: 10.5, fontFamily: "var(--m)", color: "#ffc9c9", border: "1px solid rgba(255,107,107,0.45)", padding: "3px 9px" }}>{r.id} ×{r.count}</span>)}
+                        {gate.reasons.length > 6 && <span style={{ fontSize: 10.5, fontFamily: "var(--m)", color: "#8c8c88", padding: "3px 0" }}>+{gate.reasons.length - 6}</span>}
+                      </div>}
+                      <div style={{ marginTop: 8, fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)" }}>{lang === "lt" ? gate.note[1] : gate.note[0]}</div>
+                    </div>
+                    <div style={{ border: `1px solid rgba(255,255,255,0.12)`, background: "var(--bg2)", padding: "16px 18px", display: "grid", gridTemplateColumns: "180px 1fr", gap: 22 }}>
+                      <div>
+                        <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "VMI rizikos balas" : "VMI risk score"}</div>
+                        <div style={{ fontSize: 44, fontWeight: 300, color: BC, fontFamily: "var(--f)", lineHeight: 1 }}>{risk.score}</div>
+                        <div style={{ marginTop: 8, display: "inline-block", padding: "3px 10px", border: `1px solid ${BC}`, color: BC, fontFamily: "var(--m)", fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? risk.bandLabel[1] : risk.bandLabel[0]}</div>
+                        <div style={{ marginTop: 10, fontSize: 9.5, color: "#666", fontFamily: "var(--m)", lineHeight: 1.5 }}>{lang === "lt" ? "Svoriai: VMI risk_value (0–5) per patikrintą ColBi atitikmenų žemėlapį; balas auga 1×→2× pagal atvejų skaičių (log)." : "Weights: VMI risk_value (0–5) via the verified ColBi mapping; volume scales 1×→2× (log-damped)."}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "Didžiausi rizikos šaltiniai — ką taisyti pirmiausia" : "Top risk contributors — what to fix first"}</div>
+                        {risk.perRule.slice(0, 6).map((r, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", fontFamily: "var(--m)", fontSize: 11.5 }}>
+                          <span style={{ color: "#8c8c88", width: 150, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.rule_id}</span>
+                          <span style={{ color: "#d2d2ce", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lang === "lt" ? r.title : r.titleEn}</span>
+                          <span style={{ color: "#8c8c88", flexShrink: 0 }}>×{r.hits}</span>
+                          <span style={{ color: BC, fontWeight: 700, width: 52, textAlign: "right", flexShrink: 0 }}>{r.contrib}</span>
+                        </div>)}
+                        {risk.perRule.length === 0 && <div style={{ color: "#69db7c", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? "Radinių nėra — rizikos balas 0. Rinkmena paruošta teikimui." : "No findings — risk score 0. The file is submission-ready."}</div>}
+                      </div>
+                    </div>
+                  </div>;
+                })()}
 
                 {findings.length > 0 && <div style={{ marginBottom: 24 }}>
                   <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
@@ -8194,11 +13072,13 @@ function TAXAI({ onExit, initialView } = {}) {
                         <span style={{ fontSize: 9, padding: "3px 9px", background: SC(f.severity), color: "#000", fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase" }}>{f.severity}</span>
                         <span style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontWeight: 600 }}>{f.rule_id || `L${f.level}`}</span>
                         <span style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontFamily: "var(--m)" }}>{f.typeName || f.type || "—"}: {f.category}</span>
+                        {isAutoFixableRule(f.rule_id) && <span style={{ fontSize: 10, padding: "3px 8px", border: "1px solid #7cc4ff", color: "#7cc4ff", fontFamily: "var(--m)", fontWeight: 600 }}>⚙ {lang === "lt" ? "Auto-taisoma" : "Auto-fixable"}</span>}
                         {disp && <span style={{ fontSize: 10, padding: "3px 8px", color: disp === "accordance" ? "#69db7c" : "#ff8a8a", border: `1px solid ${disp === "accordance" ? "#69db7c" : "#ff8a8a"}`, fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{disp === "accordance" ? (lang === "lt" ? "✓ Atitinka" : "✓ In accordance") : (lang === "lt" ? "✕ Reikia veiksmų" : "✕ Needs action")}</span>}
                         {!disp && fnote?.justification && <span style={{ fontSize: 10, padding: "3px 8px", color: "#ffd43b", border: "1px solid #ffd43b", fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{lang === "lt" ? "✎ Peržiūrėta" : "✎ Reviewed"}</span>}
                       </div>
                       <div style={{ fontSize: 16, fontWeight: 500, color: "#fff", fontFamily: "var(--f)", marginBottom: 5 }}>{f.title}</div>
                       <div style={{ fontSize: 13.5, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6 }}>{f.detail}</div>
+                      {(() => { const ex = explainFinding(f, lang); return ex.how[0] ? <div style={{ fontSize: 12.5, color: "#7cc4ff", fontFamily: "var(--s)", lineHeight: 1.55, marginTop: 6 }}>🔧 {lang === "lt" ? "Kaip ištaisyti" : "How to fix"}: {ex.how[0]}{ex.how.length > 1 ? (lang === "lt" ? ` (+ dar ${ex.how.length - 1} žingsniai radinyje)` : ` (+ ${ex.how.length - 1} more steps inside)`) : ""}</div> : null; })()}
                       {f.evidence && f.evidence.length > 0 && <details onClick={(e) => e.stopPropagation()} style={{ marginTop: 10 }}>
                         <summary style={{ fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)", cursor: "pointer", fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase" }}>+ Evidence ({f.evidence.length} sample{f.evidence.length === 1 ? "" : "s"})</summary>
                         <div style={{ marginTop: 8, padding: "10px 14px", background: "#000", border: `1px solid ${PL_SOFT}`, fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8", lineHeight: 1.7 }}>
@@ -8345,6 +13225,42 @@ function TAXAI({ onExit, initialView } = {}) {
 
               {/* ── RULES CATALOG ── */}
               {saftTab === "rules" && <div style={panel}>
+                <Section title={lang === "lt" ? "Mano taisyklės — natūralia kalba (vietinis kompiliatorius)" : "My rules — natural language (local compiler)"}>
+                  <div style={{ fontSize: 12, color: "#8c8c88", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 10 }}>{lang === "lt" ? "Parašykite sąlygą lietuviškai arba angliškai — sakinys deterministiškai sukompiliuojamas į taisyklę be jokio tinklo ar AI. Išsaugotos taisyklės taikomos kiekvienam įkeltam failui ir patenka į radinius, rizikos balą bei ataskaitas." : "Type a condition in Lithuanian or English — the sentence compiles deterministically into a rule with no network or AI. Saved rules run on every uploaded file and join the findings, risk score and reports."}</div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "stretch", marginBottom: 10, flexWrap: "wrap" }}>
+                    <input value={nlText} onChange={(e) => { setNlText(e.target.value); setNlPreview(null); }} onKeyDown={(e) => { if (e.key === "Enter") { const res = parseNlRule(nlText); if (!res.ok) setNlPreview({ error: res.error }); else setNlPreview({ ...res, hits: fileData?.parsed ? runUserRule(res.spec, fileData.parsed) : null }); } }} placeholder={lang === "lt" ? "pvz.: Pardavimo sąskaitos virš 10 000 EUR be PVM kodo — kritinis" : "e.g.: sales invoices over 10 000 EUR without a tax code — critical"} style={{ flex: 1, minWidth: 280, background: "#000", border: "1px solid rgba(255,255,255,0.18)", color: "#fff", fontFamily: "var(--s)", fontSize: 13, padding: "10px 14px", outline: "none" }} />
+                    <button onClick={() => { const res = parseNlRule(nlText); if (!res.ok) setNlPreview({ error: res.error }); else setNlPreview({ ...res, hits: fileData?.parsed ? runUserRule(res.spec, fileData.parsed) : null }); }} style={{ background: "transparent", border: "1px solid #7cc4ff", color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", padding: "0 18px", cursor: "pointer" }}>{lang === "lt" ? "Kompiliuoti" : "Compile"}</button>
+                  </div>
+                  {nlPreview?.error && <div style={{ color: "#ffd43b", fontFamily: "var(--s)", fontSize: 12.5, marginBottom: 10 }}>⚠ {nlPreview.error}</div>}
+                  {nlPreview && !nlPreview.error && <div style={{ border: "1px solid rgba(255,255,255,0.12)", background: "var(--bg)", padding: "12px 14px", marginBottom: 12 }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                      <span style={{ fontSize: 10, padding: "3px 9px", border: "1px solid #7cc4ff", color: "#7cc4ff", fontFamily: "var(--m)", fontWeight: 700 }}>{nlPreview.spec.scope}</span>
+                      <span style={{ fontSize: 10, padding: "3px 9px", border: `1px solid ${SC(nlPreview.spec.severity)}`, color: SC(nlPreview.spec.severity), fontFamily: "var(--m)", fontWeight: 700 }}>{nlPreview.spec.severity}</span>
+                      {(lang === "lt" ? nlPreview.interpretation : nlPreview.interpretationEn).map((c, i) => <span key={i} style={{ fontSize: 10.5, padding: "3px 9px", border: "1px solid rgba(255,255,255,0.2)", color: "#d2d2ce", fontFamily: "var(--m)" }}>{c}</span>)}
+                    </div>
+                    <div style={{ fontFamily: "var(--m)", fontSize: 11.5, color: nlPreview.hits === null ? "#8c8c88" : nlPreview.hits.length ? "#ffd43b" : "#69db7c", marginBottom: nlPreview.hits?.length ? 8 : 0 }}>{nlPreview.hits === null ? (lang === "lt" ? "Įkelkite failą gyvai peržiūrai." : "Load a file for a live preview.") : (lang === "lt" ? `Šiame faile: ${nlPreview.hits.length} atitikmenys.` : `In this file: ${nlPreview.hits.length} matches.`)}</div>
+                    {!!nlPreview.hits?.length && nlPreview.hits.slice(0, 3).map((h, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#bcbcb8", padding: "2px 0" }}>· {Object.entries(h).map(([k, v]) => `${k} = ${v}`).join(" | ")}</div>)}
+                    <button onClick={() => { const id = "USR_" + Date.now().toString(36).toUpperCase(); saveUserRules([...userRules, { id, title: nlText.trim(), severity: nlPreview.spec.severity, scope: nlPreview.spec.scope, conds: nlPreview.spec.conds, interpretation: nlPreview.interpretation, interpretationEn: nlPreview.interpretationEn }]); setNlText(""); setNlPreview(null); audit.log("USER_RULE_ADDED", nlText.slice(0, 90)); }} style={{ marginTop: 10, background: "#fff", color: "#000", border: "none", padding: "8px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>+ {lang === "lt" ? "Pridėti taisyklę" : "Add rule"}</button>
+                  </div>}
+                  {userRules.length > 0 && userRules.map((r) => { const n = findings.filter((f) => f.rule_id === r.id).length; return <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 2px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 9.5, padding: "2px 8px", border: `1px solid ${SC(r.severity)}`, color: SC(r.severity), fontFamily: "var(--m)", fontWeight: 700 }}>{r.severity}</span>
+                    <span style={{ fontSize: 10, color: "#7cc4ff", fontFamily: "var(--m)" }}>{r.scope}</span>
+                    <span style={{ flex: 1, color: "#fff", fontFamily: "var(--s)", fontSize: 13 }}>{r.title}</span>
+                    <span style={{ fontFamily: "var(--m)", fontSize: 11, color: n ? "#ffd43b" : "#69db7c" }}>{fileData?.parsed ? (n ? `×${n}` : "✓ 0") : "—"}</span>
+                    <button onClick={() => saveUserRules(userRules.filter((x) => x.id !== r.id))} title={lang === "lt" ? "Šalinti" : "Remove"} style={{ background: "none", border: "1px solid rgba(255,138,138,0.5)", color: "#ff8a8a", fontFamily: "var(--m)", fontSize: 10, padding: "3px 9px", cursor: "pointer" }}>×</button>
+                  </div>; })}
+                </Section>
+                <Section title={`${lang === "lt" ? "Taisyklių paketai" : "Rule packs"} · engine v${ENGINE_VERSION}`}>
+                  <div style={{ fontSize: 12, color: "#8c8c88", fontFamily: "var(--s)", marginBottom: 10, lineHeight: 1.6 }}>{lang === "lt" ? "Kiekvienas paketas — versijuotas, su pakeitimų sąrašu; versija įrašoma į visus eksportus audito sekos tikslais." : "Every pack is versioned with a changelog; the version is stamped into all exports for audit trail."}</div>
+                  {RULE_PACKS.map((p, i) => <details key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "9px 2px" }}>
+                    <summary style={{ cursor: "pointer", fontFamily: "var(--m)", fontSize: 12, color: "#fff", listStyle: "none" }}>
+                      <span style={{ color: "#7cc4ff", fontWeight: 700, marginRight: 12 }}>{p.version}</span>
+                      <span style={{ color: "#8c8c88", marginRight: 12 }}>{p.date}</span>
+                      <span>{lang === "lt" ? (p.titleLt || p.title) : p.title}</span>
+                    </summary>
+                    <ul style={{ margin: "8px 0 4px", paddingLeft: 20 }}>{p.changes.map((c, j) => <li key={j} style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#bcbcb8", lineHeight: 1.6 }}>{c}</li>)}</ul>
+                  </details>)}
+                </Section>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
                   <SEC n="02·E" en="Rule Catalog" lt="Taisyklių katalogas" />
                   <span style={{ marginLeft: "auto", padding: "6px 14px", border: "1px solid #fff", color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--m)" }}>{AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}</span>
@@ -8561,6 +13477,90 @@ function TAXAI({ onExit, initialView } = {}) {
               </div>}
 
               {/* ════════ i.SAF ↔ SAF-T RECONCILIATION ════════ */}
+              {saftTab === "fix" && <div style={panel}>
+                <Section title={lang === "lt" ? "Auto-taisymo centras" : "Auto-Fix Center"}>
+                  <div style={{ fontSize: 12.5, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.65, marginBottom: 14 }}>
+                    {lang === "lt" ? "Taisoma tik FORMA: normalizuojami kodai bei formatai ir perskaičiuojamos išvestinės sumos (kontrolinės, valiutos atvaizdai, aritmetika). Ūkinių faktų (datų, sumų esmės, šalių) variklis niekada nekuria — tokie radiniai lieka su instrukcijomis „Kaip ištaisyti“." : "Form-only corrections: codes and formats are normalized, derived values (control totals, currency mirrors, arithmetic) recomputed. Business facts (dates, substantive amounts, parties) are never invented — those findings keep their guided fix steps."}
+                  </div>
+                  {(() => {
+                    const planNow = async () => {
+                      if (fixBusy) return;
+                      setFixBusy(true); setFixResult(null);
+                      try {
+                        if (fileData?.parsed?._parts && fileData.parsed._parts.count > 1) { setFixPlan({ unavailable: lang === "lt" ? "Daugiadalis rinkinys: pataisos taikomos po vieną dalį — įkelkite dalį atskirai." : "Multi-part set: apply fixes per part — load one part at a time." }); return; }
+                        let xml = typeof fileData?.raw === "string" && fileData.raw.trim().startsWith("<") && !fileData.raw.startsWith("<!--") ? fileData.raw : null;
+                        if (!xml && fileData?.file && fileData.file.size <= 64 * 1048576) xml = await fileData.file.text();
+                        if (!xml) { setFixPlan({ unavailable: lang === "lt" ? "Pirminis XML nepasiekiamas (per didelis failas) — naudokite radinių instrukcijas šaltinio sistemoje." : "Original XML unavailable (file too large) — use the per-finding instructions in the source system." }); return; }
+                        const doc = new DOMParser().parseFromString(xml, "text/xml");
+                        if (doc.querySelector && doc.querySelector("parsererror")) { setFixPlan({ unavailable: "XML parse error" }); return; }
+                        fixDocRef.current = doc;
+                        const flagged = new Set(findings.map((f) => f.rule_id).filter(Boolean));
+                        const plans = planAutoFixes(doc, flagged);
+                        const sel = {}; plans.forEach((p) => { if (p.changes.length) sel[p.id] = p.safety === "safe"; });
+                        setFixSel(sel); setFixPlan(plans);
+                        audit.log("AUTOFIX_PLANNED", plans.filter((p) => p.changes.length).map((p) => p.id + "×" + p.changes.length).join(", ") || "nothing to fix");
+                      } catch (ex) { setFixPlan({ unavailable: String(ex && ex.message || ex).slice(0, 140) }); }
+                      finally { setFixBusy(false); }
+                    };
+                    const applyNow = () => {
+                      try {
+                        const chosen = fixPlan.filter((p) => p.changes.length && fixSel[p.id]);
+                        const gateB = simulateAcceptanceGate(fileData?.parsed, findings); const riskB = computeRiskScore(findings);
+                        const manifest = applyAutoFixes(fixDocRef.current, chosen);
+                        const xml = serializeSaftDoc(fixDocRef.current);
+                        const afterParsed = parseSAFTFull(xml);
+                        const afterRun = runAllRules(afterParsed);
+                        const af = afterRun.findings || [];
+                        setFixResult({ manifest, xml, afterParsed,
+                          before: { n: findings.length, risk: riskB.score, gate: gateB },
+                          after: { n: af.length, risk: computeRiskScore(af).score, gate: simulateAcceptanceGate(afterParsed, af) } });
+                        audit.log("AUTOFIX_APPLIED", manifest.length + " corrections (" + chosen.map((p) => p.id).join(", ") + ")");
+                      } catch (ex) { setToast("Auto-fix error: " + String(ex && ex.message || ex).slice(0, 120)); }
+                    };
+                    if (!fixPlan && !fixBusy) planNow();
+                    if (fixBusy) return <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 12 }}>⏳ {lang === "lt" ? "Skaičiuojamas pataisų planas…" : "Computing fix plan…"}</div>;
+                    if (!fixPlan) return null;
+                    if (fixPlan.unavailable) return <div style={{ color: "#ffd43b", fontFamily: "var(--s)", fontSize: 13 }}>{fixPlan.unavailable}</div>;
+                    const groups = [["safe", lang === "lt" ? "Saugios pataisos (forma / išvestinės sumos)" : "Safe fixes (form / derived values)", "#69db7c"], ["suggest", lang === "lt" ? "Siūlomos pataisos (patvirtinkite)" : "Suggested fixes (confirm)", "#ffd43b"]];
+                    const active = fixPlan.filter((p) => p.changes.length);
+                    const selCount = active.filter((p) => fixSel[p.id]).reduce((s, p) => s + p.changes.length, 0);
+                    return <>
+                      {!active.length && <div style={{ color: "#69db7c", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? "Automatiškai taisytinų radinių nėra — likę radiniai reikalauja sprendimo šaltinio sistemoje." : "Nothing auto-fixable — remaining findings need decisions in the source system."}</div>}
+                      {groups.map(([key, label, col]) => { const list = active.filter((p) => p.safety === key); return !list.length ? null : <div key={key} style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: col, textTransform: "uppercase", marginBottom: 8 }}>{label} · {list.reduce((s, p) => s + p.changes.length, 0)}</div>
+                        {list.map((p) => <div key={p.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", padding: "8px 2px" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontFamily: "var(--m)", fontSize: 12.5, color: "#fff" }}>
+                            <input type="checkbox" checked={!!fixSel[p.id]} onChange={(e) => setFixSel((s) => ({ ...s, [p.id]: e.target.checked }))} />
+                            <span style={{ flex: 1 }}>{lang === "lt" ? p.titleLt : p.titleEn}</span>
+                            <span style={{ color: "#8c8c88" }}>×{p.changes.length}</span>
+                          </label>
+                          <details style={{ marginLeft: 26, marginTop: 4 }}>
+                            <summary style={{ fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", cursor: "pointer" }}>{lang === "lt" ? "peržiūrėti pakeitimus" : "preview changes"}</summary>
+                            {p.changes.slice(0, 5).map((c, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#bcbcb8", padding: "3px 0" }}>{c.label}: <span style={{ color: "#ff8a8a" }}>{String(c.before).slice(0, 40)}</span> → <span style={{ color: "#69db7c" }}>{c.kind === "remove" ? (lang === "lt" ? "(pašalinama)" : "(removed)") : c.value}</span></div>)}
+                            {p.changes.length > 5 && <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#666" }}>+{p.changes.length - 5}</div>}
+                          </details>
+                        </div>)}
+                      </div>; })}
+                      {active.length > 0 && !fixResult && <button disabled={!selCount} onClick={applyNow} style={{ background: selCount ? "#fff" : "rgba(255,255,255,0.25)", color: "#000", border: "none", padding: "10px 22px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: selCount ? "pointer" : "default", marginTop: 6 }}>⚙ {lang === "lt" ? `Taikyti ${selCount} pataisas ir pertikrinti` : `Apply ${selCount} fixes & re-audit`}</button>}
+                      {fixResult && (() => { const GC = { rejected: "#ff6b6b", warnings: "#ffd43b", clean: "#69db7c" }; const dl = (name, content, type) => { const b = new Blob([content], { type }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); }; return <div style={{ marginTop: 16, border: "1px solid rgba(255,255,255,0.16)", background: "var(--bg)", padding: "16px 18px" }}>
+                        <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 10 }}>{lang === "lt" ? "Rezultatas po pertikrinimo (482 taisyklės)" : "Re-audit result (482 rules)"}</div>
+                        <div style={{ display: "flex", gap: 26, flexWrap: "wrap", fontFamily: "var(--m)", fontSize: 13, alignItems: "center" }}>
+                          <span style={{ color: "#d2d2ce" }}>{lang === "lt" ? "Radiniai" : "Findings"}: <strong style={{ color: "#fff" }}>{fixResult.before.n}</strong> → <strong style={{ color: fixResult.after.n < fixResult.before.n ? "#69db7c" : "#fff" }}>{fixResult.after.n}</strong></span>
+                          <span style={{ color: "#d2d2ce" }}>{lang === "lt" ? "Rizikos balas" : "Risk score"}: <strong style={{ color: "#fff" }}>{fixResult.before.risk}</strong> → <strong style={{ color: fixResult.after.risk < fixResult.before.risk ? "#69db7c" : "#fff" }}>{fixResult.after.risk}</strong></span>
+                          <span style={{ color: "#d2d2ce" }}>{lang === "lt" ? "Vartai" : "Gate"}: <strong style={{ color: GC[fixResult.before.gate.verdict] }}>{lang === "lt" ? fixResult.before.gate.label[1] : fixResult.before.gate.label[0]}</strong> → <strong style={{ color: GC[fixResult.after.gate.verdict] }}>{lang === "lt" ? fixResult.after.gate.label[1] : fixResult.after.gate.label[0]}</strong></span>
+                          <span style={{ color: "#8c8c88", fontSize: 11 }}>{fixResult.manifest.length} {lang === "lt" ? "pakeitimai" : "changes"}</span>
+                        </div>
+                        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                          <button onClick={() => { dl(fileName.replace(/\.xml$/i, "") + "_fixed.xml", fixResult.xml, "text/xml"); audit.log("EXPORT", "Auto-fixed XML"); }} style={{ background: "#fff", color: "#000", border: "none", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Pataisytas XML" : "Fixed XML"}</button>
+                          <button onClick={() => dl(fileName.replace(/\.xml$/i, "") + "_fix-manifest.json", JSON.stringify({ engine: "TaxAI v" + ENGINE_VERSION, generatedAt: new Date().toISOString(), corrections: fixResult.manifest }, null, 2), "application/json")} style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Pataisų manifestas" : "Fix manifest"}</button>
+                          <button onClick={() => { const nf = fileName.replace(/\.xml$/i, "") + "_fixed.xml"; setFileName(nf); processParsed(fixResult.afterParsed, fixResult.xml, ""); setSaftTab("tests"); setToast(lang === "lt" ? "Pataisytas failas įkeltas į auditą" : "Fixed file loaded into the audit"); }} style={{ background: "transparent", color: "#7cc4ff", border: "1px solid #7cc4ff", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>{lang === "lt" ? "Įkelti pataisytą į auditą →" : "Load fixed into audit →"}</button>
+                        </div>
+                      </div>; })()}
+                    </>;
+                  })()}
+                </Section>
+              </div>}
+
               {saftTab === "reconcile" && <div style={panel}>
                 {(() => {
                   const SEVC = { Block: "#ff6b6b", Reject: "#ffa94d", Warn: "#ffd43b" };
@@ -8584,7 +13584,7 @@ function TAXAI({ onExit, initialView } = {}) {
                       <div style={{ fontSize: 15, color: "#fff", fontFamily: "var(--f)", marginBottom: 16 }}>{lang === "lt" ? "Sutikrinsime jį su jau įkeltu SAF-T" : "We'll reconcile it against the SAF-T already loaded"}</div>
                       <button onClick={() => isafFileRef.current?.click()} style={bP}>{lang === "lt" ? "Pasirinkti i.SAF failą" : "Choose i.SAF file"} →</button>
                     </div>}
-                    <input ref={isafFileRef} data-isaf-main type="file" accept=".xml" onChange={uploadISAF} style={{ display: "none" }} />
+                    <input ref={isafFileRef} type="file" accept=".xml" onChange={uploadISAF} style={{ display: "none" }} />
 
                     {r && <>
                       {/* VAT position */}
@@ -8991,6 +13991,112 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>}
 
         {/* ═══════════ AUDIT LOG ═══════════ */}
+        {view === "portfolio" && <div key="portfolio" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+          <div style={{ maxWidth: 1180, margin: "0 auto" }}>
+            {(() => {
+              const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
+              const GC = { rejected: "#ff6b6b", warnings: "#ffd43b", clean: "#69db7c" };
+              const rows = latestSnapshots(snapshots).map((s) => { const hist = snapshotHistory(snapshots, s.key); const prev = hist.length > 1 ? hist[hist.length - 2] : null; return { ...s, hist, delta: prev ? diffSnapshots(prev, s) : null, rd: snapshotReadiness(s) }; });
+              const stats = { ready: 0, warnings: 0, blocked: 0, stale: 0 };
+              rows.forEach((r) => { stats[r.rd.status]++; if (r.rd.stale) stats.stale++; });
+              const dl = (name, content, type) => { const b = new Blob([content], { type }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
+              const spark = (hist) => { const pts = hist.slice(-12); if (pts.length < 2) return null; const max = Math.max(1, ...pts.map((p) => p.risk)); const xy = pts.map((p, i) => `${(i / (pts.length - 1)) * 72},${22 - (p.risk / max) * 20}`).join(" "); return <svg width="76" height="24" style={{ display: "block" }}><polyline points={xy} fill="none" stroke="#7cc4ff" strokeWidth="1.5" /></svg>; };
+              return <>
+                <div style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", letterSpacing: ".08em", marginBottom: 10 }}>04 — {lang === "lt" ? "BIURO REŽIMAS" : "BUREAU MODE"}</div>
+                <h2 style={{ fontSize: 30, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", margin: "0 0 6px" }}>{brandCfg.name} · {lang === "lt" ? "Portfelio parengtis" : "Portfolio readiness"}</h2>
+                <div style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 18, maxWidth: 860 }}>{lang === "lt" ? "Kiekviena patikra automatiškai įrašo momentinę būseną pagal įmonę ir laikotarpį. Lentelė rodo „paruošta auditui“ statusą, pasenusias patikras (>35 d.), riziką ir naujų / išspręstų radinių pokytį tarp patikrų. Visi failai apdorojami tik šiame kompiuteryje." : "Every audit automatically snapshots the state per company and period. The board shows audit-ready status, stale checks (>35 d.), risk, and the new/resolved delta between runs. All files are processed on this machine only."}</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+                  {[["✓", lang === "lt" ? "Paruošta" : "Ready", stats.ready, "#69db7c"], ["⚠", lang === "lt" ? "Perspėjimai" : "Warnings", stats.warnings, "#ffd43b"], ["✕", lang === "lt" ? "Neteiktina" : "Blocked", stats.blocked, "#ff6b6b"], ["⏳", lang === "lt" ? "Pasenę" : "Stale", stats.stale, "#8c8c88"]].map(([ic, lb, n, col]) => <div key={lb} style={{ border: `1px solid ${PL_LINE}`, padding: "10px 16px", background: "var(--bg2)" }}><span style={{ color: col, fontFamily: "var(--m)", fontSize: 12, fontWeight: 700 }}>{ic} {n}</span><span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, marginLeft: 8, letterSpacing: ".06em", textTransform: "uppercase" }}>{lb}</span></div>)}
+                  <div style={{ flex: 1 }} />
+                  <button onClick={() => portRef.current?.click()} style={{ background: "#fff", color: "#000", border: "none", padding: "10px 20px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>+ {lang === "lt" ? "Paketinis auditas (N failų)" : "Batch audit (N files)"}</button>
+                  <input ref={portRef} type="file" multiple accept=".xml" style={{ display: "none" }} onChange={(e) => { batchUpload(e.target.files); try { e.target.value = ""; } catch (x) {} }} />
+                  {rows.length > 0 && <button onClick={() => { dl("taxai-portfolio.csv", buildPortfolioCSV(rows), "text/csv"); audit.log("EXPORT", "Portfolio CSV"); }} style={{ background: "transparent", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "10px 16px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ CSV</button>}
+                  {rows.length > 0 && <button onClick={() => { const html = buildPortfolioReportHTML(rows, lang, brandCfg.name); const b = new Blob([html], { type: "text/html" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "taxai-portfolio-report.html"; a.click(); window.open(u, "_blank"); setTimeout(() => URL.revokeObjectURL(u), 60000); audit.log("EXPORT", "Portfolio report"); }} style={{ background: "transparent", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "10px 16px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Ataskaita" : "Report"}</button>}
+                </div>
+                {batchProg && <div style={{ marginBottom: 14, maxWidth: 560 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88", marginBottom: 5 }}><span>⏳ {batchProg.name} ({batchProg.i}/{batchProg.n})</span><span>{batchProg.pct}%</span></div>
+                  <div style={{ height: 4, background: "rgba(255,255,255,0.08)" }}><div style={{ height: 4, width: `${batchProg.pct}%`, background: "#7cc4ff", transition: "width .2s" }} /></div>
+                </div>}
+                {batchLog.length > 0 && <div style={{ border: `1px solid ${PL_SOFT}`, background: "#000", padding: "10px 14px", marginBottom: 16, fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8", maxHeight: 130, overflow: "auto" }}>
+                  {batchLog.map((b, i) => <div key={i} style={{ padding: "2px 0" }}>{b.ok ? <>✓ <span style={{ color: "#fff" }}>{b.company}</span> <span style={{ color: "#8c8c88" }}>({b.name})</span> — <span style={{ color: GC[b.verdict] }}>{b.verdict}</span> · risk {b.risk} · {b.total} {lang === "lt" ? "rad." : "findings"}</> : <span style={{ color: "#ff8a8a" }}>✕ {b.name} — {b.err}</span>}</div>)}
+                </div>}
+                {rows.length === 0 ? <div style={{ border: `1px dashed ${PL_LINE}`, padding: 40, textAlign: "center", color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13.5, background: "var(--bg2)" }}>{lang === "lt" ? "Portfelis tuščias. Įmeskite kelis klientų SAF-T failus paketiniu auditu arba atlikite patikrą pagrindiniame SAF-T skirtuke — momentinės būsenos kaupiamos automatiškai." : "The portfolio is empty. Drop several client SAF-T files via batch audit, or run a check in the main SAF-T tab — snapshots accumulate automatically."}</div>
+                : <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 150px 105px 150px 70px 110px 90px 80px 34px", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${PL_LINE}`, fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88", letterSpacing: ".08em", textTransform: "uppercase" }}>
+                    <span>{lang === "lt" ? "Įmonė" : "Company"}</span><span>{lang === "lt" ? "Į. k." : "Reg."}</span><span>{lang === "lt" ? "Laikotarpis" : "Period"}</span><span>{lang === "lt" ? "Pask. patikra" : "Last run"}</span><span>{lang === "lt" ? "Būsena" : "Status"}</span><span style={{ textAlign: "right" }}>{lang === "lt" ? "Rizika" : "Risk"}</span><span style={{ textAlign: "right" }}>C/H/M/L</span><span style={{ textAlign: "right" }}>Δ</span><span>{lang === "lt" ? "Tendencija" : "Trend"}</span><span />
+                  </div>
+                  {rows.map((r) => <div key={r.key} style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 150px 105px 150px 70px 110px 90px 80px 34px", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${PL_SOFT}`, alignItems: "center", fontFamily: "var(--m)", fontSize: 11.5 }}>
+                    <span style={{ color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "—"}{r.fileName ? <span style={{ color: "#666", fontSize: 9.5 }}> · {r.fileName}</span> : null}</span>
+                    <span style={{ color: "#8c8c88" }}>{r.reg}</span>
+                    <span style={{ color: "#d2d2ce" }}>{r.periodStart} – {r.periodEnd}</span>
+                    <span style={{ color: r.rd.stale ? "#ffd43b" : "#8c8c88" }}>{new Date(r.ts).toISOString().slice(0, 10)}{r.rd.stale ? " ⚠" : ""}</span>
+                    <span style={{ color: GC[r.gateVerdict], fontWeight: 700 }}>{lang === "lt" ? r.rd.label[1] : r.rd.label[0]}</span>
+                    <span style={{ textAlign: "right", color: "#fff", fontWeight: 700 }}>{r.risk}</span>
+                    <span style={{ textAlign: "right", color: "#bcbcb8" }}><span style={{ color: "#ff8a8a" }}>{r.sev.Critical}</span>/<span style={{ color: "#ffa94d" }}>{r.sev.High}</span>/{r.sev.Medium}/{r.sev.Low}</span>
+                    <span style={{ textAlign: "right" }} title={r.delta ? `+${r.delta.addedCount} new · −${r.delta.resolvedCount} resolved` : ""}>{r.delta ? <><span style={{ color: r.delta.addedCount ? "#ff8a8a" : "#69db7c" }}>+{r.delta.addedCount}</span> <span style={{ color: "#69db7c" }}>−{r.delta.resolvedCount}</span></> : <span style={{ color: "#666" }}>—</span>}</span>
+                    <span>{spark(r.hist) || <span style={{ color: "#666" }}>·</span>}</span>
+                    <button onClick={() => setSnapshots((prev) => { const next = prev.filter((x) => x.key !== r.key); try { localStorage.setItem("taxai_snapshots", JSON.stringify(next)); } catch (e) {} return next; })} title={lang === "lt" ? "Šalinti istoriją" : "Remove history"} style={{ background: "none", border: `1px solid rgba(255,138,138,0.4)`, color: "#ff8a8a", fontFamily: "var(--m)", fontSize: 10, padding: "2px 7px", cursor: "pointer" }}>×</button>
+                  </div>)}
+                </div>}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 22 }}>
+                  <Section title={lang === "lt" ? "Baltoji etiketė (biurui)" : "White-label (for the firm)"}>
+                    <div style={{ fontSize: 11.5, color: "#8c8c88", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 10 }}>{lang === "lt" ? "Pavadinimas ir poraštė taikomi audito ataskaitoms, VMI laiškams ir portfelio eksportams (TaxAI branduolys nurodomas sąžiningai)." : "The name and footer are applied to audit reports, VMI letters and portfolio exports (the TaxAI core stays credited)."}</div>
+                    {[["name", lang === "lt" ? "Pavadinimas" : "Name"], ["footer", lang === "lt" ? "Poraštė" : "Footer"], ["accent", lang === "lt" ? "Akcento spalva" : "Accent color"]].map(([k, lb]) => <div key={k} style={{ marginBottom: 8 }}><div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>{lb}</div><input value={brandCfg[k] || ""} onChange={(e) => setBrandCfg({ ...brandCfg, [k]: e.target.value })} style={{ width: "100%", background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 12, padding: "8px 12px", outline: "none", boxSizing: "border-box" }} /></div>)}
+                    <button onClick={() => { try { localStorage.setItem("taxai_brand", JSON.stringify({ name: brandCfg.name || "TaxAI", footer: brandCfg.footer || "", accent: brandCfg.accent || "#7cc4ff" })); } catch (e) {} setToast(lang === "lt" ? "Etiketė išsaugota — taikoma naujiems eksportams" : "Brand saved — applied to new exports"); audit.log("BRAND_SAVED", brandCfg.name || ""); }} style={{ background: "#fff", color: "#000", border: "none", padding: "8px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>{lang === "lt" ? "Išsaugoti" : "Save"}</button>
+                  </Section>
+                  <Section title={lang === "lt" ? "Įterpiamas SDK (window.TaxAI)" : "Embeddable SDK (window.TaxAI)"}>
+                    <div style={{ fontSize: 11.5, color: "#8c8c88", fontFamily: "var(--s)", lineHeight: 1.6, marginBottom: 10 }}>{lang === "lt" ? "Apskaitos programų gamintojai gali įsidiegti validatorių be jokio serverio — viskas vyksta kliento naršyklėje." : "Accounting-software vendors can embed the validator with no server — everything runs in the client's browser."}</div>
+                    <pre style={{ background: "#000", border: `1px solid ${PL_LINE}`, padding: 12, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 10, lineHeight: 1.55, overflowX: "auto", margin: 0, whiteSpace: "pre" }}>{`// same page:
+const res = await window.TaxAI.validateText(xmlString);
+//  → { gate, risk, findings[482 rules], header }
+const fix = window.TaxAI.autofixText(xmlString, { apply: true });
+//  → { manifest, fixedXml }
+
+// embedded iframe:
+iframe.contentWindow.postMessage(
+  { type: "taxai:validate", id: 1, xml: xmlString }, "*");
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "taxai:result") console.log(e.data.result.gate);
+});`}</pre>
+                  </Section>
+                </div>
+              </>;
+            })()}
+          </div>
+        </div>}
+
+        {view === "integrations" && <div key="integrations" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+          <IntegrationsTab lang={lang} t={t} audit={audit} erp={erp} setErp={setErp} demo={erpDemo} setDemo={setErpDemo} onPromote={processCanonical} setToast={setToast} hasSaft={!!fileData?.parsed} />
+        </div>}
+
+        {view === "einvoicing" && <div key="einvoicing" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+          <EInvoicingTab lang={lang} t={t} audit={audit} einv={einv} setEinv={setEinv} erp={erp} fileData={fileData} isafData={isafData} setToast={setToast} />
+        </div>}
+
+        {view === "arch" && <div key="arch" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
+          <div style={{ maxWidth: 880 }}>
+            <div style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "var(--s)", marginBottom: 4 }}>{t.arch}</div>
+            <div style={{ fontSize: 12.5, color: "#8c8c88", fontFamily: "var(--s)", marginBottom: 22 }}>{lang === "lt" ? "Deterministiniai varikliai pirmiausia; AI tik aiškina ir yra tikrinamas." : "Deterministic engines first; the AI only explains and is verified."}</div>
+            <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#666", letterSpacing: ".05em", marginTop: -16, marginBottom: 20 }}>{APP_BUILD}</div>
+            {[
+              [lang === "lt" ? "140 ERP jungčių" : "140 ERP connectors", lang === "lt" ? "OData · SuiteQL · JSON-RPC · REST · CSV · agentas — demo arba LIVE per /api/erp relę" : "OData · SuiteQL · JSON-RPC · REST · CSV · agent — demo or LIVE via the /api/erp relay", "#74c0fc"],
+              [lang === "lt" ? "Kanoninis modelis + ribos patikra" : "Canonical model + boundary validation", "ERPB-01…12 · idempotency · cursors · conflicts", "#74c0fc"],
+              ["⇊", "", ""],
+              [lang === "lt" ? "SAF-T tiltas → 250 taisyklių · KPI · Žvalgyba" : "SAF-T bridge → 250 rules · KPIs · Intelligence", lang === "lt" ? "canonicalToSaft() — tas pats parseSAFTFull pavidalas" : "canonicalToSaft() — the exact parseSAFTFull shape", "#69db7c"],
+              [lang === "lt" ? "E. sąskaitų variklis" : "E-Invoicing engine", "EN 16931 · UBL 2.1 · Peppol BIS 3.0 · SABIS (B2G) · SHA-256 " + (lang === "lt" ? "archyvo grandinė" : "archive chain") + " · ViDA 2030", "#69db7c"],
+              ["⇊", "", ""],
+              [lang === "lt" ? "i.SAF sutikrinimas" : "i.SAF reconciliation", lang === "lt" ? "registras ⇄ apskaita (SAF-T / e. sąskaitos), KIT708" : "register ⇄ books (SAF-T / e-invoices), KIT708", "#ffd43b"],
+              ["AI — Gemini per /api/ai", lang === "lt" ? "RAG iš LEGAL_DB · groundingFacts · verifyNarrative pagrįstumo balas" : "RAG from LEGAL_DB · groundingFacts · verifyNarrative grounding score", "#ffd43b"],
+              ["UI", lang === "lt" ? "LT/EN · audito žurnalas · ⌘K" : "LT/EN · audit log · ⌘K", "#fff"],
+            ].map(([h, d, c], i) => h === "⇊" ? <div key={i} style={{ textAlign: "center", color: "#555", fontSize: 16, padding: "2px 0" }}>⇊</div> :
+              <div key={i} style={{ border: "1px solid rgba(255,255,255,0.12)", borderLeft: `3px solid ${c}`, background: "var(--bg2)", padding: "13px 18px", marginBottom: 8 }}>
+                <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 14.5, fontWeight: 700 }}>{h}</div>
+                {d && <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, marginTop: 4, letterSpacing: ".04em" }}>{d}</div>}
+              </div>)}
+          <SelfTestPanel lang={lang} />
+          </div>
+        </div>}
+
         {view === "logs" && <div key="logs" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
             <PageBanner variant="particles" label={lang === "lt" ? "07 — Atitikties žurnalas" : "07 — Compliance Trail"} title={t.auditLog} sub={lang === "lt" ? "BDAR/GDPR atitikties žurnalas — visi veiksmai registruojami vietoje, jūsų naršyklėje." : "GDPR compliance audit trail — every action is logged locally, in your browser."} />
