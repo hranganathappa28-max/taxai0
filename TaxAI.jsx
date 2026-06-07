@@ -6517,6 +6517,95 @@ function batchSummaryCsv(batch) {
   return [head].concat(batch.results.map((r) => [r.invoiceNo, '"' + String(r.buyer).replace(/"/g, '""') + '"', r.cat, r.rate, r.payable, r.gate.en.ok ? "OK" : "FAIL", r.gate.peppol.ok ? "OK" : "FAIL", r.gate.lt.ok ? "OK" : "FAIL", r.findings.map((f) => f.rule_id).join("|")].join(";"))).join("\n");
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// KNOWLEDGE BANK — a Confluence-style wiki living entirely in the browser.
+// Pages (with tree, labels, favourites, comments, 10-step version history)
+// persist in localStorage; attachments (files, books) persist in IndexedDB.
+// ═════════════════════════════════════════════════════════════════════════
+const KB_TEMPLATES = [
+  { id: "blank", lt: "Tuščias puslapis", en: "Blank page", icon: "▢", content: "" },
+  { id: "meeting", lt: "Susitikimo užrašai", en: "Meeting notes", icon: "🗓", content: "# Susitikimas — {{date}}\n\n**Dalyviai:** \n**Tikslas:** \n\n## Aptarta\n- \n\n## Sprendimai\n- \n\n## Užduotys\n- [ ] \n- [ ] " },
+  { id: "sop", lt: "Procedūra (SOP)", en: "Procedure (SOP)", icon: "⚙", content: "# Procedūra: \n\n**Savininkas:**  · **Atnaujinta:** {{date}}\n\n## Tikslas\n\n## Žingsniai\n1. \n2. \n\n## Kontrolės\n- [ ] " },
+  { id: "audit-report", lt: "Audito ataskaitos šablonas", en: "Audit report template", icon: "🛡", content: "# Audito ataskaita — {{date}}\n\n**Įmonė:**  · **Laikotarpis:**  · **Autorius:** {{author}}\n\n## Santrauka vadovybei\n\n## Apimtis ir reikšmingumas (TAS 320)\n| Rodiklis | Reikšmė |\n|---|---|\n| Bendrasis reikšmingumas |  |\n| Veiklos reikšmingumas |  |\n| Aiškiai nereikšminga |  |\n\n## Radiniai\n| # | Sritis | Radinys | Reikšmingumas | Rekomendacija |\n|---|---|---|---|---|\n| 1 |  |  |  |  |\n\n## Išvada\n\n## Tolesni veiksmai\n- [ ] " },
+  { id: "close", lt: "Mėnesio uždarymo sąrašas", en: "Month-end close checklist", icon: "✓", content: "# Mėnesio uždarymas — {{date}}\n\n## Prieš uždarymą\n- [ ] Banko sutikrinimas\n- [ ] SAF-T auditas (vartai žali)\n- [ ] i.SAF registras pateiktas\n\n## PVM\n- [ ] FR0600 sutikrinta su didžiąja knyga\n- [ ] E. sąskaitos (Peppol) išsiųstos\n\n## Pabaiga\n- [ ] Ataskaita vadovybei\n- [ ] Atsarginė duomenų kopija" },
+  { id: "course", lt: "Kursas / mokymo planas", en: "Course / training plan", icon: "🎓", content: "# Kursas: \n\n**Auditorija:**  · **Trukmė:** \n\n## Tikslai\n- \n\n## Moduliai\n| # | Modulis | Trukmė | Medžiaga |\n|---|---|---|---|\n| 1 |  |  |  |\n| 2 |  |  |  |\n\n## Užduotys dalyviams\n- [ ] \n\n> Patarimas: kiekvienam moduliui sukurkite vaiko puslapį šiame medyje — kursas tampa naršomu." },
+  { id: "vat-memo", lt: "PVM atmintinė", en: "VAT memo", icon: "§", content: "# PVM atmintinė — {{date}}\n\n## Tarifai (2026)\n| Tarifas | Taikymas |\n|---|---|\n| 21 % | standartinis |\n| 12 % | lengvatinis (2026 reforma) |\n| 5 % | lengvatinis |\n| 0 % | eksportas / ES tiekimas |\n\n## Pastabos\n" },
+  { id: "decision", lt: "Sprendimų žurnalas", en: "Decision log", icon: "⚖", content: "# Sprendimas: \n\n**Data:** {{date}} · **Statusas:** Pasiūlyta\n\n## Kontekstas\n\n## Svarstytos alternatyvos\n1. \n2. \n\n## Sprendimas ir pagrindimas\n\n## Pasekmės\n- [ ] " },
+];
+const kbUid = () => "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+function kbNewPage(opts) {
+  const o = opts || {};
+  const t = KB_TEMPLATES.find((x) => x.id === o.template) || KB_TEMPLATES[0];
+  const now = Date.now();
+  const content = (o.content != null ? o.content : t.content || "").replace(/\{\{date\}\}/g, new Date().toISOString().slice(0, 10)).replace(/\{\{author\}\}/g, o.author || "");
+  return { id: kbUid(), parentId: o.parentId || null, title: o.title || (t.id === "blank" ? "Naujas puslapis" : t.lt), icon: o.icon || t.icon, content, labels: [], fav: false, author: o.author || "", created: now, updated: now, comments: [], history: [] };
+}
+function kbPushHistory(page) { page.history = [{ ts: page.updated, title: page.title, content: page.content }].concat(page.history || []).slice(0, 10); }
+function kbCollectTasks(pages) {
+  const out = [];
+  (pages || []).forEach((p) => { let i = 0; String(p.content || "").split("\n").forEach((line) => { const m = /^\s*[-*] \[( |x|X)\] (.*)$/.exec(line); if (m) { out.push({ pageId: p.id, pageTitle: p.title, idx: i, done: m[1] !== " ", text: m[2].trim() }); i++; } }); });
+  return out;
+}
+function kbToggleTask(content, idx) {
+  let i = 0;
+  return String(content || "").split("\n").map((line) => { const m = /^(\s*[-*] \[)( |x|X)(\] .*)$/.exec(line); if (m) { if (i === idx) { i++; return m[1] + (m[2] === " " ? "x" : " ") + m[3]; } i++; } return line; }).join("\n");
+}
+function kbSearch(pages, q) {
+  const n = cpNorm(q || "").trim();
+  if (!n) return [];
+  return (pages || []).map((p) => { const hay = cpNorm((p.title || "") + "\n" + (p.content || "") + "\n" + (p.labels || []).join(" ")); const c = hay.split(n).length - 1; return c ? { page: p, hits: c, inTitle: cpNorm(p.title || "").indexOf(n) >= 0 } : null; }).filter(Boolean).sort((a, b) => (Number(b.inTitle) - Number(a.inTitle)) || (b.hits - a.hits));
+}
+function kbMdToHtml(md) {
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*(.+?)\*/g, "<i>$1</i>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  let html = "", inUl = false, inOl = false, inCode = false, inTable = false;
+  const closeAll = () => { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } if (inTable) { html += "</table>"; inTable = false; } };
+  String(md || "").split("\n").forEach((line) => {
+    if (/^```/.test(line)) { if (inCode) { html += "</pre>"; inCode = false; } else { closeAll(); html += "<pre>"; inCode = true; } return; }
+    if (inCode) { html += esc(line) + "\n"; return; }
+    let m;
+    if ((m = /^(#{1,3}) (.*)$/.exec(line))) { closeAll(); const h = m[1].length; html += "<h" + h + ">" + inline(m[2]) + "</h" + h + ">"; return; }
+    if (/^\s*\|/.test(line)) {
+      if (/^[\s|:\-]+$/.test(line)) return;
+      if (!inTable) { closeAll(); html += "<table>"; inTable = true; }
+      html += "<tr>" + line.split("|").slice(1, -1).map((c) => "<td>" + inline(c.trim()) + "</td>").join("") + "</tr>"; return;
+    }
+    if ((m = /^\s*[-*] \[( |x|X)\] (.*)$/.exec(line))) { if (!inUl) { closeAll(); html += "<ul>"; inUl = true; } html += "<li>" + (m[1] === " " ? "☐" : "☑") + " " + inline(m[2]) + "</li>"; return; }
+    if ((m = /^\s*[-*] (.*)$/.exec(line))) { if (!inUl) { closeAll(); html += "<ul>"; inUl = true; } html += "<li>" + inline(m[1]) + "</li>"; return; }
+    if ((m = /^\s*\d+\. (.*)$/.exec(line))) { if (!inOl) { closeAll(); html += "<ol>"; inOl = true; } html += "<li>" + inline(m[1]) + "</li>"; return; }
+    if (/^>\s?(.*)$/.test(line)) { closeAll(); html += "<blockquote>" + inline(line.replace(/^>\s?/, "")) + "</blockquote>"; return; }
+    if (/^---+\s*$/.test(line)) { closeAll(); html += "<hr/>"; return; }
+    if (!line.trim()) { closeAll(); return; }
+    closeAll(); html += "<p>" + inline(line) + "</p>";
+  });
+  if (inCode) html += "</pre>"; closeAll();
+  return html;
+}
+function kbExportHTML(page, brandName) {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  return "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + esc(page.title) + "</title><style>body{font:14px/1.65 'Segoe UI',Arial,sans-serif;color:#1a1a1a;max-width:820px;margin:0 auto;padding:36px}h1{font-weight:300}table{border-collapse:collapse;margin:10px 0}td{border:1px solid #ddd;padding:6px 10px}pre{background:#f5f5f3;padding:12px;overflow-x:auto}blockquote{border-left:3px solid #ccc;margin:8px 0;padding:4px 14px;color:#555}code{background:#f0f0ee;padding:1px 5px}.meta{color:#888;font-size:11px;margin-bottom:18px}</style></head><body>" +
+    "<div class='meta'>" + esc(brandName) + " · " + (page.icon || "") + " " + esc((page.labels || []).map((l) => "#" + l).join(" ")) + " · " + new Date(page.updated).toISOString().slice(0, 10) + (page.author ? " · " + esc(page.author) : "") + "</div>" +
+    kbMdToHtml(page.content) + "</body></html>";
+}
+// IndexedDB attachment store — files and books persist locally per page.
+const kbIdb = {
+  _db: null,
+  async db() {
+    if (this._db) return this._db;
+    if (typeof indexedDB === "undefined") return null;
+    this._db = await new Promise((res, rej) => {
+      const r = indexedDB.open("taxai_kb", 1);
+      r.onupgradeneeded = () => { const st = r.result.createObjectStore("att", { keyPath: "id" }); st.createIndex("pageId", "pageId"); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    return this._db;
+  },
+  async put(rec) { const d = await this.db(); if (!d) return false; return new Promise((res, rej) => { const tx = d.transaction("att", "readwrite"); tx.objectStore("att").put(rec); tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error); }); },
+  async byPage(pid) { const d = await this.db(); if (!d) return []; return new Promise((res, rej) => { const out = []; const rq = d.transaction("att").objectStore("att").index("pageId").openCursor(IDBKeyRange.only(pid)); rq.onsuccess = () => { const c = rq.result; if (c) { out.push(c.value); c.continue(); } else res(out); }; rq.onerror = () => rej(rq.error); }); },
+  async del(id) { const d = await this.db(); if (!d) return false; return new Promise((res) => { const tx = d.transaction("att", "readwrite"); tx.objectStore("att").delete(id); tx.oncomplete = () => res(true); }); },
+};
+
 const OFFICIAL_SOURCES = [
   { id: "VA-49", lt: "VMI prie FM viršininko 2015-07-21 įsakymas Nr. VA-49 „Dėl Standartinės apskaitos duomenų rinkmenos techninės specifikacijos ir techninių reikalavimų aprašo patvirtinimo“ (suvestinė redakcija)", en: "Order No. VA-49 of the Head of the STI under the MoF (21 Jul 2015) approving the SAF-T technical specification and technical requirements (consolidated)", url: "https://www.vmi.lt/evmi/saf-t" },
   { id: "SAFT-XSD", lt: "VMI — SAF-T techninė dokumentacija ir XML schema (XSD) v2.01", en: "STI — SAF-T technical documentation and XML schema (XSD) v2.01", url: "https://www.vmi.lt/evmi/saf-t" },
@@ -11935,6 +12024,197 @@ function EInvoiceStudio({ lang, fileData, setToast, audit }) {
   </div>;
 }
 
+// ── Knowledge Bank: Confluence-style wiki (pages · templates · tasks · files) ──
+function KnowledgeBank({ lang, setToast, audit }) {
+  const LINE = "rgba(255,255,255,0.12)";
+  const seed = () => {
+    const w = kbNewPage({ title: lang === "lt" ? "Žinių bankas — pradžia" : "Knowledge Bank — start", template: "blank", author: "TaxAI" });
+    w.icon = "▤";
+    w.content = (lang === "lt"
+      ? "# Sveiki atvykę į Žinių banką\n\nČia jūsų komandos vidinė viki — viskas saugoma **šioje naršyklėje** (puslapiai — localStorage, failai — IndexedDB).\n\n## Ką galite daryti\n- Kurti puslapius su **šablonais** (ataskaitos, kursai, SOP, susitikimai)\n- Statyti medį — kiekvienas puslapis gali turėti vaikų (kursas → moduliai)\n- Prisegti **failus ir knygas** (📎), žymėti etiketėmis, žvaigždute\n- Rašyti komentarus, grįžti į ankstesnes **versijas**\n- Sekti užduotis — kiekvienas `- [ ]` tampa interaktyviu langeliu\n\n## Pabandykite dabar\n- [ ] Sukurti pirmą puslapį iš šablono (+)\n- [ ] Prisegti failą\n- [ ] Pažymėti šią užduotį atlikta"
+      : "# Welcome to the Knowledge Bank\n\nYour team wiki — everything stays **in this browser** (pages in localStorage, files in IndexedDB).\n\n## What you can do\n- Create pages from **templates** (reports, courses, SOPs, meetings)\n- Build a tree — every page can have children (course → modules)\n- Attach **files and books** (📎), add labels, star favourites\n- Comment, and restore earlier **versions**\n- Track tasks — every `- [ ]` becomes an interactive checkbox\n\n## Try it now\n- [ ] Create your first page from a template (+)\n- [ ] Attach a file\n- [ ] Tick this task");
+    const v = kbNewPage({ title: "PVM 2026 atmintinė", template: "vat-memo", author: "TaxAI" });
+    return [w, v];
+  };
+  const [pages, setPages] = useState(() => { try { const raw = localStorage.getItem("taxai_kb_pages"); if (raw) { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) return p; } } catch (e) {} return seed(); });
+  const [sel, setSel] = useState(() => null);
+  const [tab, setTab] = useState("pages");
+  const [mode, setMode] = useState("view");
+  const [draft, setDraft] = useState({ title: "", content: "" });
+  const [q, setQ] = useState("");
+  const [creating, setCreating] = useState(null);
+  const [newTitle, setNewTitle] = useState("");
+  const [newTpl, setNewTpl] = useState("blank");
+  const [labelIn, setLabelIn] = useState("");
+  const [commentIn, setCommentIn] = useState("");
+  const [showHist, setShowHist] = useState(false);
+  const [atts, setAtts] = useState([]);
+  const [todos, setTodos] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_kb_todos") || "[]"); } catch (e) { return []; } });
+  const [todoIn, setTodoIn] = useState("");
+  const [user, setUser] = useState(() => { try { return localStorage.getItem("taxai_kb_user") || ""; } catch (e) { return ""; } });
+  const taRef = useRef(null);
+  useEffect(() => { try { localStorage.setItem("taxai_kb_pages", JSON.stringify(pages)); } catch (e) {} }, [pages]);
+  useEffect(() => { try { localStorage.setItem("taxai_kb_todos", JSON.stringify(todos)); } catch (e) {} }, [todos]);
+  useEffect(() => { try { localStorage.setItem("taxai_kb_user", user); } catch (e) {} }, [user]);
+  const page = pages.find((p) => p.id === sel) || pages[0] || null;
+  useEffect(() => { let dead = false; setAtts([]); if (page) kbIdb.byPage(page.id).then((a) => { if (!dead) setAtts(a); }).catch(() => {}); return () => { dead = true; }; }, [sel, pages.length]);
+  const upd = (id, fn, hist) => setPages((ps) => ps.map((p) => { if (p.id !== id) return p; const c = { ...p }; if (hist) kbPushHistory(c); fn(c); c.updated = Date.now(); return c; }));
+  const kids = (pid) => pages.filter((p) => p.parentId === pid).sort((a, b) => a.created - b.created);
+  const crumbs = (p) => { const out = []; let cur = p; let guard = 0; while (cur && guard++ < 12) { out.unshift(cur); cur = pages.find((x) => x.id === cur.parentId); } return out; };
+  const startEdit = () => { if (!page) return; setDraft({ title: page.title, content: page.content }); setMode("edit"); };
+  const save = () => { if (!page) return; upd(page.id, (c) => { c.title = draft.title || c.title; c.content = draft.content; if (user) c.author = c.author || user; }, true); setMode("view"); setToast && setToast(lang === "lt" ? "Išsaugota" : "Saved"); audit && audit.log("KB_SAVE", draft.title); };
+  const create = () => { const np = kbNewPage({ title: newTitle.trim(), parentId: creating && creating.parentId, template: newTpl, author: user }); setPages((ps) => [...ps, np]); setSel(np.id); setCreating(null); setNewTitle(""); setMode("edit"); setDraft({ title: np.title, content: np.content }); setTab("pages"); audit && audit.log("KB_CREATE", np.title + " (" + newTpl + ")"); };
+  const removePage = () => { if (!page) return; const ids = []; const walk = (pid) => { ids.push(pid); kids(pid).forEach((k) => walk(k.id)); }; walk(page.id); if (!window.confirm((lang === "lt" ? "Ištrinti puslapį" : "Delete page") + ' "' + page.title + '"' + (ids.length > 1 ? " (+" + (ids.length - 1) + (lang === "lt" ? " vaikai" : " children") + ")" : "") + "?")) return; ids.forEach((pid) => { kbIdb.byPage(pid).then((a) => a.forEach((x) => kbIdb.del(x.id))).catch(() => {}); }); setPages((ps) => ps.filter((p) => !ids.includes(p.id))); setSel(null); };
+  const dl = (name, content, type) => { const b = new Blob([content], { type: type || "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
+  const onAttach = (e) => { const fs2 = Array.from(e.target.files || []); fs2.forEach((f) => { const rec = { id: kbUid() + "_a", pageId: page.id, name: f.name, type: f.type, size: f.size, blob: f, ts: Date.now() }; kbIdb.put(rec).then((ok) => { if (ok) setAtts((a) => [...a, rec]); else setToast && setToast("IndexedDB unavailable"); }).catch(() => setToast && setToast("Attach failed")); }); e.target.value = ""; audit && audit.log("KB_ATTACH", fs2.map((f) => f.name).join(", ")); };
+  const openAtt = (a) => { const u = URL.createObjectURL(a.blob); const el = document.createElement("a"); el.href = u; el.download = a.name; el.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
+  const insertMd = (before, after) => { const ta = taRef.current; if (!ta) { setDraft((d) => ({ ...d, content: d.content + "\n" + before + (after || "") })); return; } const s = ta.selectionStart, e = ta.selectionEnd, v = draft.content; const selTxt = v.slice(s, e); setDraft((d) => ({ ...d, content: v.slice(0, s) + before + selTxt + (after || "") + v.slice(e) })); setTimeout(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = s + before.length + selTxt.length + (after || "").length; }, 0); };
+  const toggleTaskOnPage = (pid, idx) => upd(pid, (c) => { c.content = kbToggleTask(c.content, idx); }, false);
+  const renderView = (p) => {
+    const out = []; let buf = []; let idx = 0;
+    const flush = () => { if (buf.length) { out.push(<Md key={"m" + out.length} text={buf.join("\n")} />); buf = []; } };
+    String(p.content || "").split("\n").forEach((line) => {
+      const m = /^\s*[-*] \[( |x|X)\] (.*)$/.exec(line);
+      if (m) { flush(); const i = idx++; const done = m[1] !== " "; out.push(<label key={"t" + i} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "3px 0", cursor: "pointer", fontFamily: "var(--s)", fontSize: 14, color: done ? "#7a7a76" : "#e8e8e4", textDecoration: done ? "line-through" : "none" }}><input type="checkbox" checked={done} onChange={() => toggleTaskOnPage(p.id, i)} style={{ accentColor: "#7cc4ff" }} />{m[2]}</label>); }
+      else buf.push(line);
+    });
+    flush();
+    return out;
+  };
+  const btn = { padding: "7px 13px", border: `1px solid ${LINE}`, background: "transparent", color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 10, fontWeight: 700, letterSpacing: ".07em", textTransform: "uppercase", cursor: "pointer" };
+  const btnS = { ...btn, background: "#fff", color: "#000", border: "1px solid #fff" };
+  const inp = { background: "#000", border: `1px solid ${LINE}`, color: "#fff", fontFamily: "var(--s)", fontSize: 13, padding: "8px 11px", outline: "none" };
+  const tasks = kbCollectTasks(pages);
+  const results = q.trim() ? kbSearch(pages, q) : null;
+  const Row = ({ p, depth }) => <div>
+    <div onClick={() => { setSel(p.id); setMode("view"); setTab("pages"); }} style={{ display: "flex", gap: 7, alignItems: "center", padding: "6px 10px", paddingLeft: 10 + depth * 14, cursor: "pointer", background: page && page.id === p.id && tab === "pages" ? "var(--bg2)" : "transparent", borderLeft: page && page.id === p.id && tab === "pages" ? "2px solid #7cc4ff" : "2px solid transparent" }}
+      onMouseEnter={(e) => { if (!(page && page.id === p.id)) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }} onMouseLeave={(e) => { if (!(page && page.id === p.id && tab === "pages")) e.currentTarget.style.background = "transparent"; }}>
+      <span style={{ fontSize: 12 }}>{p.icon || "▢"}</span>
+      <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+      {p.fav && <span style={{ fontSize: 10, color: "#ffd43b" }}>★</span>}
+      <span title={lang === "lt" ? "Naujas vaiko puslapis" : "New child page"} onClick={(e) => { e.stopPropagation(); setCreating({ parentId: p.id }); setNewTpl("blank"); setNewTitle(""); }} style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", padding: "0 3px" }}>+</span>
+    </div>
+    {kids(p.id).map((k) => <Row key={k.id} p={k} depth={depth + 1} />)}
+  </div>;
+  return <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+    <div style={{ width: 264, flexShrink: 0, borderRight: `1px solid ${LINE}`, display: "flex", flexDirection: "column", background: "rgba(255,255,255,0.015)" }}>
+      <div style={{ padding: "16px 14px 10px" }}>
+        <div style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".18em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 10 }}>▤ {lang === "lt" ? "Žinių bankas" : "Knowledge Bank"}</div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={lang === "lt" ? "Ieškoti…" : "Search…"} style={{ ...inp, width: "100%", boxSizing: "border-box", fontSize: 12, padding: "7px 10px" }} />
+      </div>
+      <div onClick={() => setTab("tasks")} style={{ display: "flex", gap: 8, alignItems: "center", padding: "7px 14px", cursor: "pointer", background: tab === "tasks" ? "var(--bg2)" : "transparent", borderLeft: tab === "tasks" ? "2px solid #69db7c" : "2px solid transparent", fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4" }}>✓ {lang === "lt" ? "Užduotys" : "Tasks"} <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{tasks.filter((t) => !t.done).length + todos.filter((t) => !t.done).length}</span></div>
+      <div style={{ display: "flex", alignItems: "center", padding: "10px 14px 4px" }}>
+        <span style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#666", textTransform: "uppercase" }}>{lang === "lt" ? "Puslapiai" : "Pages"}</span>
+        <button onClick={() => { setCreating({ parentId: null }); setNewTpl("blank"); setNewTitle(""); }} style={{ ...btn, marginLeft: "auto", padding: "3px 9px" }}>+</button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 10 }}>
+        {results ? <div style={{ padding: "4px 0" }}>
+          {results.length === 0 && <div style={{ padding: "8px 14px", color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12 }}>{lang === "lt" ? "Nieko nerasta." : "No matches."}</div>}
+          {results.map((r) => <div key={r.page.id} onClick={() => { setSel(r.page.id); setMode("view"); setTab("pages"); }} style={{ padding: "7px 14px", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+            <div style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#fff" }}>{r.page.icon} {r.page.title}</div>
+            <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88" }}>{r.hits} {lang === "lt" ? "atitikmenys" : "matches"}{r.inTitle ? " · " + (lang === "lt" ? "pavadinime" : "in title") : ""}</div>
+          </div>)}
+        </div> : kids(null).map((p) => <Row key={p.id} p={p} depth={0} />)}
+      </div>
+      <div style={{ padding: "10px 14px", borderTop: `1px solid ${LINE}` }}>
+        <input value={user} onChange={(e) => setUser(e.target.value)} placeholder={lang === "lt" ? "Jūsų vardas (autorius)" : "Your name (author)"} style={{ ...inp, width: "100%", boxSizing: "border-box", fontSize: 11.5, padding: "6px 9px" }} />
+      </div>
+    </div>
+    <div style={{ flex: 1, overflowY: "auto", padding: "22px 34px 60px" }}>
+      {creating && <div style={{ border: `1px solid ${LINE}`, background: "var(--bg2)", padding: 18, marginBottom: 22, maxWidth: 760 }}>
+        <div style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 10 }}>{lang === "lt" ? "Naujas puslapis" : "New page"}{creating.parentId ? " · " + (lang === "lt" ? "vaikas" : "child of") + " „" + ((pages.find((x) => x.id === creating.parentId) || {}).title || "") + "“" : ""}</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") create(); }} placeholder={lang === "lt" ? "Pavadinimas" : "Title"} style={{ ...inp, flex: "1 1 220px" }} />
+          <select value={newTpl} onChange={(e) => setNewTpl(e.target.value)} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11.5 }}>
+            {KB_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.icon} {lang === "lt" ? t.lt : t.en}</option>)}
+          </select>
+          <button onClick={create} style={btnS}>{lang === "lt" ? "Sukurti" : "Create"}</button>
+          <button onClick={() => setCreating(null)} style={btn}>{lang === "lt" ? "Atšaukti" : "Cancel"}</button>
+        </div>
+      </div>}
+      {tab === "tasks" ? <div style={{ maxWidth: 820 }}>
+        <h2 style={{ fontFamily: "var(--f)", fontWeight: 300, fontSize: 30, color: "#fff", margin: "0 0 6px" }}>✓ {lang === "lt" ? "Užduotys" : "Tasks"}</h2>
+        <div style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#8c8c88", marginBottom: 20 }}>{lang === "lt" ? "Surinkta iš visų puslapių langelių + greitosios užduotys." : "Aggregated from every page's checkboxes + quick todos."}</div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          <input value={todoIn} onChange={(e) => setTodoIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && todoIn.trim()) { setTodos((t) => [...t, { id: kbUid(), text: todoIn.trim(), done: false }]); setTodoIn(""); } }} placeholder={lang === "lt" ? "Greita užduotis… (Enter)" : "Quick todo… (Enter)"} style={{ ...inp, flex: 1, maxWidth: 460 }} />
+        </div>
+        {todos.map((t) => <div key={t.id} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "4px 0" }}>
+          <input type="checkbox" checked={t.done} onChange={() => setTodos((ts) => ts.map((x) => x.id === t.id ? { ...x, done: !x.done } : x))} style={{ accentColor: "#69db7c" }} />
+          <span style={{ fontFamily: "var(--s)", fontSize: 13.5, color: t.done ? "#7a7a76" : "#e8e8e4", textDecoration: t.done ? "line-through" : "none", flex: 1 }}>{t.text}</span>
+          <span onClick={() => setTodos((ts) => ts.filter((x) => x.id !== t.id))} style={{ cursor: "pointer", color: "#666", fontFamily: "var(--m)", fontSize: 11 }}>✕</span>
+        </div>)}
+        {tasks.length > 0 && <div style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#666", textTransform: "uppercase", margin: "20px 0 8px" }}>{lang === "lt" ? "Iš puslapių" : "From pages"}</div>}
+        {tasks.map((t, i) => <div key={i} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "4px 0" }}>
+          <input type="checkbox" checked={t.done} onChange={() => toggleTaskOnPage(t.pageId, t.idx)} style={{ accentColor: "#7cc4ff" }} />
+          <span style={{ fontFamily: "var(--s)", fontSize: 13.5, color: t.done ? "#7a7a76" : "#e8e8e4", textDecoration: t.done ? "line-through" : "none", flex: 1 }}>{t.text}</span>
+          <span onClick={() => { setSel(t.pageId); setTab("pages"); setMode("view"); }} style={{ cursor: "pointer", color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 10.5 }}>{t.pageTitle} →</span>
+        </div>)}
+      </div>
+      : !page ? <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? "Pasirinkite arba sukurkite puslapį." : "Select or create a page."}</div>
+      : <div style={{ maxWidth: 900 }}>
+        <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", marginBottom: 10 }}>{crumbs(page).map((c, i, arr) => <span key={c.id}><span onClick={() => setSel(c.id)} style={{ cursor: "pointer", color: i === arr.length - 1 ? "#d2d2ce" : "#8c8c88" }}>{c.title}</span>{i < arr.length - 1 ? "  /  " : ""}</span>)}</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+          {mode === "edit"
+            ? <input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} style={{ ...inp, fontFamily: "var(--f)", fontSize: 26, fontWeight: 300, flex: "1 1 300px" }} />
+            : <h2 style={{ fontFamily: "var(--f)", fontWeight: 300, fontSize: 32, color: "#fff", margin: 0, flex: "1 1 300px" }}>{page.icon} {page.title}</h2>}
+          <span onClick={() => upd(page.id, (c) => { c.fav = !c.fav; }, false)} title={lang === "lt" ? "Mėgstamas" : "Favourite"} style={{ cursor: "pointer", fontSize: 17, color: page.fav ? "#ffd43b" : "#555" }}>★</span>
+          {mode === "view" ? <button onClick={startEdit} style={btnS}>{lang === "lt" ? "Redaguoti" : "Edit"}</button>
+            : <><button onClick={save} style={btnS}>{lang === "lt" ? "Išsaugoti" : "Save"}</button><button onClick={() => setMode("view")} style={btn}>{lang === "lt" ? "Atšaukti" : "Cancel"}</button></>}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+          <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666" }}>{new Date(page.updated).toISOString().slice(0, 10)}{page.author ? " · " + page.author : ""} · v{(page.history || []).length + 1}</span>
+          {(page.labels || []).map((l) => <span key={l} style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#7cc4ff", border: `1px solid ${LINE}`, padding: "2px 8px" }}>#{l} <span onClick={() => upd(page.id, (c) => { c.labels = c.labels.filter((x) => x !== l); }, false)} style={{ cursor: "pointer", color: "#666" }}>×</span></span>)}
+          <input value={labelIn} onChange={(e) => setLabelIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && labelIn.trim()) { const v = labelIn.trim().replace(/^#/, ""); upd(page.id, (c) => { if (!c.labels.includes(v)) c.labels = [...c.labels, v]; }, false); setLabelIn(""); } }} placeholder="#" style={{ ...inp, width: 84, fontSize: 10.5, padding: "3px 8px", fontFamily: "var(--m)" }} />
+          <span style={{ flex: 1 }} />
+          <button onClick={() => dl(page.title.replace(/[^\w.-]+/g, "_") + ".md", page.content, "text/markdown")} style={btn}>↓ MD</button>
+          <button onClick={() => dl(page.title.replace(/[^\w.-]+/g, "_") + ".html", kbExportHTML(page, taxaiBrand().name), "text/html")} style={btn}>↓ HTML</button>
+          <button onClick={() => { const np = kbNewPage({ title: page.title + (lang === "lt" ? " (kopija)" : " (copy)"), parentId: page.parentId, template: "blank", author: user }); np.content = page.content; np.icon = page.icon; np.labels = [...(page.labels || [])]; setPages((ps) => [...ps, np]); setSel(np.id); }} style={btn}>{lang === "lt" ? "Kopija" : "Duplicate"}</button>
+          <button onClick={() => setShowHist((s) => !s)} style={{ ...btn, color: showHist ? "#7cc4ff" : "#d2d2ce" }}>⟲ {(page.history || []).length}</button>
+          <button onClick={removePage} style={{ ...btn, color: "#ff8a8a" }}>🗑</button>
+        </div>
+        {showHist && (page.history || []).length > 0 && <div style={{ border: `1px solid ${LINE}`, background: "var(--bg2)", padding: 14, marginBottom: 16 }}>
+          <div style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "Versijų istorija" : "Version history"}</div>
+          {(page.history || []).map((h, i) => <div key={i} style={{ display: "flex", gap: 12, alignItems: "baseline", padding: "4px 0", fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8" }}>
+            <span>{new Date(h.ts).toISOString().replace("T", " ").slice(0, 16)}</span><span style={{ flex: 1, color: "#8c8c88" }}>{h.title}</span>
+            <span onClick={() => { if (window.confirm(lang === "lt" ? "Atkurti šią versiją?" : "Restore this version?")) { upd(page.id, (c) => { c.title = h.title; c.content = h.content; }, true); setShowHist(false); } }} style={{ cursor: "pointer", color: "#7cc4ff" }}>{lang === "lt" ? "Atkurti" : "Restore"}</span>
+          </div>)}
+        </div>}
+        {mode === "edit" ? <>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {[["B", "**", "**"], ["I", "*", "*"], ["H2", "\n## ", ""], ["•", "\n- ", ""], ["☐", "\n- [ ] ", ""], ["1.", "\n1. ", ""], ["⌗", "\n| A | B |\n|---|---|\n|  |  |\n", ""], ["</>", "\n```\n", "\n```\n"], ["―", "\n---\n", ""]].map(([lb, b, a]) => <button key={lb} onClick={() => insertMd(b, a)} style={{ ...btn, padding: "4px 9px", fontSize: 10 }}>{lb}</button>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(330px,1fr))", gap: 14 }}>
+            <textarea ref={taRef} value={draft.content} onChange={(e) => setDraft((d) => ({ ...d, content: e.target.value }))} spellCheck={false} style={{ ...inp, minHeight: 440, fontFamily: "var(--m)", fontSize: 12, lineHeight: 1.7, resize: "vertical" }} />
+            <div style={{ border: `1px solid ${LINE}`, padding: "4px 16px", minHeight: 440, overflowY: "auto" }}><Md text={draft.content} /></div>
+          </div>
+        </> : <div>{renderView(page)}</div>}
+        <div style={{ marginTop: 30, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase" }}>📎 {lang === "lt" ? "Priedai" : "Attachments"} ({atts.length})</span>
+            <label style={{ ...btn, padding: "4px 10px" }}>+ {lang === "lt" ? "Failas" : "File"}<input type="file" multiple onChange={onAttach} style={{ display: "none" }} /></label>
+            <span style={{ fontFamily: "var(--s)", fontSize: 10.5, color: "#666" }}>{lang === "lt" ? "Saugoma šioje naršyklėje (IndexedDB) — tinka ir knygoms." : "Stored in this browser (IndexedDB) — books welcome."}</span>
+          </div>
+          {atts.map((a) => <div key={a.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8" }}>
+            <span style={{ color: "#fff" }}>{a.name}</span><span style={{ color: "#666" }}>{(a.size / 1024).toFixed(0)} KB</span>
+            <span onClick={() => openAtt(a)} style={{ cursor: "pointer", color: "#7cc4ff" }}>↓</span>
+            <span onClick={() => { kbIdb.del(a.id); setAtts((x) => x.filter((y) => y.id !== a.id)); }} style={{ cursor: "pointer", color: "#666" }}>✕</span>
+          </div>)}
+        </div>
+        <div style={{ marginTop: 22, borderTop: `1px solid ${LINE}`, paddingTop: 14, maxWidth: 720 }}>
+          <div style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>💬 {lang === "lt" ? "Komentarai" : "Comments"} ({(page.comments || []).length})</div>
+          {(page.comments || []).map((c) => <div key={c.id} style={{ padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88" }}>{c.author || "—"} · {new Date(c.ts).toISOString().slice(0, 16).replace("T", " ")} <span onClick={() => upd(page.id, (x) => { x.comments = x.comments.filter((y) => y.id !== c.id); }, false)} style={{ cursor: "pointer", color: "#555" }}>✕</span></div>
+            <div style={{ fontFamily: "var(--s)", fontSize: 13, color: "#e8e8e4" }}>{c.text}</div>
+          </div>)}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <input value={commentIn} onChange={(e) => setCommentIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && commentIn.trim()) { upd(page.id, (c) => { c.comments = [...(c.comments || []), { id: kbUid() + "_c", author: user || "—", text: commentIn.trim(), ts: Date.now() }]; }, false); setCommentIn(""); } }} placeholder={lang === "lt" ? "Komentaras… (Enter)" : "Comment… (Enter)"} style={{ ...inp, flex: 1 }} />
+          </div>
+        </div>
+      </div>}
+    </div>
+  </div>;
+}
+
 function MenuGroup({ label, children }) {
   return <details style={{ position: "relative" }}>
     <summary style={{ listStyle: "none", display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", border: "1px solid rgba(255,255,255,0.18)", color: "#fff", background: "transparent", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>{label}<span style={{ fontSize: 8, opacity: .7 }}>▼</span></summary>
@@ -13674,6 +13954,7 @@ function TAXAI({ onExit, initialView } = {}) {
     { id: "intel", l: lang === "lt" ? "Žvalgyba" : "Intelligence", ic: "✦" },
     { id: "integrations", l: lang === "lt" ? "Integracijos" : "Integrations", ic: "⇄" },
     { id: "einvoicing", l: lang === "lt" ? "E. sąskaitos" : "E-Invoicing", ic: "✉" },
+    { id: "kb", l: lang === "lt" ? "Žinių bankas" : "Knowledge Bank", ic: "▤" },
     { id: "eauditor", l: lang === "lt" ? "E-Auditorius" : "E-Auditor", ic: "◉" },
     { id: "agents", l: `${t.agents} (${AGENTS.length})`, ic: "◎" },
     { id: "logs", l: t.auditLog, ic: "◑" },
@@ -15102,6 +15383,10 @@ function TAXAI({ onExit, initialView } = {}) {
         {view === "einvoicing" && <div key="einvoicing" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <EInvoicingTab lang={lang} t={t} audit={audit} einv={einv} setEinv={setEinv} erp={erp} fileData={fileData} isafData={isafData} setToast={setToast} />
           <EInvoiceStudio lang={lang} fileData={fileData} setToast={setToast} audit={audit} />
+        </div>}
+
+        {view === "kb" && <div key="kb" style={{ flex: 1, overflow: "hidden", animation: "fadeUp .4s ease" }}>
+          <KnowledgeBank lang={lang} setToast={setToast} audit={audit} />
         </div>}
 
         {view === "logs" && <div key="logs" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
