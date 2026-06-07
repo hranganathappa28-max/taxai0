@@ -1901,10 +1901,12 @@ function vatClassMatch(spec, line) {
 // Phase 1 analytics engine — risk score, acceptance gate, multi-part merge,
 // audit report, versioned rule packs.  (TaxAI engine v10.1.0)
 // ═════════════════════════════════════════════════════════════════════════
-const ENGINE_VERSION = "10.7.0";
+const ENGINE_VERSION = "10.8.0";
 
 // Rule-pack provenance — shown in the Rules tab and stamped into every export.
 const RULE_PACKS = [
+  { version: "2026.06-erp", date: "2026-06-08", title: "ERP integration layer — batch e-invoicing pipeline, ERP-export importer, ZIP bundles, SDK endpoints", titleLt: "ERP integracijos sluoksnis — paketinis e. sąskaitų konvejeris, ERP eksporto importas, ZIP paketai, SDK galiniai taškai",
+    changes: ["Batch pipeline: every SAF-T sales invoice (or every ERP-export row) → Peppol BIS 3.0 → validated → compliance dashboard (ready / EN-only / blocked with reasons)", "ERP-export importer: CSV with delimiter sniffing, quoted fields, date and number normalisation; field-mapping profiles for Rivilė, Finvalda, Directo, Agnum + auto-detection", "Transmission bundle: pure-JS ZIP (CRC-32, STORE) with all XML files, manifest.json (gates, finding ids, SHA-256) and summary.csv", "window.TaxAI.einvoice.{validate, generate} and postMessage actions taxai:einvoice-validate / taxai:einvoice-generate for in-ERP embedding"] },
   { version: "2026.06-einvoice", date: "2026-06-08", title: "E-Invoicing engine — EN 16931 + Peppol BIS 3.0 validator and SAF-T→Peppol generator", titleLt: "E. sąskaitų variklis — EN 16931 + Peppol BIS 3.0 validatorius ir SAF-T→Peppol generatorius",
     changes: ["UBL 2.1 Invoice/CreditNote parser (DOM and streaming Lite tree)", "EN 16931 rule engine: mandatory fields, BR-CO calculation rules with rounding tolerances, per-VAT-category rules (S/Z/E/AE/K/G/O)", "Peppol BIS Billing 3.0: CustomizationID/ProfileID, endpoint schemes, GLN mod-10 checksum", "Lithuanian layer: JAR and LT VAT mod-11 checksums, LT IBAN mod-97, 2026 rate coherence (21/12/5), domestic-currency note", "Triple gate: EN validity · Peppol readiness · LT cleanliness", "Generator: any SAF-T sales invoice → valid Peppol BIS 3.0 XML (buyer joined from masterfiles), self-validated round-trip"] },
   { version: "2026.06-eaudit2", date: "2026-06-08", title: "E-Audit 2 — full VMI coverage, industry packs, company rules, detailed workpaper; desk moved to the E-Auditor agent", titleLt: "E. auditas 2 — pilna VMI aprėptis, šakų paketai, įmonės taisyklės, detalus darbo dokumentas; pultas perkeltas į E. auditoriaus agentą",
@@ -2659,14 +2661,39 @@ function installTaxAISdk() {
         const manifest = applyAutoFixes(doc, sel);
         return { engineVersion: ENGINE_VERSION, manifest, fixedXml: serializeSaftDoc(doc) };
       },
+      einvoice: {
+        validate(xml) {
+          const inv = parseUblInvoice(String(xml || ""));
+          const findings = validateEInvoice(inv);
+          return { engineVersion: ENGINE_VERSION, findings, gate: computeEInvoiceGate(findings) };
+        },
+        generate(invoice, seller) {
+          const r = (invoice && typeof invoice === "object") ? invoice : {};
+          const s = seller || {};
+          const out = buildPeppolInvoice(
+            { invoiceNo: r.invoiceNo, invoiceDate: r.invoiceDate, customerID: r.customerCode || r.customerVat || r.customerName || "C", documentTotals: { netTotal: r.net, grossTotal: r.gross } },
+            { header: { company: { name: s.name || "", registrationNumber: s.registrationNumber || "", taxRegistrationNumber: s.taxRegistrationNumber || "" } }, customers: [{ customerID: r.customerCode || r.customerVat || r.customerName || "C", name: r.customerName || "—", country: r.country || "LT", taxRegistrationNumber: r.customerVat || r.customerCode || "" }] },
+            { rate: r.rate });
+          const findings = validateEInvoice(parseUblInvoice(out.xml));
+          return { engineVersion: ENGINE_VERSION, xml: out.xml, meta: out.meta, findings, gate: computeEInvoiceGate(findings) };
+        },
+      },
     };
     window.TaxAI = api;
     window.addEventListener("message", async (e) => {
       const d = e && e.data;
-      if (!d || typeof d !== "object" || d.type !== "taxai:validate" || typeof d.xml !== "string") return;
+      if (!d || typeof d !== "object") return;
+      const known = d.type === "taxai:validate" || d.type === "taxai:einvoice-validate" || d.type === "taxai:einvoice-generate";
+      if (!known) return;
       let msg;
-      try { const res = await api.validateText(d.xml); msg = { type: "taxai:result", id: d.id || null, ok: !res.error, result: res }; }
-      catch (err) { msg = { type: "taxai:result", id: d.id || null, ok: false, error: String(err && err.message || err).slice(0, 300) }; }
+      try {
+        let res;
+        if (d.type === "taxai:validate") { if (typeof d.xml !== "string") return; res = await api.validateText(d.xml); }
+        else if (d.type === "taxai:einvoice-validate") { if (typeof d.xml !== "string") return; res = api.einvoice.validate(d.xml); }
+        else { res = api.einvoice.generate(d.invoice || {}, d.seller || {}); }
+        msg = { type: "taxai:result", action: d.type, id: d.id || null, ok: !res.error, result: res };
+      }
+      catch (err) { msg = { type: "taxai:result", action: d.type, id: d.id || null, ok: false, error: String(err && err.message || err).slice(0, 300) }; }
       try { if (e.source && e.source.postMessage) e.source.postMessage(msg, "*"); else window.postMessage(msg, "*"); } catch (pe) { /* sandboxed */ }
     });
   } catch (e) { /* SDK is optional */ }
@@ -6346,8 +6373,10 @@ function buildPeppolInvoice(saftInv, parsed, opts) {
   const issue = saftInv.invoiceDate || new Date().toISOString().slice(0, 10);
   const sellerVat = (o.sellerVat || co.taxRegistrationNumber || co.vatNumber || "").toUpperCase().replace(/\s/g, "");
   const sellerReg = String(co.registrationNumber || h.registrationNumber || "");
-  const buyerVat = String(cust.taxRegistrationNumber || "").toUpperCase().replace(/\s/g, "");
-  const buyerReg = /^\d{9}$/.test(String(cust.taxRegistrationNumber || "")) ? String(cust.taxRegistrationNumber) : "";
+  const bv = String(cust.taxRegistrationNumber || "").toUpperCase().replace(/\s/g, "");
+  const buyerVat = /^[A-Z]{2}/.test(bv) ? bv : "";
+  const buyerRegSrc = String(cust.registrationNumber || (buyerVat ? "" : cust.taxRegistrationNumber) || "");
+  const buyerReg = /^\d{9}$/.test(buyerRegSrc) ? buyerRegSrc : "";
   const ep = (reg) => /^\d{9}$/.test(reg) && lt11(reg) ? `<cbc:EndpointID schemeID="0200">${esc(reg)}</cbc:EndpointID>` : "";
   const vatBlock = (vat) => /^[A-Z]{2}/.test(vat) ? `<cac:PartyTaxScheme><cbc:CompanyID>${esc(vat)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>` : "";
   const party = (name, country, vat, reg) => `<cac:Party>${ep(reg)}<cac:PartyName><cbc:Name>${esc(name)}</cbc:Name></cac:PartyName><cac:PostalAddress><cac:Country><cbc:IdentificationCode>${esc(country)}</cbc:IdentificationCode></cac:Country></cac:PostalAddress>${vatBlock(vat)}<cac:PartyLegalEntity><cbc:RegistrationName>${esc(name)}</cbc:RegistrationName>${reg ? `<cbc:CompanyID>${esc(reg)}</cbc:CompanyID>` : ""}</cac:PartyLegalEntity></cac:Party>`;
@@ -6367,6 +6396,155 @@ function buildPeppolInvoice(saftInv, parsed, opts) {
 <cac:InvoiceLine><cbc:ID>1</cbc:ID><cbc:InvoicedQuantity unitCode="C62">1</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="EUR">${net.toFixed(2)}</cbc:LineExtensionAmount><cac:Item><cbc:Name>${esc(o.itemName || ("Pardavimas pagal sąskaitą " + (saftInv.invoiceNo || "")))}</cbc:Name><cac:ClassifiedTaxCategory><cbc:ID>${cat}</cbc:ID><cbc:Percent>${rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item><cac:Price><cbc:PriceAmount currencyID="EUR">${net.toFixed(2)}</cbc:PriceAmount></cac:Price></cac:InvoiceLine>
 </Invoice>`;
   return { xml, meta: { rate, cat, net, tax, payable: incl, buyer: cust.name || saftInv.customerID || "—", peppolEndpoints: !!(ep(sellerReg) && ep(buyerReg)) } };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ERP INTEGRATION LAYER — batch e-invoicing on top of the EN 16931 engine.
+// Sources: the loaded SAF-T sales ledger, or a raw ERP register export
+// (CSV) mapped through per-vendor field profiles. Output: validated
+// Peppol XML files, a manifest with gates and hashes, and a ZIP bundle
+// ready for hand-over to an Access Point or the E. saskaita portal.
+// ═════════════════════════════════════════════════════════════════════════
+const EI_CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = EI_CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+
+// Minimal ZIP writer (method STORE, UTF-8 names) — enough for any unzip tool.
+function buildZip(files) {
+  const enc = typeof TextEncoder !== "undefined" ? new TextEncoder() : { encode: (s) => Uint8Array.from(Buffer.from(s, "utf8")) };
+  const parts = files.map((f) => ({ name: enc.encode(f.name), data: typeof f.data === "string" ? enc.encode(f.data) : f.data }));
+  let size = 22; parts.forEach((p) => { size += 30 + p.name.length + p.data.length + 46 + p.name.length; });
+  const out = new Uint8Array(size); const dv = new DataView(out.buffer);
+  let off = 0; const central = [];
+  const w16 = (v) => { dv.setUint16(off, v & 0xFFFF, true); off += 2; };
+  const w32 = (v) => { dv.setUint32(off, v >>> 0, true); off += 4; };
+  parts.forEach((p) => {
+    const crc = crc32(p.data); const lhOff = off;
+    w32(0x04034B50); w16(20); w16(0x0800); w16(0); w16(0); w16(0x2121);
+    w32(crc); w32(p.data.length); w32(p.data.length); w16(p.name.length); w16(0);
+    out.set(p.name, off); off += p.name.length;
+    out.set(p.data, off); off += p.data.length;
+    central.push({ p, crc, lhOff });
+  });
+  const cdStart = off;
+  central.forEach(({ p, crc, lhOff }) => {
+    w32(0x02014B50); w16(20); w16(20); w16(0x0800); w16(0); w16(0); w16(0x2121);
+    w32(crc); w32(p.data.length); w32(p.data.length); w16(p.name.length); w16(0); w16(0); w16(0); w16(0); w32(0); w32(lhOff);
+    out.set(p.name, off); off += p.name.length;
+  });
+  const cdSize = off - cdStart;
+  w32(0x06054B50); w16(0); w16(0); w16(central.length); w16(central.length); w32(cdSize); w32(cdStart); w16(0);
+  return out;
+}
+
+// CSV with delimiter sniffing (; , tab), quoted fields, "" escapes, CRLF.
+function parseInvoiceCsv(text) {
+  const t = String(text || "").replace(/^\uFEFF/, "");
+  const first = t.slice(0, t.indexOf("\n") < 0 ? t.length : t.indexOf("\n"));
+  const delim = [";", ",", "\t"].map((d) => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], field = "", q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === delim) { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field.replace(/\r$/, "")); field = ""; if (row.some((c) => c !== "")) rows.push(row); row = []; }
+    else field += ch;
+  }
+  if (field !== "" || row.length) { row.push(field.replace(/\r$/, "")); if (row.some((c) => c !== "")) rows.push(row); }
+  return { delimiter: delim, headers: (rows[0] || []).map((h) => String(h).trim()), rows: rows.slice(1) };
+}
+function eiNormDate(s) {
+  const v = String(s || "").trim();
+  let m = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/.exec(v);
+  if (m) return m[1] + "-" + m[2].padStart(2, "0") + "-" + m[3].padStart(2, "0");
+  m = /^(\d{1,2})[-./](\d{1,2})[-./](\d{4})/.exec(v);
+  if (m) return m[3] + "-" + m[2].padStart(2, "0") + "-" + m[1].padStart(2, "0");
+  return "";
+}
+
+// Field-mapping profiles — curated synonym priorities per popular LT ERP.
+const ERP_PROFILES = [
+  { id: "rivile", name: "Rivilė GAMA", hints: { invoiceNo: ["dok_nr", "dok nr", "dokumento nr", "sask"], invoiceDate: ["data"], customerName: ["pirkejas", "klientas", "pavadinimas"], customerCode: ["im_kodas", "imones kodas", "kodas"], customerVat: ["pvm_kodas", "pvm kodas"], customerCountry: ["salis"], net: ["suma_be_pvm", "suma be pvm", "be pvm"], gross: ["suma_su_pvm", "suma su pvm", "su pvm", "viso"], rate: ["tarifas", "pvm proc", "pvm %"] } },
+  { id: "finvalda", name: "Finvalda", hints: { invoiceNo: ["dokumentas", "dok. nr", "saskaitos nr", "sask"], invoiceDate: ["data"], customerName: ["klientas", "pirkejas"], customerCode: ["kodas"], customerVat: ["pvm moketojo kodas", "pvm kodas"], customerCountry: ["salis", "valstybe"], net: ["apmokestinamoji verte", "be pvm", "suma"], gross: ["bendra suma", "su pvm", "viso"], rate: ["pvm tarifas", "tarifas"] } },
+  { id: "directo", name: "Directo", hints: { invoiceNo: ["number", "invoice no", "saskaita"], invoiceDate: ["date", "data"], customerName: ["customer", "klientas"], customerCode: ["customer code", "reg no", "kodas"], customerVat: ["vat reg no", "vat no", "pvm"], customerCountry: ["country", "salis"], net: ["net", "sum", "be pvm"], gross: ["total", "gross", "su pvm"], rate: ["vat %", "rate", "tarifas"] } },
+  { id: "agnum", name: "Agnum", hints: { invoiceNo: ["saskaitos numeris", "numeris", "nr"], invoiceDate: ["israsymo data", "data"], customerName: ["pirkejo pavadinimas", "pirkejas"], customerCode: ["pirkejo kodas", "kodas"], customerVat: ["pirkejo pvm", "pvm kodas"], customerCountry: ["salis"], net: ["suma be pvm", "be pvm"], gross: ["suma su pvm", "su pvm"], rate: ["pvm tarifas", "tarifas"] } },
+  { id: "generic", name: "Generic / kita", hints: { invoiceNo: ["invoice", "sask", "dok", "numeris", "nr"], invoiceDate: ["date", "data"], customerName: ["customer", "klientas", "pirkejas", "name", "pavadinimas"], customerCode: ["company code", "reg", "imones kodas", "kodas"], customerVat: ["vat", "pvm"], customerCountry: ["country", "salis"], net: ["net", "be pvm", "suma"], gross: ["gross", "total", "su pvm", "viso"], rate: ["rate", "tarif", "%"] } },
+];
+function eiTryMap(profile, headers) {
+  const used = new Set(); const map = {};
+  const norm = headers.map((h) => cpNorm(h));
+  Object.entries(profile.hints).forEach(([field, hints]) => {
+    for (const hint of hints) {
+      const idx = norm.findIndex((h, i) => !used.has(i) && h.indexOf(hint) >= 0);
+      if (idx >= 0) { map[field] = idx; used.add(idx); return; }
+    }
+  });
+  return { map, score: Object.keys(map).length };
+}
+function detectErpProfile(headers) {
+  let best = null;
+  ERP_PROFILES.forEach((p) => { const r = eiTryMap(p, headers); if (!best || r.score > best.score) best = { id: p.id, name: p.name, ...r }; });
+  return best;
+}
+function mapErpRows(headers, rows, profileId) {
+  const chosen = profileId && profileId !== "auto" ? ERP_PROFILES.find((p) => p.id === profileId) : null;
+  const det = chosen ? { id: chosen.id, name: chosen.name, ...eiTryMap(chosen, headers) } : detectErpProfile(headers);
+  const g = (row, f) => det.map[f] != null ? String(row[det.map[f]] == null ? "" : row[det.map[f]]).trim() : "";
+  const invoices = []; let skipped = 0;
+  rows.forEach((row) => {
+    const no = g(row, "invoiceNo"), net = eiNum(g(row, "net"));
+    if (!no && net == null) { skipped++; return; }
+    const country = (g(row, "customerCountry").toUpperCase().match(/^[A-Z]{2}/) || ["LT"])[0];
+    invoices.push({
+      invoiceNo: no || ("ROW-" + (invoices.length + 1)), invoiceDate: eiNormDate(g(row, "invoiceDate")),
+      customerName: g(row, "customerName"), customerCode: g(row, "customerCode"),
+      customerVat: g(row, "customerVat").toUpperCase().replace(/\s/g, ""), country,
+      net: net == null ? 0 : net, gross: eiNum(g(row, "gross")), rate: eiNum(g(row, "rate")),
+    });
+  });
+  return { profile: det, mapping: Object.fromEntries(Object.entries(det.map).map(([f, i]) => [f, headers[i]])), invoices, skipped };
+}
+
+// Batch pipeline. source: {kind:"saft", parsed} | {kind:"rows", rows, seller}.
+async function runPeppolBatch(source, opts) {
+  const o = opts || {};
+  const parseXml = o.parseXml || ((x) => parseUblInvoice(x));
+  const jobs = [];
+  if (source.kind === "saft") {
+    const parsed = source.parsed || {};
+    (((parsed.sales || {}).items) || []).forEach((inv) => jobs.push({ saftInv: inv, parsedLike: parsed }));
+  } else {
+    const seller = source.seller || {};
+    (source.rows || []).forEach((r) => jobs.push({
+      saftInv: { invoiceNo: r.invoiceNo, invoiceDate: r.invoiceDate || new Date().toISOString().slice(0, 10), customerID: r.customerCode || r.customerVat || r.customerName || "C", documentTotals: { netTotal: r.net, grossTotal: r.gross != null ? r.gross : (r.rate != null ? eiR2(r.net * (1 + r.rate / 100)) : undefined) } },
+      parsedLike: { header: { company: { name: seller.name || "", registrationNumber: seller.registrationNumber || "", taxRegistrationNumber: seller.taxRegistrationNumber || "" } }, customers: [{ customerID: r.customerCode || r.customerVat || r.customerName || "C", name: r.customerName || r.customerCode || "—", country: r.country || "LT", taxRegistrationNumber: r.customerVat || r.customerCode || "", registrationNumber: r.customerCode || "" }] },
+    }));
+  }
+  const limit = o.limit || 2000;
+  const results = [];
+  for (const job of jobs.slice(0, limit)) {
+    const out = buildPeppolInvoice(job.saftInv, job.parsedLike, o.gen || {});
+    let findings, gate;
+    try { const inv = await parseXml(out.xml); findings = validateEInvoice(inv); gate = computeEInvoiceGate(findings); }
+    catch (e) { findings = [{ rule_id: "EI-PARSE", std: "EN16931", severity: "Critical", titleLt: "Klaida", titleEn: "Error", detail: String(e && e.message || e) }]; gate = computeEInvoiceGate(findings); }
+    const fileName = "peppol-" + String(job.saftInv.invoiceNo || results.length + 1).replace(/[^\w.-]+/g, "_") + ".xml";
+    results.push({ invoiceNo: job.saftInv.invoiceNo || "—", buyer: out.meta.buyer, cat: out.meta.cat, rate: out.meta.rate, payable: out.meta.payable, xml: out.xml, fileName, findings, gate, ready: gate.en.ok && gate.peppol.ok && gate.lt.ok });
+  }
+  const summary = { total: results.length, ready: results.filter((r) => r.ready).length, enValid: results.filter((r) => r.gate.en.ok).length };
+  summary.blocked = summary.total - summary.ready;
+  return { results, summary, truncated: jobs.length > limit };
+}
+
+function buildBatchManifest(batch, hashes) {
+  return JSON.stringify({
+    generatedAt: new Date().toISOString(), engine: "TaxAI e-invoicing v" + ENGINE_VERSION,
+    standard: "EN 16931 · Peppol BIS Billing 3.0", summary: batch.summary,
+    files: batch.results.map((r) => ({ name: r.fileName, invoiceNo: r.invoiceNo, buyer: r.buyer, category: r.cat, rate: r.rate, payable: r.payable, gates: { en: r.gate.en.ok, peppol: r.gate.peppol.ok, lt: r.gate.lt.ok }, findings: r.findings.map((f) => f.rule_id), sha256: (hashes && hashes[r.fileName]) || null })),
+  }, null, 2);
+}
+function batchSummaryCsv(batch) {
+  const head = "invoiceNo;buyer;category;rate;payable;EN16931;Peppol;LT;findings";
+  return [head].concat(batch.results.map((r) => [r.invoiceNo, '"' + String(r.buyer).replace(/"/g, '""') + '"', r.cat, r.rate, r.payable, r.gate.en.ok ? "OK" : "FAIL", r.gate.peppol.ok ? "OK" : "FAIL", r.gate.lt.ok ? "OK" : "FAIL", r.findings.map((f) => f.rule_id).join("|")].join(";"))).join("\n");
 }
 
 const OFFICIAL_SOURCES = [
@@ -11687,6 +11865,18 @@ function EInvoiceStudio({ lang, fileData, setToast, audit }) {
   const [valRes, setValRes] = useState(null);
   const [genSel, setGenSel] = useState("");
   const [genRes, setGenRes] = useState(null);
+  const [csvInfo, setCsvInfo] = useState(null);
+  const [csvProfile, setCsvProfile] = useState("auto");
+  const [batch, setBatch] = useState(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const onCsv = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = (ev) => { try { const p = parseInvoiceCsv(String(ev.target.result || "")); const m = mapErpRows(p.headers, p.rows, csvProfile); setCsvInfo({ headers: p.headers, rows: p.rows, mapRes: m }); setBatch(null); } catch (err) { setToast && setToast("CSV: " + String(err && err.message || err).slice(0, 120)); } }; r.readAsText(f); e.target.value = ""; };
+  const remap = (pid) => { setCsvProfile(pid); setBatch(null); setCsvInfo((ci) => ci ? { ...ci, mapRes: mapErpRows(ci.headers, ci.rows, pid) } : ci); };
+  const sellerFromSaft = () => { const co = (fileData && fileData.parsed && fileData.parsed.header && fileData.parsed.header.company) || {}; return { name: co.name, registrationNumber: co.registrationNumber, taxRegistrationNumber: co.taxRegistrationNumber }; };
+  const runBatch = async (src2) => { setBatchBusy(true); try { const b = await runPeppolBatch(src2, {}); setBatch(b); audit && audit.log("EINV_BATCH", src2.kind + " · " + b.summary.total); } catch (e) { setToast && setToast("Batch: " + String(e && e.message || e).slice(0, 120)); } setBatchBusy(false); };
+  const sha256hex = async (s) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join(""); };
+  const dlZip = async () => { if (!batch) return; try { const hashes = {}; for (const r of batch.results) hashes[r.fileName] = await sha256hex(r.xml); const files = batch.results.map((r) => ({ name: r.fileName, data: r.xml })).concat([{ name: "manifest.json", data: buildBatchManifest(batch, hashes) }, { name: "summary.csv", data: batchSummaryCsv(batch) }]); const zip = buildZip(files); const b = new Blob([zip], { type: "application/zip" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "taxai-peppol-batch.zip"; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); audit && audit.log("EXPORT", "Peppol batch ZIP · " + batch.summary.total); } catch (e) { setToast && setToast("ZIP: " + String(e && e.message || e).slice(0, 120)); } };
+  const btnP = (dis) => ({ padding: "9px 16px", background: "#fff", color: "#000", border: "none", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", opacity: dis ? 0.4 : 1 });
+  const btnG = () => ({ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px", border: `1px solid rgba(255,255,255,0.12)`, color: "#fff", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", background: "transparent" });
   const LINE = "rgba(255,255,255,0.12)";
   const SC2 = { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" };
   const sales = (fileData && fileData.parsed && fileData.parsed.sales && fileData.parsed.sales.items) || [];
@@ -11736,6 +11926,41 @@ function EInvoiceStudio({ lang, fileData, setToast, audit }) {
             <Findings fs={genRes.findings} />
           </>}
         </>}
+    </div>
+    <div style={{ background: "var(--bg2)", border: `1px solid ${LINE}`, padding: 24, marginTop: 20 }}>
+      <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".18em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "ERP INTEGRACIJA — PAKETINIS KONVEJERIS" : "ERP INTEGRATION — BATCH PIPELINE"}</div>
+      <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6, margin: "0 0 14px", maxWidth: 880 }}>{lang === "lt" ? "Automatizuokite generavimą ir atitiktį tiesiai iš ERP: paleiskite visą SAF-T pardavimo žurnalą arba įkelkite ERP registro eksportą (CSV — Rivilė, Finvalda, Directo, Agnum ar bet kuri kita sistema; laukai atpažįstami automatiškai). Kiekviena sąskaita konvertuojama į Peppol BIS 3.0, patikrinama trimis paketais ir supakuojama perdavimui." : "Automate generation and compliance straight from your ERP: run the whole SAF-T sales ledger, or upload an ERP register export (CSV — Rivile, Finvalda, Directo, Agnum or any other; fields auto-detected). Every invoice is converted to Peppol BIS 3.0, validated by the three packs and bundled for transmission."}</p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <button onClick={() => runBatch({ kind: "saft", parsed: fileData.parsed })} disabled={batchBusy || sales.length === 0} style={btnP(batchBusy || sales.length === 0)}>{batchBusy ? "…" : (lang === "lt" ? `Iš SAF-T (${sales.length})` : `From SAF-T (${sales.length})`)} →</button>
+        <span style={{ color: "#555", fontFamily: "var(--m)", fontSize: 10 }}>{lang === "lt" ? "ARBA" : "OR"}</span>
+        <label style={btnG()}>↑ CSV{csvInfo ? ` · ${csvInfo.mapRes.invoices.length}` : ""}<input type="file" accept=".csv,.txt" onChange={onCsv} style={{ display: "none" }} /></label>
+        <select value={csvProfile} onChange={(e) => remap(e.target.value)} style={{ background: "#000", border: `1px solid ${LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 11, padding: "8px 10px" }}>
+          <option value="auto">{lang === "lt" ? "Profilis: auto" : "Profile: auto"}</option>
+          {ERP_PROFILES.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {csvInfo && <button onClick={() => runBatch({ kind: "rows", rows: csvInfo.mapRes.invoices, seller: sellerFromSaft() })} disabled={batchBusy || !csvInfo.mapRes.invoices.length} style={btnP(batchBusy || !csvInfo.mapRes.invoices.length)}>{lang === "lt" ? "Vykdyti CSV →" : "Run CSV →"}</button>}
+      </div>
+      {csvInfo && <div style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#9f9f9b", marginBottom: 10 }}>{(lang === "lt" ? "Profilis: " : "Profile: ") + csvInfo.mapRes.profile.name + " · " + Object.entries(csvInfo.mapRes.mapping).map(([f, h]) => `${f}→${h}`).join(" · ")}{csvInfo.mapRes.skipped ? ` · ${lang === "lt" ? "praleista" : "skipped"} ${csvInfo.mapRes.skipped}` : ""}</div>}
+      {batch && <>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", margin: "6px 0 10px" }}>
+          {[[lang === "lt" ? "Iš viso" : "Total", batch.summary.total, "#fff"], ["Peppol-ready", batch.summary.ready, "#69db7c"], ["EN 16931", batch.summary.enValid, "#7cc4ff"], [lang === "lt" ? "Blokuota" : "Blocked", batch.summary.blocked, batch.summary.blocked ? "#ff6b6b" : "#69db7c"]].map(([lb, v, c]) => <div key={lb}><div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase" }}>{lb}</div><div style={{ fontSize: 24, color: c, fontFamily: "var(--f)", fontWeight: 300 }}>{v}</div></div>)}
+          <button onClick={dlZip} style={{ ...btnP(false), marginLeft: "auto", alignSelf: "center" }}>↓ ZIP ({lang === "lt" ? "XML + manifestas + CSV" : "XML + manifest + CSV"})</button>
+        </div>
+        <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid rgba(255,255,255,0.07)" }}>
+          {batch.results.slice(0, 300).map((r, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.05)", flexWrap: "wrap" }}>
+            <span style={{ color: r.ready ? "#69db7c" : "#ff6b6b", fontFamily: "var(--m)", fontWeight: 700, minWidth: 14 }}>{r.ready ? "✓" : "✕"}</span>
+            <span style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#fff", minWidth: 110 }}>{r.invoiceNo}</span>
+            <span style={{ fontFamily: "var(--s)", fontSize: 12, color: "#bcbcb8", minWidth: 160 }}>{r.buyer}</span>
+            <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88" }}>{r.cat} {r.rate}% · {r.payable} EUR</span>
+            {!r.ready && <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#ffa94d" }}>{r.findings.slice(0, 2).map((f) => f.rule_id).join(", ")}{r.findings.length > 2 ? "…" : ""}</span>}
+          </div>)}
+        </div>
+        <div style={{ fontFamily: "var(--s)", fontSize: 11.5, color: "#8c8c88", marginTop: 10, lineHeight: 1.6 }}>{lang === "lt" ? "Perdavimas: paruoštus XML įkelkite į „E. sąskaita“ portalą (B2G), perduokite per savo Peppol prieigos tašką arba siųskite pirkėjui kartu su PDF. Manifeste — kiekvieno failo vartai, radiniai ir SHA-256 maišos." : "Transmission: upload the ready XML to the E. saskaita portal (B2G), hand over via your Peppol Access Point, or send to the buyer alongside the PDF. The manifest carries each file\u2019s gates, findings and SHA-256 hashes."}</div>
+      </>}
+      <details style={{ marginTop: 14 }}>
+        <summary style={{ cursor: "pointer", fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88", letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? "Įterpimas į ERP (SDK)" : "Embed in your ERP (SDK)"}</summary>
+        <pre style={{ background: "#000", border: `1px solid ${LINE}`, padding: 12, fontFamily: "var(--m)", fontSize: 10.5, color: "#9fd29f", overflowX: "auto", marginTop: 8 }}>{"// window.TaxAI (kai TaxAI atidarytas tame pačiame lange / iframe)\nconst r = TaxAI.einvoice.generate(\n  { invoiceNo: \"S-1\", invoiceDate: \"2026-06-01\", customerName: \"UAB X\",\n    customerCode: \"123456786\", country: \"LT\", net: 1000, rate: 21 },\n  { name: \"Mano UAB\", registrationNumber: \"123456786\", taxRegistrationNumber: \"LT123456786\" });\n// r.xml · r.gate → { en, peppol, lt } · r.findings\n\n// postMessage (iš ERP iframe):\nparent.postMessage({ type: \"taxai:einvoice-validate\", id: 1, xml: ublXml }, \"*\");\nwindow.addEventListener(\"message\", (e) => { if (e.data.type === \"taxai:result\") console.log(e.data); });"}</pre>
+      </details>
     </div>
   </div>;
 }
