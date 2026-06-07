@@ -1901,10 +1901,14 @@ function vatClassMatch(spec, line) {
 // Phase 1 analytics engine — risk score, acceptance gate, multi-part merge,
 // audit report, versioned rule packs.  (TaxAI engine v10.1.0)
 // ═════════════════════════════════════════════════════════════════════════
-const ENGINE_VERSION = "10.4.0";
+const ENGINE_VERSION = "10.6.0";
 
 // Rule-pack provenance — shown in the Rules tab and stamped into every export.
 const RULE_PACKS = [
+  { version: "2026.06-eaudit2", date: "2026-06-08", title: "E-Audit 2 — full VMI coverage, industry packs, company rules, detailed workpaper; desk moved to the E-Auditor agent", titleLt: "E. auditas 2 — pilna VMI aprėptis, šakų paketai, įmonės taisyklės, detalus darbo dokumentas; pultas perkeltas į E. auditoriaus agentą",
+    changes: ["One audit now covers ISA + the full 482-rule VMI compliance result (gate, risk, severities, top rules) inside the risk map and workpaper", "Industry packs (trade, manufacturing, services, construction, transport) with deterministic, formula-disclosed checks and automatic industry inference from the file", "The company's own natural-language rules run inside the audit and appear in the workpaper", "Workpaper upgraded: executive summary, per-test evidence rows, VMI table, industry and company-rule sections"] },
+  { version: "2026.06-eaudit", date: "2026-06-08", title: "E-Audit engine — ISA (TAS) financial-audit layer on SAF-T data", titleLt: "E. audito variklis — TAS finansinio audito sluoksnis ant SAF-T duomenų",
+    changes: ["TAS 320 materiality engine (benchmark selection, performance & trivial thresholds)", "TAS 315/240 inherent-risk map per FS area with data-driven factors", "TAS 240 journal-entry CAAT battery: weekend/period-end/round-sum/duplicates/unbalanced/seldom-used/above-PM + Benford first-digit analysis (MAD conformity)", "TAS 520 monthly analytics with z-score deviations vs performance materiality", "TAS 530 monetary-unit sampling per the Vadovas formula (size = population ÷ interval), seeded & reproducible, top-stratum aware", "TAS 570 going-concern indicators incl. the LT equity-vs-share-capital test", "Audit-program generator and printable workpaper, grounded-AI auditor narrative"] },
   { version: "2026.06-scale", date: "2026-06-08", title: "Scale layer — readiness monitoring, embeddable SDK, white-label", titleLt: "Mastelio sluoksnis — parengties stebėsena, įterpiamas SDK, baltoji etiketė",
     changes: ["Continuous-readiness monitoring: every audit snapshots gate/risk/finding-keys per company+period; portfolio board with audit-ready status, staleness alerts and new-vs-resolved deltas", "Bureau batch mode: drop N client files — each runs the full 482-rule pipeline and lands on the board", "Embeddable SDK: window.TaxAI.validateText / validateFile / autofixText / explain + postMessage bridge for accounting-software vendors — all client-side", "White-label: firm name, accent and footer applied to audit reports, VMI letters and portfolio exports (TaxAI core credited)"] },
   { version: "2026.06-ai-native", date: "2026-06-08", title: "AI-native layer — offline Audit Copilot + VMI response letters", titleLt: "AI sluoksnis — vietinis audito kopilotas + VMI atsakymo laiškai",
@@ -5754,6 +5758,351 @@ function formatRuleCatalogForAi() {
 // the final report carries a confidence score and an official-source list.
 // Offline (no AI endpoint) it degrades to the deterministic brief — 100%.
 // ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
+// E-AUDIT ENGINE — ISA (TAS) financial-audit layer on SAF-T data.
+// Methodology references: "TSA taikymo MVĮ audito vadovas" (IFAC SMP guide,
+// LT translation, 3rd ed.) Vol I core concepts (V1-7 materiality/TAS 320,
+// V1-8 risk assessment/TAS 240+315, V1-14 going concern/TAS 570) and Vol II
+// practical guidance (V2-10 further procedures/TAS 330+520, V2 sampling:
+// "Imties dydis = visuma ÷ atrankos intervalas"). Percentages are
+// configurable professional-judgment defaults under TAS 320 — the guide
+// deliberately prescribes none.
+// ═════════════════════════════════════════════════════════════════════════
+const EA_DEFAULTS = { pbtPct: 5, revenuePct: 1, assetsPct: 1, equityPct: 2, perfPct: 75, trivialPct: 5, reliabilityFactor: 3.0 };
+const ea2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
+function eaSig2(v) { if (!isFinite(v) || v === 0) return 0; const m = Math.pow(10, Math.floor(Math.log10(Math.abs(v))) - 1); return Math.round(v / m) * m; }
+
+function eaTrialBalance(d) {
+  const tb = {};
+  ((d && d.transactions) || []).forEach((t) => (t.lines || []).forEach((l) => {
+    const a = l.accountID || "?"; const r = tb[a] = tb[a] || { debit: 0, credit: 0 };
+    r.debit += l.debitAmount || 0; r.credit += l.creditAmount || 0;
+  }));
+  const names = {};
+  ((d && d.accounts) || []).forEach((a) => { names[a.accountID] = a.accountDescription || a.description || a.name || ""; });
+  Object.keys(tb).forEach((a) => { tb[a].net = ea2(tb[a].debit - tb[a].credit); tb[a].name = names[a] || ""; });
+  return tb;
+}
+
+// ── TAS 320 / Vadovas V1-7: materiality ──
+function eaMateriality(d, opts) {
+  const o = Object.assign({}, EA_DEFAULTS, opts || {});
+  const k = (o.kpis) || (typeof computeKPIs === "function" && typeof buildContext === "function" ? (computeKPIs(d, buildContext(d)) || {}).kpis || {} : {});
+  const alts = [];
+  const add = (basis, basisLt, value, pct) => { if (value != null && isFinite(value) && Math.abs(value) > 0) alts.push({ basis, basisLt, value: ea2(value), pct, overall: eaSig2(Math.abs(value) * pct / 100) }); };
+  add("Profit before tax (proxy: gross result)", "Pelnas prieš mokesčius (aproks.: bendrasis rezultatas)", k.grossResult, o.pbtPct);
+  add("Revenue", "Pajamos", k.revenue, o.revenuePct);
+  add("Total assets", "Visas turtas", k.totalAssets, o.assetsPct);
+  add("Equity", "Nuosavas kapitalas", k.equity, o.equityPct);
+  const pick = o.benchmark ? alts.find((a) => a.basis.toLowerCase().includes(o.benchmark)) || alts[0] : (alts[0] || null);
+  const overall = pick ? pick.overall : 0;
+  return { kpis: k, alternatives: alts, basis: pick ? pick.basis : "—", basisLt: pick ? pick.basisLt : "—", baseValue: pick ? pick.value : 0, pct: pick ? pick.pct : 0,
+    overall, performance: eaSig2(overall * o.perfPct / 100), trivial: eaSig2(overall * o.trivialPct / 100),
+    perfPct: o.perfPct, trivialPct: o.trivialPct, ref: "TAS 320 · Vadovas V1-7" };
+}
+
+// ── TAS 240 / Vadovas V1-8, V2-10: journal-entry CAAT battery ──
+function eaJournalTests(d, mat) {
+  const txs = (d && d.transactions) || [];
+  const pe = (d && d.header && d.header.periodEnd) || "";
+  const tests = [];
+  const T = (id, tas, lt, en, hits, sev, stats) => tests.push({ id, tas, lt, en, hits: hits.slice(0, 50), count: hits.length, severity: sev, stats: stats || null });
+  const wk = (ds) => { const t = new Date(String(ds) + "T12:00:00"); const g = t.getDay(); return !isNaN(t) && (g === 0 || g === 6); };
+  const row = (t, l, extra) => Object.assign({ tx: t.transactionID || "—", data: t.transactionDate || "—", acct: l ? (l.accountID || "—") : "—", suma: l ? ea2(Math.max(l.debitAmount || 0, l.creditAmount || 0)) : "—" }, extra || {});
+
+  const weekend = []; txs.forEach((t) => { if (wk(t.transactionDate)) (t.lines || []).slice(0, 1).forEach((l) => weekend.push(row(t, l))); });
+  T("JE_WEEKEND", "TAS 240", "Įrašai savaitgaliais", "Entries posted on weekends", weekend, "Medium");
+
+  let last3 = [], total = txs.length;
+  if (pe) { const cut = new Date(pe + "T00:00:00"); cut.setDate(cut.getDate() - 2); const cs = cut.toISOString().slice(0, 10); txs.forEach((t) => { if (t.transactionDate && t.transactionDate >= cs && t.transactionDate <= pe) last3.push(row(t, (t.lines || [])[0])); }); }
+  T("JE_PERIOD_END", "TAS 240", "Koncentracija paskutines 3 d.", "Period-end concentration (last 3 days)", last3, last3.length / Math.max(1, total) > 0.15 ? "High" : "Low", { sharePct: ea2(100 * last3.length / Math.max(1, total)) });
+
+  const round = []; txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (v >= Math.max(1000, mat.trivial) && v % 1000 === 0) round.push(row(t, l)); }));
+  T("JE_ROUND", "TAS 240", "Apvalios sumos (×1000)", "Round-sum entries (×1000)", round, "Medium");
+
+  // Benford first-digit (lines ≥ 10): expected log10(1+1/d); MAD bands (Nigrini)
+  const dist = Array(10).fill(0); let n = 0;
+  txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (v >= 10) { const fd = Number(String(Math.floor(v))[0]); if (fd >= 1) { dist[fd]++; n++; } } }));
+  let mad = 0; const rows9 = [];
+  if (n >= 30) {
+    for (let dg = 1; dg <= 9; dg++) { const act = dist[dg] / n, exp = Math.log10(1 + 1 / dg); mad += Math.abs(act - exp); rows9.push({ skaitmuo: dg, faktas: ea2(act * 100), tiketina: ea2(exp * 100) }); }
+    mad = mad / 9;
+  }
+  const bVerdict = n < 30 ? "insufficient" : mad < 0.006 ? "close" : mad < 0.012 ? "acceptable" : mad < 0.015 ? "marginal" : "nonconformity";
+  T("JE_BENFORD", "TAS 240", "Benfordo pirmo skaitmens analizė", "Benford first-digit analysis", bVerdict === "nonconformity" || bVerdict === "marginal" ? rows9 : [], bVerdict === "nonconformity" ? "High" : "Low", { n, mad: ea2(mad * 1000) / 1000, verdict: bVerdict, dist: rows9 });
+
+  const abovePM = []; txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (mat.performance > 0 && v >= mat.performance) abovePM.push(row(t, l)); }));
+  T("JE_ABOVE_PM", "TAS 330", "Įrašai ≥ veiklos reikšmingumo (testuojami 100%)", "Entries ≥ performance materiality (test 100%)", abovePM, abovePM.length ? "High" : "Low");
+
+  const noDesc = []; txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (v >= mat.trivial && !String(l.description || t.description || "").trim()) noDesc.push(row(t, l)); }));
+  T("JE_NO_DESC", "TAS 240", "Reikšmingi įrašai be aprašymo", "Material entries without description", noDesc, "Medium");
+
+  const seen = new Map(); const dup = [];
+  txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (v < Math.max(100, mat.trivial)) return; const key = `${t.transactionDate}|${l.accountID}|${v}`; if (seen.has(key)) dup.push(row(t, l, { pora: seen.get(key) })); else seen.set(key, t.transactionID || "—"); }));
+  T("JE_DUP", "TAS 240", "Galimi dubliuoti įrašai (data+sąskaita+suma)", "Possible duplicate entries (date+account+amount)", dup, "Medium");
+
+  const unb = []; txs.forEach((t) => { let dr = 0, cr = 0; (t.lines || []).forEach((l) => { dr += l.debitAmount || 0; cr += l.creditAmount || 0; }); if (Math.abs(dr - cr) > 0.011) unb.push({ tx: t.transactionID || "—", data: t.transactionDate || "—", debetas: ea2(dr), kreditas: ea2(cr), skirtumas: ea2(dr - cr) }); });
+  T("JE_UNBALANCED", "TAS 240", "Nesubalansuoti įrašai (D≠K)", "Unbalanced entries (D≠C)", unb, unb.length ? "Critical" : "Low");
+
+  const use = {}; txs.forEach((t) => (t.lines || []).forEach((l) => { use[l.accountID || "?"] = (use[l.accountID || "?"] || 0) + 1; }));
+  const seldom = []; txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (use[l.accountID || "?"] <= 2 && v >= mat.trivial) seldom.push(row(t, l, { panaudota: use[l.accountID || "?"] })); }));
+  T("JE_SELDOM", "TAS 240", "Retai naudojamos sąskaitos su reikšmingomis sumomis", "Seldom-used accounts with material amounts", seldom, "Medium");
+
+  return tests;
+}
+
+// ── TAS 315/240: inherent-risk map per FS area ──
+function eaRiskMap(d, mat, je, vmi) {
+  const areas = [];
+  const A = (lt, en, factors) => { const fs = factors.filter(Boolean); areas.push({ lt, en, level: fs.length >= 2 ? "High" : fs.length === 1 ? "Medium" : "Low", factors: fs, tas: "TAS 315/240" }); };
+  const k = mat.kpis || {};
+  const sales = ((d.sales && d.sales.items) || []);
+  const byCust = {}; let rev = 0;
+  sales.forEach((i) => { const v = (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0; rev += v; byCust[i.customerID || "?"] = (byCust[i.customerID || "?"] || 0) + v; });
+  const top = Object.values(byCust).sort((a, b) => b - a)[0] || 0;
+  const concPct = rev > 0 ? ea2(100 * top / rev) : 0;
+  const jeBy = (id) => (je.find((t) => t.id === id) || { count: 0, stats: {} });
+  A("Pajamų pripažinimas", "Revenue recognition", [
+    "TAS 240 prielaida: pajamų pripažinimo apgaulės rizika (visada)",
+    concPct > 30 ? `Klientų koncentracija: didžiausias klientas ${concPct}% pajamų` : null,
+    jeBy("JE_PERIOD_END").stats && jeBy("JE_PERIOD_END").stats.sharePct > 15 ? `Laikotarpio pabaigos koncentracija ${jeBy("JE_PERIOD_END").stats.sharePct}%` : null,
+  ]);
+  A("Gautinos sumos", "Receivables", [k.dso != null && k.dso > 90 ? `DSO ${ea2(k.dso)} d. (>90)` : null, concPct > 30 ? "Koncentracija (žr. pajamas)" : null]);
+  A("Mokėtinos sumos", "Payables", [k.dpo != null && k.dpo > 120 ? `DPO ${ea2(k.dpo)} d. (>120)` : null]);
+  A("Pinigai ir įrašai", "Cash & journal entries", [jeBy("JE_WEEKEND").count ? `${jeBy("JE_WEEKEND").count} įrašai savaitgaliais` : null, jeBy("JE_UNBALANCED").count ? `${jeBy("JE_UNBALANCED").count} nesubalansuoti` : null, (jeBy("JE_BENFORD").stats || {}).verdict === "nonconformity" ? "Benfordo nuokrypis" : null]);
+  A("Veiklos tęstinumas", "Going concern", [k.equity != null && k.equity < 0 ? "Neigiamas nuosavas kapitalas" : null, k.currentRatio != null && k.currentRatio < 1 ? `Trumpalaikis likvidumas ${ea2(k.currentRatio)} (<1)` : null]);
+  if (vmi) A("Mokesčių atitiktis (VMI · SAF-T)", "Tax compliance (VMI · SAF-T)", [
+    vmi.gate && vmi.gate.verdict === "rejected" ? `i.SAF-T vartai: ATMESTA (${vmi.gate.blockingTotal} blokuojančios)` : null,
+    vmi.risk && (vmi.risk.band === "high" || vmi.risk.band === "elevated") ? `VMI rizikos balas ${vmi.risk.score} (${vmi.risk.band})` : null,
+    vmi.sev && vmi.sev.Critical > 0 ? `${vmi.sev.Critical} kritiniai radiniai (482 taisyklės)` : null,
+  ]);
+  return areas;
+}
+
+// ── TAS 520 / V2-10: monthly analytics with z-scores ──
+function eaAnalytics(d, mat) {
+  const out = [];
+  const series = (items, label) => {
+    const byM = {};
+    (items || []).forEach((i) => { const m = String(i.invoiceDate || "").slice(0, 7); if (!m) return; const v = (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0; byM[m] = (byM[m] || 0) + v; });
+    const months = Object.keys(byM).sort(); if (months.length < 3) return;
+    const vals = months.map((m) => byM[m]);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / vals.length) || 1;
+    months.forEach((m, i) => { const z = (vals[i] - mean) / sd; if (Math.abs(z) > 2 && Math.abs(vals[i] - mean) > mat.performance) out.push({ sritis: label, men: m, suma: ea2(vals[i]), vidurkis: ea2(mean), z: ea2(z) }); });
+  };
+  series(d.sales && d.sales.items, "Pajamos / Revenue");
+  series(d.purchases && d.purchases.items, "Pirkimai / Purchases");
+  return { flags: out, ref: "TAS 520 · Vadovas V2-10" };
+}
+
+// ── TAS 530 / Vadovas V2: monetary-unit sampling ──
+// Formula per the guide: "Imties dydis = visuma ÷ atrankos intervalas",
+// where interval = tolerable misstatement (performance materiality) ÷
+// reliability factor. Seeded systematic PPS selection; items ≥ interval
+// form the top stratum and are examined 100%.
+function eaMusSample(items, valueOf, mat, opts) {
+  const o = Object.assign({}, EA_DEFAULTS, opts || {});
+  const rows = (items || []).map((it, i) => ({ i, ref: it.invoiceNo || it.transactionID || it.paymentRefNo || String(i + 1), value: Math.abs(valueOf(it) || 0) })).filter((r) => r.value > 0);
+  const population = ea2(rows.reduce((a, r) => a + r.value, 0));
+  const interval = Math.max(1, ea2((mat.performance || 1) / o.reliabilityFactor));
+  const size = Math.max(1, Math.ceil(population / interval));
+  const topStratum = rows.filter((r) => r.value >= interval);
+  let seed = (opts && opts.seed != null) ? opts.seed : (rows.length * 2654435761 % 4294967296);
+  const seed0 = seed;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const start = rnd() * interval;
+  const sample = []; let cum = 0; let nextPoint = start; const inTop = new Set(topStratum.map((r) => r.i));
+  for (const r of rows) {
+    const lo = cum; cum += r.value;
+    while (nextPoint < cum && sample.length < size) {
+      if (!inTop.has(r.i) && !sample.some((s) => s.i === r.i)) sample.push({ i: r.i, ref: r.ref, value: r.value, point: ea2(nextPoint) });
+      nextPoint += interval;
+    }
+    if (nextPoint >= population) break;
+  }
+  return { population, interval, size, reliabilityFactor: o.reliabilityFactor, topStratum: topStratum.slice(0, 50), sample: sample.slice(0, 200), seed: seed0, ref: "TAS 530 · Vadovas V2 (Imties dydis = visuma ÷ atrankos intervalas)" };
+}
+
+// ── TAS 570 / V1-14 + LT law: going concern ──
+function eaGoingConcern(mat, tb) {
+  const k = mat.kpis || {}; const flags = [];
+  let shareCapital = 0;
+  Object.keys(tb || {}).forEach((a) => { if (String(a).slice(0, 2) === "30") shareCapital += -(tb[a].net || 0); });
+  shareCapital = ea2(shareCapital);
+  const F = (test, value, ref) => flags.push({ test, value, ref });
+  if (k.equity != null && k.equity < 0) F("Neigiamas nuosavas kapitalas / Negative equity", ea2(k.equity), "TAS 570 · V1-14");
+  if (shareCapital > 0 && k.equity != null && k.equity < shareCapital / 2) F("Nuosavas kapitalas < 1/2 įstatinio kapitalo / Equity below half of share capital", `${ea2(k.equity)} < ${ea2(shareCapital / 2)}`, "LR ABĮ (nuosavo kapitalo reikalavimai) · TAS 570");
+  if (k.currentRatio != null && k.currentRatio < 1) F("Trumpalaikio likvidumo rodiklis < 1 / Current ratio below 1", ea2(k.currentRatio), "TAS 570 · V1-14");
+  if (k.workingCapital != null && k.workingCapital < 0) F("Neigiamas apyvartinis kapitalas / Negative working capital", ea2(k.workingCapital), "TAS 570 · V1-14");
+  if (k.netMarginPct != null && k.netMarginPct < 0) F("Nuostolinga veikla / Loss-making operations", ea2(k.netMarginPct) + "%", "TAS 570 · V1-14");
+  return { flags, shareCapital };
+}
+
+// ── Vadovas V2-9/10: audit-program generator ──
+function eaBuildPlan(riskMap, mat) {
+  const proc = {
+    High: ["Detalieji testai visiems vienetams ≥ veiklos reikšmingumo (" + mat.performance + ")", "Piniginių vienetų atranka likusiai visumai (TAS 530)", "Pjūvio (cut-off) testai ±5 d. nuo laikotarpio pabaigos", "Nepriklausomi patvirtinimai / išoriniai įrodymai (TAS 505)"],
+    Medium: ["Piniginių vienetų atranka (TAS 530)", "Analitinės procedūros su lūkesčiu ir tyrimu (TAS 520)"],
+    Low: ["Analitinės procedūros (TAS 520)", "Apžvalginis testavimas mažesne apimtimi"],
+  };
+  return riskMap.map((a) => ({ sritis: a.lt, lygis: a.level, procedūros: proc[a.level] || proc.Low, tas: a.tas }));
+}
+
+// ── Industry packs: deterministic, formula-disclosed checks per sector.
+//    Signals come only from the file (account names, invoice statistics) —
+//    no legal codes are guessed; each check states its formula.
+const INDUSTRY_PACKS = [
+  { id: "prekyba", lt: "Prekyba", en: "Trade / retail" },
+  { id: "gamyba", lt: "Gamyba", en: "Manufacturing" },
+  { id: "paslaugos", lt: "Paslaugos", en: "Services" },
+  { id: "statyba", lt: "Statyba", en: "Construction" },
+  { id: "transportas", lt: "Transportas ir logistika", en: "Transport & logistics" },
+];
+function eaAcctShare(d, tb, nameRe, idPrefixes) {
+  let hit = 0, total = 0;
+  Object.keys(tb || {}).forEach((a) => {
+    const v = Math.abs(tb[a].debit || 0) + Math.abs(tb[a].credit || 0);
+    total += v;
+    const nm = cpNorm(tb[a].name || "");
+    if ((nameRe && nameRe.test(nm)) || (idPrefixes || []).some((p) => String(a).indexOf(p) === 0)) hit += v;
+  });
+  return total > 0 ? ea2(100 * hit / total) : 0;
+}
+function eaInferIndustry(d, tb) {
+  const names = cpNorm(Object.values(tb || {}).map((x) => x.name).join(" ") + " " + ((d.header && d.header.company && d.header.company.name) || ""));
+  const sales = (d.sales && d.sales.items) || [];
+  const vals = sales.map((i) => (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0).sort((a, b) => a - b);
+  const median = vals.length ? vals[Math.floor(vals.length / 2)] : 0;
+  const signals = [];
+  let id = "paslaugos";
+  if (/degal|kuras|kuro|transport|logist|vezim/.test(names)) { id = "transportas"; signals.push("sąskaitų pavadinimai: degalai/transportas"); }
+  else if (/statyb|rangov/.test(names)) { id = "statyba"; signals.push("sąskaitų pavadinimai: statyba/rangovai"); }
+  else if (/zaliav|gamyb|nebaigta gamyba/.test(names)) { id = "gamyba"; signals.push("sąskaitų pavadinimai: žaliavos/gamyba"); }
+  else if (/atsarg|prekes|prekiu|kasa/.test(names) || (sales.length > 50 && median > 0 && median < 200)) { id = "prekyba"; signals.push(sales.length > 50 && median < 200 ? `daug smulkių sąskaitų (mediana ${ea2(median)})` : "sąskaitų pavadinimai: atsargos/prekės/kasa"); }
+  else signals.push("numatytasis profilis (nėra ryškių signalų)");
+  return { id, signals };
+}
+function eaIndustryChecks(d, mat, tb, industryId) {
+  const checks = [];
+  const C = (id, lt, en, value, flag, formula) => checks.push({ id, lt, en, value, flag: !!flag, formula });
+  const sales = (d.sales && d.sales.items) || [];
+  const noVatShare = (() => { let no = 0; sales.forEach((i) => { const codes = (i.lines || []).some((l) => l.taxInfo && l.taxInfo.taxCode); if (!codes) no++; }); return sales.length ? ea2(100 * no / sales.length) : 0; })();
+  if (industryId === "prekyba") {
+    const cash = eaAcctShare(d, tb, /kasa/, ["272"]);
+    C("IND_CASH", "Grynųjų pinigų intensyvumas", "Cash intensity", cash + "%", cash > 30, "Σ|D|+|K| sąskaitose „kasa“/272* ÷ visos apyvartos");
+    const inv = eaAcctShare(d, tb, /atsarg|prekes|prekiu/, ["20"]);
+    C("IND_INV", "Atsargų apyvartos buvimas", "Inventory activity present", inv + "%", inv === 0, "Σ apyvarta 20* / „atsargos“ sąskaitose (0% — rizika prekybai)");
+  } else if (industryId === "gamyba") {
+    const inv = eaAcctShare(d, tb, /zaliav|atsarg|nebaigta/, ["20", "21"]);
+    C("IND_WIP", "Žaliavų/nebaigtos gamybos apyvarta", "Raw-materials / WIP activity", inv + "%", inv === 0, "Σ apyvarta 20*/21* arba „žaliavos/nebaigta gamyba“");
+  } else if (industryId === "transportas") {
+    const fuel = eaAcctShare(d, tb, /degal|kuras|kuro/, []);
+    C("IND_FUEL", "Degalų sąnaudų dalis", "Fuel-cost share", fuel + "%", fuel > 15, "Σ apyvarta sąskaitose „degalai/kuras“ ÷ visos apyvartos");
+    C("IND_0VAT", "Pardavimai be PVM kodų (eksportas/0%)", "Sales without VAT codes (export/0%)", noVatShare + "%", false, "sąskaitos be PVM kodų eilutėse ÷ visos pardavimo sąskaitos (informacinis)");
+  } else if (industryId === "statyba") {
+    const byS = {}; let tot = 0;
+    (((d.purchases && d.purchases.items) || [])).forEach((i) => { const v = (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0; tot += v; byS[i.supplierID || "?"] = (byS[i.supplierID || "?"] || 0) + v; });
+    const top = Object.values(byS).sort((a, b) => b - a)[0] || 0;
+    const conc = tot > 0 ? ea2(100 * top / tot) : 0;
+    C("IND_SUBC", "Subrangovų koncentracija", "Subcontractor concentration", conc + "%", conc > 40, "didžiausio tiekėjo pirkimai ÷ visi pirkimai");
+    C("IND_REV0", "Pardavimai be PVM kodų (atvirkštinis apmok.?)", "Sales without VAT codes (reverse charge?)", noVatShare + "%", false, "informacinis — patikrinkite atvirkštinio apmokestinimo žymėjimą");
+  } else {
+    const payroll = eaAcctShare(d, tb, /darbo uzmok|atlygin/, []);
+    C("IND_PAYR", "Darbo užmokesčio sąnaudų dalis", "Payroll-cost share", payroll + "%", false, "Σ apyvarta „darbo užmokestis/atlyginimai“ ÷ visos apyvartos (informacinis)");
+  }
+  return checks;
+}
+
+function eaRunAll(d, opts) {
+  const o = opts || {};
+  const tb = eaTrialBalance(d);
+  const mat = eaMateriality(d, o);
+  const je = eaJournalTests(d, mat);
+  const vmi = o.vmi || null;
+  const risk = eaRiskMap(d, mat, je, vmi);
+  const inferred = eaInferIndustry(d, tb);
+  const indId = o.industry && o.industry !== "auto" ? o.industry : inferred.id;
+  const pack = INDUSTRY_PACKS.find((p) => p.id === indId) || INDUSTRY_PACKS[2];
+  const industry = { id: pack.id, lt: pack.lt, en: pack.en, suggested: inferred.id, signals: inferred.signals, checks: eaIndustryChecks(d, mat, tb, pack.id) };
+  const runner = o.runUserRule || (typeof runUserRule === "function" ? runUserRule : null);
+  const companyRules = (runner && Array.isArray(o.userRules) ? o.userRules : []).map((r) => {
+    let hits = []; try { hits = runner(r, d); } catch (e) { hits = []; }
+    return { id: r.id, title: r.title, severity: r.severity, scope: r.scope, count: hits.length, sample: hits.slice(0, 3) };
+  });
+  return { tb, materiality: mat, jeTests: je, riskMap: risk, vmi, industry, companyRules,
+    analytics: eaAnalytics(d, mat), goingConcern: eaGoingConcern(mat, tb), plan: eaBuildPlan(risk, mat), generatedAt: new Date().toISOString().slice(0, 10) };
+}
+
+function eaFacts(ea) {
+  const f = [];
+  const push = (v, l) => { if (v != null && isFinite(v)) f.push({ value: v, label: l, group: "ea" }); };
+  push(ea.materiality.overall, "Overall materiality"); push(ea.materiality.performance, "Performance materiality"); push(ea.materiality.trivial, "Clearly trivial threshold");
+  ea.jeTests.forEach((t) => push(t.count, "JE test " + t.id));
+  push(ea.goingConcern.flags.length, "Going-concern flags");
+  push(ea.analytics.flags.length, "Analytics deviations");
+  if (ea.vmi) { push(ea.vmi.total, "VMI findings total"); push(ea.vmi.gate && ea.vmi.gate.blockingTotal, "VMI blocking errors"); push(ea.vmi.gate && ea.vmi.gate.warningCount, "VMI warnings"); push(ea.vmi.risk && ea.vmi.risk.score, "VMI risk score (audit)"); }
+  if (ea.industry) push(ea.industry.checks.filter((c) => c.flag).length, "Industry flags");
+  (ea.companyRules || []).forEach((r) => push(r.count, "Company rule " + r.id));
+  return f;
+}
+
+function buildEAuditReportHTML(ea, lang, brandName, meta) {
+  const lt = lang !== "en";
+  const T = (en, l2) => (lt ? l2 : en);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const sevC = { Critical: "#c92a2a", High: "#e8590c", Medium: "#b08900", Low: "#2b8a3e" };
+  const m = ea.materiality;
+  let h = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + esc(brandName) + " — E-Audit</title><style>@page{size:A4;margin:16mm}body{font:12px/1.55 'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:28px;max-width:880px;margin:0 auto}h1{font-weight:300;font-size:22px;margin:0}h2{font-size:14px;margin:20px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}table{border-collapse:collapse;width:100%;margin:6px 0}td,th{border:1px solid #e3e3e3;padding:5px 8px;text-align:left;font-size:11px}.n{text-align:right}.sub{color:#666;font-size:11px}.ref{color:#888;font-size:10px}</style></head><body>";
+  h += "<h1>" + esc(brandName) + " · " + T("E-Audit workpaper (ISA/TAS + VMI)", "E. audito darbo dokumentas (TAS + VMI)") + "</h1>";
+  h += "<div class='sub'>" + esc((meta && meta.company) || "—") + " · " + esc((meta && meta.period) || "") + " · " + ea.generatedAt + " · engine v" + esc(ENGINE_VERSION) + (ea.industry ? " · " + T("industry", "šaka") + ": " + esc(lt ? ea.industry.lt : ea.industry.en) : "") + "</div>";
+  // executive summary — every number is engine-computed
+  const jeCrit = ea.jeTests.filter((x) => x.count > 0 && (x.severity === "Critical" || x.severity === "High")).length;
+  h += "<div style='border:1px solid #ccc;background:#f7f7f5;padding:10px 14px;margin:14px 0;font-size:12px'>" +
+    "<b>" + T("Executive summary", "Santrauka vadovybei") + ":</b> " +
+    (ea.vmi && ea.vmi.gate ? T("VMI gate: ", "VMI vartai: ") + "<b>" + esc(lt ? ea.vmi.gate.label[1] : ea.vmi.gate.label[0]) + "</b> (" + ea.vmi.gate.blockingTotal + " " + T("blocking", "blokuojančios") + ", " + ea.vmi.gate.warningCount + " " + T("warnings", "perspėjimai") + "; " + T("risk", "rizika") + " " + (ea.vmi.risk ? ea.vmi.risk.score : "—") + ") · " : "") +
+    T("Materiality", "Reikšmingumas") + " " + m.overall.toLocaleString() + " (" + esc(lt ? m.basisLt : m.basis) + " " + m.pct + "%) · " +
+    jeCrit + " " + T("high/critical JE tests fired", "aukšti/kritiniai ŽĮ testai suveikė") + " · " +
+    ea.goingConcern.flags.length + " " + T("going-concern indicators", "veiklos tęstinumo indikatoriai") + (ea.companyRules && ea.companyRules.length ? " · " + ea.companyRules.reduce((s, r) => s + r.count, 0) + " " + T("company-rule hits", "įmonės taisyklių radiniai") : "") + ".</div>";
+  h += "<h2>1. " + T("Materiality (TAS 320 · Vadovas V1-7)", "Reikšmingumas (TAS 320 · Vadovas V1-7)") + "</h2><table><tr><th>" + T("Basis", "Pagrindas") + "</th><th class='n'>" + T("Value", "Reikšmė") + "</th><th class='n'>%</th><th class='n'>" + T("Overall", "Bendrasis") + "</th></tr>";
+  h += "<tr><td><b>" + esc(lt ? m.basisLt : m.basis) + "</b></td><td class='n'>" + m.baseValue + "</td><td class='n'>" + m.pct + "%</td><td class='n'><b>" + m.overall + "</b></td></tr></table>";
+  h += "<div class='sub'>" + T("Performance materiality", "Veiklos reikšmingumas") + " (" + m.perfPct + "%): <b>" + m.performance + "</b> · " + T("Clearly trivial", "Aiškiai nereikšminga") + " (" + m.trivialPct + "%): <b>" + m.trivial + "</b></div>";
+  if (ea.vmi) {
+    h += "<h2>2. " + T("VMI compliance (SAF-T · 482 rules · VA-49)", "VMI atitiktis (SAF-T · 482 taisyklės · VA-49)") + "</h2>";
+    h += "<table><tr><th>" + T("Gate", "Vartai") + "</th><th class='n'>" + T("Blocking", "Blokuoja") + "</th><th class='n'>" + T("Warnings", "Perspėjimai") + "</th><th class='n'>" + T("Risk", "Rizika") + "</th><th class='n'>C/H/M/L</th><th class='n'>" + T("Total", "Iš viso") + "</th></tr>";
+    h += "<tr><td><b>" + esc(ea.vmi.gate ? (lt ? ea.vmi.gate.label[1] : ea.vmi.gate.label[0]) : "—") + "</b></td><td class='n'>" + (ea.vmi.gate ? ea.vmi.gate.blockingTotal : "—") + "</td><td class='n'>" + (ea.vmi.gate ? ea.vmi.gate.warningCount : "—") + "</td><td class='n'>" + (ea.vmi.risk ? ea.vmi.risk.score + " (" + ea.vmi.risk.band + ")" : "—") + "</td><td class='n'>" + (ea.vmi.sev ? ea.vmi.sev.Critical + "/" + ea.vmi.sev.High + "/" + ea.vmi.sev.Medium + "/" + ea.vmi.sev.Low : "—") + "</td><td class='n'>" + (ea.vmi.total != null ? ea.vmi.total : "—") + "</td></tr></table>";
+    if (ea.vmi.risk && (ea.vmi.risk.perRule || []).length) {
+      h += "<table><tr><th>#</th><th>" + T("Rule", "Taisyklė") + "</th><th class='n'>" + T("Hits", "Radiniai") + "</th><th class='n'>" + T("Risk contribution", "Rizikos indėlis") + "</th></tr>";
+      ea.vmi.risk.perRule.slice(0, 8).forEach((r, i) => { h += "<tr><td>" + (i + 1) + "</td><td class='m'>" + esc(r.rule_id) + " — " + esc(lt ? r.title : (r.titleEn || r.title)) + "</td><td class='n'>" + r.hits + "</td><td class='n'>" + r.contrib + "</td></tr>"; });
+      h += "</table>";
+    }
+  }
+  h += "<h2>" + (ea.vmi ? 3 : 2) + ". " + T("Risk map (TAS 315/240 · V1-8)", "Rizikos žemėlapis (TAS 315/240 · V1-8)") + "</h2><table><tr><th>" + T("Area", "Sritis") + "</th><th>" + T("Level", "Lygis") + "</th><th>" + T("Factors", "Veiksniai") + "</th></tr>";
+  ea.riskMap.forEach((a) => { h += "<tr><td>" + esc(lt ? a.lt : a.en) + "</td><td style='color:" + sevC[a.level] + ";font-weight:700'>" + a.level + "</td><td>" + esc(a.factors.join("; ") || "—") + "</td></tr>"; });
+  h += "</table><h2>" + (ea.vmi ? 4 : 3) + ". " + T("Journal-entry testing (TAS 240 · V2-10)", "Žurnalo įrašų testai (TAS 240 · V2-10)") + "</h2><table><tr><th>" + T("Test", "Testas") + "</th><th>TAS</th><th class='n'>" + T("Hits", "Radiniai") + "</th><th>" + T("Note", "Pastaba") + "</th></tr>";
+  ea.jeTests.forEach((t) => { const note = t.id === "JE_BENFORD" ? ("MAD " + (t.stats && t.stats.mad) + " → " + (t.stats && t.stats.verdict) + " (n=" + (t.stats && t.stats.n) + ")") : (t.id === "JE_PERIOD_END" && t.stats ? t.stats.sharePct + "% " + T("of all entries", "visų įrašų") : ""); h += "<tr><td>" + esc(lt ? t.lt : t.en) + "</td><td class='ref'>" + t.tas + "</td><td class='n' style='color:" + (t.count ? sevC[t.severity] : "#2b8a3e") + ";font-weight:700'>" + t.count + "</td><td class='sub'>" + esc(note) + "</td></tr>";
+    if (t.count > 0) t.hits.slice(0, 6).forEach((hh) => { h += "<tr><td colspan='4' style='border-top:none;font-family:Consolas,monospace;font-size:10px;color:#555;padding:2px 8px 2px 22px'>· " + esc(Object.entries(hh).map(([k, v]) => k + " = " + v).join(" | ")) + "</td></tr>"; });
+  });
+  h += "</table>";
+  if (ea.industry) {
+    h += "<h2>" + (ea.vmi ? 5 : 4) + ". " + T("Industry checks — ", "Pramonės šakos patikros — ") + esc(lt ? ea.industry.lt : ea.industry.en) + (ea.industry.suggested !== ea.industry.id ? " <span class='ref'>(" + T("auto-suggested", "pasiūlyta automatiškai") + ": " + esc(ea.industry.suggested) + ")</span>" : "") + "</h2>";
+    h += "<table><tr><th>" + T("Check", "Patikra") + "</th><th class='n'>" + T("Value", "Reikšmė") + "</th><th>" + T("Status", "Būsena") + "</th><th>" + T("Formula", "Formulė") + "</th></tr>";
+    ea.industry.checks.forEach((c) => { h += "<tr><td>" + esc(lt ? c.lt : c.en) + "</td><td class='n'>" + esc(c.value) + "</td><td style='color:" + (c.flag ? "#c92a2a" : "#2b8a3e") + ";font-weight:700'>" + (c.flag ? "⚠" : "·") + "</td><td class='sub'>" + esc(c.formula) + "</td></tr>"; });
+    h += "</table><div class='ref'>" + T("Signals", "Signalai") + ": " + esc(ea.industry.signals.join("; ")) + "</div>";
+  }
+  if (ea.companyRules && ea.companyRules.length) {
+    h += "<h2>" + (ea.vmi ? 6 : 5) + ". " + T("Company rules (user-defined)", "Įmonės taisyklės (vartotojo apibrėžtos)") + "</h2><table><tr><th>" + T("Rule", "Taisyklė") + "</th><th>" + T("Severity", "Reikšmingumas") + "</th><th class='n'>" + T("Hits", "Radiniai") + "</th></tr>";
+    ea.companyRules.forEach((r) => { h += "<tr><td>" + esc(r.title) + " <span class='ref'>(" + esc(r.scope) + ")</span></td><td>" + esc(r.severity) + "</td><td class='n' style='font-weight:700;color:" + (r.count ? "#b08900" : "#2b8a3e") + "'>" + r.count + "</td></tr>"; });
+    h += "</table>";
+  }
+  if (ea.analytics.flags.length) { h += "<h2>" + (ea.vmi ? 7 : 6) + ". " + T("Analytics deviations (TAS 520)", "Analitiniai nuokrypiai (TAS 520)") + "</h2><table><tr><th>" + T("Area", "Sritis") + "</th><th>" + T("Month", "Mėnuo") + "</th><th class='n'>" + T("Amount", "Suma") + "</th><th class='n'>" + T("Mean", "Vidurkis") + "</th><th class='n'>z</th></tr>"; ea.analytics.flags.slice(0, 20).forEach((f) => { h += "<tr><td>" + esc(f.sritis) + "</td><td>" + f.men + "</td><td class='n'>" + f.suma + "</td><td class='n'>" + f.vidurkis + "</td><td class='n'>" + f.z + "</td></tr>"; }); h += "</table>"; }
+  if (ea.goingConcern.flags.length) { h += "<h2>" + (ea.vmi ? 8 : 7) + ". " + T("Going-concern indicators (TAS 570 · V1-14)", "Veiklos tęstinumo indikatoriai (TAS 570 · V1-14)") + "</h2><ul>"; ea.goingConcern.flags.forEach((f) => { h += "<li>" + esc(f.test) + ": <b>" + esc(f.value) + "</b> <span class='ref'>(" + esc(f.ref) + ")</span></li>"; }); h += "</ul>"; }
+  h += "<h2>" + (ea.vmi ? 9 : 8) + ". " + T("Audit program (V2-9/10)", "Audito programa (V2-9/10)") + "</h2>";
+  ea.plan.forEach((p) => { h += "<div style='margin:6px 0'><b>" + esc(p.sritis) + "</b> — " + p.lygis + "<ul style='margin:4px 0'>" + p.procedūros.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul></div>"; });
+  h += "<h2>" + T("References", "Nuorodos") + "</h2><div class='ref'>IFAC, „Tarptautinių audito standartų taikymo atliekant mažų ir vidutinių įmonių auditą vadovas“, 3 leid., I–II tomai (LT vert. Lietuvos auditorių rūmai) · TAS 240, 315, 320, 330, 505, 520, 530, 570 · LR finansinės apskaitos įstatymas Nr. XIV-680 · LR audito įstatymas · LR ABĮ.</div>";
+  return h + "</body></html>";
+}
+
 const OFFICIAL_SOURCES = [
   { id: "VA-49", lt: "VMI prie FM viršininko 2015-07-21 įsakymas Nr. VA-49 „Dėl Standartinės apskaitos duomenų rinkmenos techninės specifikacijos ir techninių reikalavimų aprašo patvirtinimo“ (suvestinė redakcija)", en: "Order No. VA-49 of the Head of the STI under the MoF (21 Jul 2015) approving the SAF-T technical specification and technical requirements (consolidated)", url: "https://www.vmi.lt/evmi/saf-t" },
   { id: "SAFT-XSD", lt: "VMI — SAF-T techninė dokumentacija ir XML schema (XSD) v2.01", en: "STI — SAF-T technical documentation and XML schema (XSD) v2.01", url: "https://www.vmi.lt/evmi/saf-t" },
@@ -5761,6 +6110,10 @@ const OFFICIAL_SOURCES = [
   { id: "FAI", lt: "Lietuvos Respublikos finansinės apskaitos įstatymas, 2021-11-23 Nr. XIV-680", en: "Law on Financial Accounting of the Republic of Lithuania, 23 Nov 2021 No. XIV-680", url: "https://e-seimas.lrs.lt" },
   { id: "VA-107", lt: "VMI prie FM viršininko 2025 m. įsakymas Nr. VA-107 (PVM klasifikatorių ir tarifų pakeitimai nuo 2026-01-01)", en: "STI Order No. VA-107 (2025) — VAT classifier and rate changes effective 1 Jan 2026", url: "https://www.e-tar.lt" },
   { id: "IMAS", lt: "VMI išmaniosios mokesčių administravimo sistemos (i.MAS) portalas — i.SAF / i.SAF-T posistemiai", en: "STI smart tax administration system (i.MAS) portal — i.SAF / i.SAF-T subsystems", url: "https://imas.vmi.lt" },
+  { id: "VADOVAS-1", lt: "IFAC MVĮ komitetas, „Tarptautinių audito standartų taikymo atliekant mažų ir vidutinių įmonių auditą vadovas“, 3 leidimas, I tomas — pagrindinės koncepcijos (liet. vertimas — Lietuvos auditorių rūmai)", en: "IFAC SMP Committee, Guide to Using ISAs in the Audits of SMEs, 3rd ed., Vol. I — Core Concepts (Lithuanian translation by the Lithuanian Chamber of Auditors)", url: "https://www.ifac.org" },
+  { id: "VADOVAS-2", lt: "IFAC MVĮ komitetas, tas pats vadovas, 3 leidimas, II tomas — praktinės gairės (liet. vertimas — Lietuvos auditorių rūmai)", en: "IFAC SMP Committee, the same guide, 3rd ed., Vol. II — Practical Guidance (Lithuanian translation by the Lithuanian Chamber of Auditors)", url: "https://www.ifac.org" },
+  { id: "TAS", lt: "Tarptautiniai audito standartai (TAS/ISA), IAASB — taikomi pagal LR audito įstatymą", en: "International Standards on Auditing (ISA), IAASB — applied per the Lithuanian Law on Audit", url: "https://www.iaasb.org" },
+  { id: "AUDITO-IST", lt: "Lietuvos Respublikos finansinių ataskaitų audito įstatymas (aktuali redakcija)", en: "Law on the Audit of Financial Statements of the Republic of Lithuania (current version)", url: "https://e-seimas.lrs.lt" },
 ];
 
 // Deterministic fact sheet: everything the model is allowed to assert
@@ -5858,8 +6211,10 @@ async function groundedFinalize(draft, brief, legal, lang, callAI, systemPrompt)
   return head + "\n\n" + det + "\n\n" + text + flagged + sourcesAppendix(text, legal, lang);
 }
 
-async function groundedAgentRun({ persona, sections, parsed, runResult, callAI, lang, extra }) {
+async function groundedAgentRun({ persona, sections, parsed, runResult, callAI, lang, extra, extraFacts, extraFactsText }) {
   const brief = buildAnalysisBrief(parsed, runResult);
+  if (extraFacts && extraFacts.length) brief.facts = brief.facts.concat(extraFacts);
+  if (extraFactsText) brief.text += "\n" + extraFactsText;
   const lt = lang !== "en";
   if (typeof callAI !== "function") {
     // Offline mode: the deterministic brief IS the report — confidence 100%.
@@ -12321,6 +12676,11 @@ function TAXAI({ onExit, initialView } = {}) {
   const [batchLog, setBatchLog] = useState([]);       // per-file batch results
   const [brandCfg, setBrandCfg] = useState(() => taxaiBrand());
   const portRef = useRef(null);
+  const [eaResult, setEaResult] = useState(null);    // E-Audit (TAS) engine output
+  const [eaPop, setEaPop] = useState("sales");        // MUS sampling population
+  const [eaInd, setEaInd] = useState("auto");         // E-Audit industry pack
+  const [eaSample, setEaSample] = useState(null);
+  const [eaNarr, setEaNarr] = useState("");
   const [sevFilter, setSevFilter] = useState(null);  // findings list: severity toggle
   const [findQ, setFindQ] = useState("");            // findings list: text search
   const findingVisible = useCallback((f) => (!sevFilter || f.severity === sevFilter) && (!findQ.trim() || cpNorm([f.rule_id, f.title, f.detail, f.category].join(" ")).includes(cpNorm(findQ))), [sevFilter, findQ]);
@@ -12446,7 +12806,7 @@ function TAXAI({ onExit, initialView } = {}) {
     setEnterpriseResult(null); setEnterpriseKpis(null); setIntel(null);
     setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null); setSelectedFinding(null);
     setIsafData(null); setIsafFileName(""); setReconResult(null);
-    setFixPlan(null); setFixSel({}); setFixResult(null); fixDocRef.current = null; setSevFilter(null); setFindQ("");
+    setFixPlan(null); setFixSel({}); setFixResult(null); fixDocRef.current = null; setSevFilter(null); setFindQ(""); setEaResult(null); setEaSample(null); setEaNarr("");
     const result = runAllRules(parsed);
     setFileData({ type: "xml", parsed, raw, hash: hash || "" });
     setRunResult(result);
@@ -13805,6 +14165,101 @@ function TAXAI({ onExit, initialView } = {}) {
             </div>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px", WebkitOverflowScrolling: "touch" }}>
+            {selectedAgent.id === "eauditor" && <div style={{ ...panel, marginBottom: 24 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+                  <SEC n="02·EA" en="E-Audit (ISA/TAS)" lt="E. auditas (TAS)" />
+                  <select value={eaInd} onChange={(e) => setEaInd(e.target.value)} style={{ background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 11, padding: "9px 10px", marginLeft: "auto" }}>
+                    <option value="auto">{lang === "lt" ? "Šaka: automatiškai" : "Industry: auto"}</option>
+                    {INDUSTRY_PACKS.map((p) => <option key={p.id} value={p.id}>{lang === "lt" ? p.lt : p.en}</option>)}
+                  </select>
+                  <button onClick={() => { try { const vmi = (() => { try { const g = simulateAcceptanceGate(fileData.parsed, findings); const r = computeRiskScore(findings); const sev = { Critical: 0, High: 0, Medium: 0, Low: 0 }; findings.forEach((f) => { if (sev[f.severity] != null) sev[f.severity]++; }); return { gate: g, risk: r, sev, total: findings.length }; } catch (ve) { return null; } })(); setEaResult(eaRunAll(fileData.parsed, { vmi, industry: eaInd, userRules, runUserRule })); setEaSample(null); setEaNarr(""); audit.log("EAUDIT_RUN", fileName); } catch (e) { setToast("E-Audit: " + String(e && e.message || e).slice(0, 120)); } }} disabled={!fileData?.parsed} style={{ ...bP, opacity: fileData?.parsed ? 1 : 0.4 }}>{lang === "lt" ? "Vykdyti auditą →" : "Run audit →"}</button>
+                </div>
+                <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 16, lineHeight: 1.65, maxWidth: 860 }}>{lang === "lt" ? "Finansinio audito variklis pagal TAS ir „TSA taikymo MVĮ audito vadovą“ (3 leid., I–II t.): reikšmingumas (TAS 320), rizikos žemėlapis (TAS 315/240), žurnalo įrašų testų baterija su Benfordo analize (TAS 240), analitinės procedūros (TAS 520), piniginių vienetų atranka pagal Vadovo formulę (TAS 530) ir veiklos tęstinumo indikatoriai (TAS 570 + LR ABĮ). Viskas deterministiškai, su nuorodomis." : "Financial-audit engine per ISA and the IFAC SME guide (3rd ed., Vols I–II): materiality (ISA 320), risk map (ISA 315/240), journal-entry test battery with Benford analysis (ISA 240), analytics (ISA 520), monetary-unit sampling per the guide's formula (ISA 530), and going-concern indicators (ISA 570 + LT company law). Fully deterministic, with references."}</p>
+                {!eaResult && <div style={{ border: `1px dashed ${PL_LINE}`, padding: 28, textAlign: "center", color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13 }}>{fileData?.parsed ? (lang === "lt" ? "Paspauskite „Vykdyti auditą“ — visi testai atliekami akimirksniu, lokaliai." : "Press \u201cRun audit\u201d — all tests execute instantly, locally.") : (lang === "lt" ? "Įkelkite SAF-T failą skiltyje „SAF-T“ — auditas naudos tą patį failą ir visus 482 taisyklių rezultatus." : "Load a SAF-T file in the SAF-T section — the audit will use the same file and the full 482-rule results.")}</div>}
+                {eaResult && (() => {
+                  const ea = eaResult, m = ea.materiality;
+                  const sevC = { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" };
+                  const popItems = eaPop === "gl" ? (fileData.parsed.transactions || []).flatMap((t) => (t.lines || []).map((l) => ({ transactionID: (t.transactionID || "—") + "/" + (l.recordID || ""), _v: Math.max(l.debitAmount || 0, l.creditAmount || 0) }))) : ((fileData.parsed[eaPop] && fileData.parsed[eaPop].items) || []).map((i) => ({ invoiceNo: i.invoiceNo, _v: (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0 }));
+                  return <>
+                    <Section title={`${lang === "lt" ? "Reikšmingumas" : "Materiality"} · ${m.ref}`}>
+                      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "baseline" }}>
+                        <div><div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? m.basisLt : m.basis} · {m.pct}%</div><div style={{ fontSize: 26, color: "#fff", fontFamily: "var(--f)", fontWeight: 300 }}>{m.overall.toLocaleString()}</div></div>
+                        <div><div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? "Veiklos" : "Performance"} ({m.perfPct}%)</div><div style={{ fontSize: 20, color: "#7cc4ff", fontFamily: "var(--f)" }}>{m.performance.toLocaleString()}</div></div>
+                        <div><div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? "Aiškiai nereikšminga" : "Clearly trivial"} ({m.trivialPct}%)</div><div style={{ fontSize: 20, color: "#bcbcb8", fontFamily: "var(--f)" }}>{m.trivial.toLocaleString()}</div></div>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: "#7a7a76", fontFamily: "var(--m)", marginTop: 8 }}>{(m.alternatives || []).map((a) => `${lang === "lt" ? a.basisLt : a.basis}: ${a.overall.toLocaleString()}`).join(" · ")}</div>
+                    </Section>
+                    {ea.vmi && <Section title={lang === "lt" ? "VMI atitiktis (482 taisyklės · VA-49)" : "VMI compliance (482 rules · VA-49)"}>
+                      <div style={{ fontFamily: "var(--m)", fontSize: 12.5, color: "#fff", marginBottom: 6 }}>{lang === "lt" ? ea.vmi.gate.label[1] : ea.vmi.gate.label[0]} · <span style={{ color: "#ff8a8a" }}>{ea.vmi.gate.blockingTotal}</span> {lang === "lt" ? "blokuoja" : "blocking"} · <span style={{ color: "#ffd43b" }}>{ea.vmi.gate.warningCount}</span> {lang === "lt" ? "perspėjimai" : "warnings"} · {lang === "lt" ? "rizika" : "risk"} <b>{ea.vmi.risk.score}</b> ({ea.vmi.risk.band}) · C/H/M/L {ea.vmi.sev.Critical}/{ea.vmi.sev.High}/{ea.vmi.sev.Medium}/{ea.vmi.sev.Low}</div>
+                      {(ea.vmi.risk.perRule || []).slice(0, 5).map((r, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#9f9f9b" }}>{i + 1}. {r.rule_id} ×{r.hits} · {lang === "lt" ? "indėlis" : "contrib"} {r.contrib}</div>)}
+                    </Section>}
+                    {ea.industry && <Section title={(lang === "lt" ? "Šakos patikros — " : "Industry checks — ") + (lang === "lt" ? ea.industry.lt : ea.industry.en)}>
+                      {ea.industry.suggested !== ea.industry.id && <div style={{ fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", marginBottom: 6 }}>{lang === "lt" ? "Automatiškai pasiūlyta: " : "Auto-suggested: "}{ea.industry.suggested}</div>}
+                      {ea.industry.checks.map((c) => <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.07)", flexWrap: "wrap" }}>
+                        <span style={{ color: c.flag ? "#ff8a8a" : "#69db7c", fontFamily: "var(--m)", fontWeight: 700, minWidth: 16 }}>{c.flag ? "⚠" : "·"}</span>
+                        <span style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13, minWidth: 220 }}>{lang === "lt" ? c.lt : c.en}</span>
+                        <span style={{ color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 12 }}>{c.value}</span>
+                        <span style={{ color: "#7a7a76", fontFamily: "var(--m)", fontSize: 10, flex: 1 }}>{c.formula}</span>
+                      </div>)}
+                      <div style={{ fontSize: 10, color: "#7a7a76", fontFamily: "var(--m)", marginTop: 6 }}>{lang === "lt" ? "Signalai" : "Signals"}: {ea.industry.signals.join("; ")}</div>
+                    </Section>}
+                    {ea.companyRules && ea.companyRules.length > 0 && <Section title={lang === "lt" ? "Įmonės taisyklės (Mano taisyklės)" : "Company rules (user-defined)"}>
+                      {ea.companyRules.map((r) => <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "4px 0", flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: "var(--m)", fontSize: 11, fontWeight: 700, color: r.count ? "#ffd43b" : "#69db7c", minWidth: 40, textAlign: "right" }}>{r.count ? "×" + r.count : "✓ 0"}</span>
+                        <span style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13 }}>{r.title}</span>
+                        <span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10 }}>{r.scope} · {r.severity}</span>
+                      </div>)}
+                    </Section>}
+                    <Section title={lang === "lt" ? "Rizikos žemėlapis (TAS 315/240 · V1-8)" : "Risk map (ISA 315/240 · V1-8)"}>
+                      {ea.riskMap.map((a, i) => <div key={i} style={{ display: "flex", gap: 12, alignItems: "baseline", padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.07)", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 10, padding: "2px 9px", border: `1px solid ${sevC[a.level]}`, color: sevC[a.level], fontFamily: "var(--m)", fontWeight: 700, minWidth: 56, textAlign: "center" }}>{a.level}</span>
+                        <span style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13, minWidth: 180 }}>{lang === "lt" ? a.lt : a.en}</span>
+                        <span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 11, flex: 1 }}>{a.factors.join("; ") || (lang === "lt" ? "veiksnių nenustatyta" : "no factors identified")}</span>
+                      </div>)}
+                    </Section>
+                    <Section title={lang === "lt" ? "Žurnalo įrašų testai (TAS 240 · V2-10)" : "Journal-entry tests (ISA 240 · V2-10)"}>
+                      {ea.jeTests.map((t) => <div key={t.id} style={{ padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                        <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+                          <span style={{ fontFamily: "var(--m)", fontSize: 12, fontWeight: 700, color: t.count ? sevC[t.severity] : "#69db7c", minWidth: 46, textAlign: "right" }}>{t.count ? "×" + t.count : "✓ 0"}</span>
+                          <span style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? t.lt : t.en}</span>
+                          <span style={{ color: "#7a7a76", fontFamily: "var(--m)", fontSize: 10 }}>{t.tas}</span>
+                          {t.id === "JE_BENFORD" && t.stats && <span style={{ color: t.stats.verdict === "nonconformity" ? "#ff6b6b" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5 }}>MAD {t.stats.mad} → {t.stats.verdict} (n={t.stats.n})</span>}
+                          {t.id === "JE_PERIOD_END" && t.stats && <span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5 }}>{t.stats.sharePct}% {lang === "lt" ? "visų įrašų" : "of entries"}</span>}
+                        </div>
+                        {t.count > 0 && t.hits.slice(0, 4).map((h, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#9f9f9b", padding: "1px 0 0 58px" }}>· {Object.entries(h).map(([k, v]) => `${k} = ${v}`).join(" | ")}</div>)}
+                      </div>)}
+                    </Section>
+                    <Section title={lang === "lt" ? "Piniginių vienetų atranka (TAS 530 · V2)" : "Monetary-unit sampling (ISA 530 · V2)"}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                        <select value={eaPop} onChange={(e) => { setEaPop(e.target.value); setEaSample(null); }} style={{ background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 11.5, padding: "7px 10px" }}>
+                          <option value="sales">{lang === "lt" ? "Pardavimo sąskaitos" : "Sales invoices"}</option>
+                          <option value="purchases">{lang === "lt" ? "Pirkimo sąskaitos" : "Purchase invoices"}</option>
+                          <option value="gl">{lang === "lt" ? "DK eilutės" : "GL lines"}</option>
+                        </select>
+                        <button onClick={() => setEaSample(eaMusSample(popItems, (x) => x._v, m, {}))} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>{lang === "lt" ? "Generuoti imtį" : "Generate sample"}</button>
+                        {eaSample && <button onClick={() => { const csv = ["ref,value,point"].concat(eaSample.topStratum.map((r) => `${r.ref},${r.value},TOP`), eaSample.sample.map((r) => `${r.ref},${r.value},${r.point}`)).join("\n"); const b = new Blob([csv], { type: "text/csv" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `taxai-mus-${eaPop}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>↓ CSV</button>}
+                      </div>
+                      {eaSample && <div style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#bcbcb8", lineHeight: 1.8 }}>
+                        <div>{lang === "lt" ? "Visuma" : "Population"}: <span style={{ color: "#fff" }}>{eaSample.population.toLocaleString()}</span> · {lang === "lt" ? "intervalas" : "interval"}: <span style={{ color: "#fff" }}>{eaSample.interval.toLocaleString()}</span> · {lang === "lt" ? "imties dydis" : "sample size"}: <span style={{ color: "#7cc4ff", fontWeight: 700 }}>{eaSample.size}</span> · {lang === "lt" ? "viršutinis sluoksnis (100%)" : "top stratum (100%)"}: {eaSample.topStratum.length}</div>
+                        {eaSample.sample.slice(0, 12).map((r, i) => <div key={i} style={{ color: "#9f9f9b", fontSize: 10.5 }}>· {r.ref} — {r.value.toLocaleString()} ({lang === "lt" ? "taškas" : "point"} {r.point.toLocaleString()})</div>)}
+                        <div style={{ fontSize: 10, color: "#7a7a76", marginTop: 4 }}>{eaSample.ref} · seed {eaSample.seed}</div>
+                      </div>}
+                    </Section>
+                    {ea.goingConcern.flags.length > 0 && <Section title={lang === "lt" ? "Veiklos tęstinumo indikatoriai (TAS 570 · V1-14)" : "Going-concern indicators (ISA 570 · V1-14)"}>
+                      {ea.goingConcern.flags.map((f, i) => <div key={i} style={{ color: "#ff8a8a", fontFamily: "var(--s)", fontSize: 13, padding: "4px 0" }}>⚠ {f.test}: <b>{f.value}</b> <span style={{ color: "#7a7a76", fontFamily: "var(--m)", fontSize: 10 }}>({f.ref})</span></div>)}
+                    </Section>}
+                    {ea.analytics.flags.length > 0 && <Section title={lang === "lt" ? "Analitiniai nuokrypiai (TAS 520)" : "Analytics deviations (ISA 520)"}>
+                      {ea.analytics.flags.slice(0, 10).map((f, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#ffd43b", padding: "3px 0" }}>· {f.sritis} {f.men}: {f.suma.toLocaleString()} ({lang === "lt" ? "vid." : "mean"} {f.vidurkis.toLocaleString()}, z={f.z})</div>)}
+                    </Section>}
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+                      <button onClick={() => { const html = buildEAuditReportHTML(ea, lang, taxaiBrand().name, { company: fileData.parsed?.header?.company?.name, period: `${fileData.parsed?.header?.periodStart || ""}–${fileData.parsed?.header?.periodEnd || ""}` }); const b = new Blob([html], { type: "text/html" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `taxai-${fileName}-eaudit.html`; a.click(); window.open(u, "_blank"); setTimeout(() => URL.revokeObjectURL(u), 60000); audit.log("EXPORT", "E-Audit workpaper"); }} style={bP}>↓ {lang === "lt" ? "Darbo dokumentas" : "Workpaper"}</button>
+                      {runResult && <button onClick={async () => { setSaftLoading(true); try { const eaTxt = `E-AUDIT FACTS:\nOverall materiality: ${m.overall} | Performance: ${m.performance} | Trivial: ${m.trivial}\nJE tests: ${ea.jeTests.map((t) => `${t.id}=${t.count}`).join("; ")}\nGoing-concern flags: ${ea.goingConcern.flags.length} | Analytics deviations: ${ea.analytics.flags.length}${ea.vmi ? `\nVMI: gate=${ea.vmi.gate.verdict} blocking=${ea.vmi.gate.blockingTotal} warnings=${ea.vmi.gate.warningCount} riskScore=${ea.vmi.risk.score} findings=${ea.vmi.total}` : ""}${ea.industry ? `\nIndustry ${ea.industry.id}: flagged checks=${ea.industry.checks.filter((c) => c.flag).length}` : ""}${ea.companyRules && ea.companyRules.length ? `\nCompany rules hits: ${ea.companyRules.reduce((s, r) => s + r.count, 0)}` : ""}`; const md = await groundedAgentRun({ persona: "You are a certified auditor (atestuotas auditorius) reporting under ISA/TAS to the owner of an SME. The deterministic E-Audit engine has executed all tests — you interpret.", sections: lang === "en" ? ["VMI compliance summary and blocking issues (SAF-T)", "Audit scope summary (materiality and risk, plainly)", "Journal-entry testing conclusions (ISA 240) — what each non-zero test means", "Going-concern assessment (ISA 570)", "Recommended next steps for the auditor and management"] : ["VMI atitikties santrauka ir blokuojantys klausimai (SAF-T)", "Audito apimties santrauka (reikšmingumas ir rizika, paprastai)", "Žurnalo įrašų testų išvados (TAS 240) — ką reiškia kiekvienas nenulinis testas", "Veiklos tęstinumo vertinimas (TAS 570)", "Rekomenduojami tolesni žingsniai auditoriui ir vadovybei"], parsed: fileData.parsed, runResult, callAI, lang, extraFacts: eaFacts(ea), extraFactsText: eaTxt }); setEaNarr(md); audit.log("EAUDIT_AI", fileName); } catch (e) { setEaNarr("Error: " + (e && e.message || e)); } setSaftLoading(false); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>🛡 {lang === "lt" ? "AI auditoriaus išvada" : "AI auditor narrative"}</button>}
+                    </div>
+                    {eaNarr && <div style={{ marginTop: 18 }}><Md text={eaNarr} /></div>}
+                  </>;
+                })()}
+              </div>}
+
             {(!agentMsgs[selectedAgent.id] || agentMsgs[selectedAgent.id].length === 0) && <div style={{ maxWidth: 720, margin: "48px auto", textAlign: "center" }}>
               <div style={{ ...lbl, justifyContent: "center", marginBottom: 20 }}><span style={rule} />{lang === "lt" ? "Pradėkite pokalbį" : "Start a conversation"}</div>
               <h3 style={{ fontSize: 40, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", marginBottom: 14, letterSpacing: "-.02em" }}>{lang === "lt" ? `Klauskite ${selectedAgent.nameLt}` : `Ask the ${selectedAgent.name} expert`}</h3>
