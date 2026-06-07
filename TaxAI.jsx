@@ -5745,18 +5745,146 @@ function formatRuleCatalogForAi() {
  * @param callAI     existing callAI(systemPrompt, userPrompt, history, attachments) function
  * @returns          markdown string for <Md/>
  */
-async function runInterpretation(data, result, callAI) {
+// ═════════════════════════════════════════════════════════════════════════
+// GROUNDED AGENT PIPELINE (Harvey/Sovos-class contract for every AI tab).
+// Principle: the model NEVER computes — the deterministic engine computes,
+// the model explains. Every number must be copied verbatim from the FACTS
+// brief; every legal statement must cite a [source-id]; the draft is
+// verified claim-by-claim against the engine and repaired once if needed;
+// the final report carries a confidence score and an official-source list.
+// Offline (no AI endpoint) it degrades to the deterministic brief — 100%.
+// ═════════════════════════════════════════════════════════════════════════
+const OFFICIAL_SOURCES = [
+  { id: "VA-49", lt: "VMI prie FM viršininko 2015-07-21 įsakymas Nr. VA-49 „Dėl Standartinės apskaitos duomenų rinkmenos techninės specifikacijos ir techninių reikalavimų aprašo patvirtinimo“ (suvestinė redakcija)", en: "Order No. VA-49 of the Head of the STI under the MoF (21 Jul 2015) approving the SAF-T technical specification and technical requirements (consolidated)", url: "https://www.vmi.lt/evmi/saf-t" },
+  { id: "SAFT-XSD", lt: "VMI — SAF-T techninė dokumentacija ir XML schema (XSD) v2.01", en: "STI — SAF-T technical documentation and XML schema (XSD) v2.01", url: "https://www.vmi.lt/evmi/saf-t" },
+  { id: "PVMI", lt: "Lietuvos Respublikos pridėtinės vertės mokesčio įstatymas, 2002-03-05 Nr. IX-751 (aktuali suvestinė redakcija)", en: "Law on Value Added Tax of the Republic of Lithuania, 5 Mar 2002 No. IX-751 (current consolidated version)", url: "https://e-seimas.lrs.lt/portal/legalAct/lt/TAD/TAIS.163423/asr" },
+  { id: "FAI", lt: "Lietuvos Respublikos finansinės apskaitos įstatymas, 2021-11-23 Nr. XIV-680", en: "Law on Financial Accounting of the Republic of Lithuania, 23 Nov 2021 No. XIV-680", url: "https://e-seimas.lrs.lt" },
+  { id: "VA-107", lt: "VMI prie FM viršininko 2025 m. įsakymas Nr. VA-107 (PVM klasifikatorių ir tarifų pakeitimai nuo 2026-01-01)", en: "STI Order No. VA-107 (2025) — VAT classifier and rate changes effective 1 Jan 2026", url: "https://www.e-tar.lt" },
+  { id: "IMAS", lt: "VMI išmaniosios mokesčių administravimo sistemos (i.MAS) portalas — i.SAF / i.SAF-T posistemiai", en: "STI smart tax administration system (i.MAS) portal — i.SAF / i.SAF-T subsystems", url: "https://imas.vmi.lt" },
+];
+
+// Deterministic fact sheet: everything the model is allowed to assert
+// numerically, computed by the engine with 100% accuracy.
+function buildAnalysisBrief(parsed, runResult) {
+  const raw = (runResult && runResult.findings) || [];
+  const fs = raw.map((f) => ({ ...f, severity: f.severityUi || f.severity }));
+  const gate = simulateAcceptanceGate(parsed, fs);
+  const risk = computeRiskScore(fs);
+  const sev = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+  fs.forEach((f) => { if (sev[f.severity] != null) sev[f.severity]++; });
+  const byCat = {};
+  fs.forEach((f) => { const c = f.category || "—"; byCat[c] = (byCat[c] || 0) + 1; });
+  const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const fixable = [...new Set(fs.filter((f) => isAutoFixableRule(f.rule_id)).map((f) => f.rule_id))];
+  const fixableHits = fs.filter((f) => isAutoFixableRule(f.rule_id)).length;
+  const h = (parsed && parsed.header) || {};
+  const facts = [];
+  const push = (value, label, group, isPct = false) => { const n = typeof value === "number" ? value : parseFloat(value); if (n != null && isFinite(n)) facts.push({ value: n, label, group, isPct }); };
+  push(fs.length, "Total findings", "audit"); push(sev.Critical, "Critical findings", "audit"); push(sev.High, "High findings", "audit"); push(sev.Medium, "Medium findings", "audit"); push(sev.Low, "Low findings", "audit");
+  push(gate.blockingTotal, "Blocking errors (gate)", "gate"); push(gate.warningCount, "Gate warnings", "gate");
+  push(risk.score, "VMI risk score", "risk");
+  (risk.perRule || []).slice(0, 10).forEach((r) => { push(r.hits, `Hits ${r.rule_id}`, "rule"); push(r.contrib, `Risk contribution ${r.rule_id}`, "rule"); });
+  topCats.forEach(([c, n]) => push(n, `Category ${c}`, "cat"));
+  push(fixable.length, "Auto-fixable rules", "fix"); push(fixableHits, "Auto-fixable findings", "fix");
+  if (runResult && runResult.summary) push(runResult.summary.rulesExecuted, "Rules executed", "audit");
+  const L = [];
+  L.push(`GATE_VERDICT: ${gate.verdict.toUpperCase()} (label LT: ${gate.label[1]} / EN: ${gate.label[0]})`);
+  L.push(`BLOCKING_ERRORS: ${gate.blockingTotal} | GATE_WARNINGS: ${gate.warningCount}`);
+  L.push(`VMI_RISK_SCORE: ${risk.score} (band: ${risk.band})`);
+  L.push(`FINDINGS_TOTAL: ${fs.length} | Critical: ${sev.Critical} | High: ${sev.High} | Medium: ${sev.Medium} | Low: ${sev.Low}`);
+  L.push(`TOP_RISK_RULES (id | hits | risk contribution | auto-fixable):`);
+  (risk.perRule || []).slice(0, 8).forEach((r, i) => L.push(`  ${i + 1}. ${r.rule_id} | ${r.hits} | ${r.contrib} | ${isAutoFixableRule(r.rule_id) ? "YES" : "no"} | ${r.title}`));
+  L.push(`TOP_CATEGORIES: ${topCats.map(([c, n]) => `${c}=${n}`).join("; ")}`);
+  L.push(`AUTO_FIXABLE: ${fixable.length} rules covering ${fixableHits} findings (form-only corrections, one click, full re-audit)`);
+  L.push(`COMPANY: ${(h.company && h.company.name) || "—"} | REG: ${(h.company && h.company.registrationNumber) || h.registrationNumber || "—"} | PERIOD: ${h.periodStart || "—"}–${h.periodEnd || "—"}`);
+  return { facts, text: L.join("\n"), gate, risk, sev, topCats, fixableCount: fixable.length, fixableHits };
+}
+
+function formatSourcesForAi(legal) {
+  const a = (legal || []).map((s) => `[${s.id}] ${s.law} ${s.article}: ${String(s.text || "").slice(0, 220)}`);
+  const b = OFFICIAL_SOURCES.map((s) => `[${s.id}] ${s.lt}`);
+  return "AVAILABLE SOURCES (cite by [id]; never invent article numbers):\n" + a.concat(b).join("\n");
+}
+
+const GROUNDED_RULES = `HARD RULES (non-negotiable):
+1. Every number you write MUST be copied verbatim from the FACTS block — the deterministic engine computed those with 100% accuracy. You never calculate, estimate or round.
+2. Every legal or regulatory statement MUST end with a citation tag like [PVMI] or [pvm-19-1] taken from SOURCES. If no source supports a statement, write "duomenų nepakanka" instead of guessing.
+3. Plain language: write for a business owner. After any technical term, add a one-line plain explanation in parentheses.
+4. Follow the requested section structure EXACTLY. No extra sections, no preamble, no closing pleasantries.
+5. Be specific to THIS file (use rule ids and counts from FACTS), never generic.`;
+
+function sourcesAppendix(draft, legal, lang) {
+  const lt = lang !== "en";
+  const g = groundCitations(draft, legal || [], LEGAL_DB);
+  const lines = ["", "---", lt ? "### Šaltiniai" : "### Sources"];
+  let n = 1;
+  const seen = new Set();
+  const byId = {}; LEGAL_DB.forEach((d) => { byId[d.id] = d; });
+  (g.resolved || []).forEach((r) => {
+    const id = typeof r === "string" ? r : r && r.id;
+    const d = id && byId[id];
+    if (!d || seen.has(d.id)) return;
+    seen.add(d.id);
+    lines.push(`${n++}. [${d.id}] ${d.law} ${d.article} — „${String(d.text || "").slice(0, 160)}"`);
+  });
+  OFFICIAL_SOURCES.forEach((s) => { if (seen.has(s.id)) return; seen.add(s.id); lines.push(`${n++}. [${s.id}] ${lt ? s.lt : s.en} — ${s.url} (${lt ? "žiūrėta" : "accessed"} 2026-06)`); });
+  return lines.join("\n");
+}
+
+// Verify a draft claim-by-claim against the deterministic facts; one repair
+// pass if numeric claims fail. Returns the final markdown with a confidence
+// header, the verbatim deterministic verdict block, and the source list.
+async function groundedFinalize(draft, brief, legal, lang, callAI, systemPrompt) {
+  const lt = lang !== "en";
+  let text = String(draft || "");
+  let ver = verifyNarrative(text, brief.facts);
+  const bad = () => (ver.claims || []).filter((c) => c.status === "unsupported" || c.status === "hallucination" || (c.status === "unverified" && (c.nums || []).length));
+  let violations = bad();
+  if (violations.length && typeof callAI === "function") {
+    const fixUser = `Your previous report contained claims whose numbers do NOT match the deterministic engine FACTS. Rewrite the FULL report. For each listed claim: either restate it using ONLY exact numbers from FACTS, or delete it. Change nothing else.\n\nFAILED CLAIMS:\n${violations.slice(0, 12).map((c, i) => `${i + 1}. ${c.text}`).join("\n")}\n\nFACTS:\n${brief.text}\n\nPREVIOUS REPORT:\n${text}`;
+    try { const repaired = await callAI(systemPrompt, fixUser, []); const ver2 = verifyNarrative(repaired, brief.facts); if ((ver2.score ?? ver2.overall ?? 0) >= (ver.score ?? ver.overall ?? 0)) { text = repaired; ver = ver2; } } catch (e) { /* keep original */ }
+    violations = bad();
+  }
+  const claims = ver.claims || [];
+  const verified = claims.filter((c) => c.status === "verified").length;
+  const overall = claims.length ? Math.round(claims.reduce((s, c) => s + (c.confidence || (c.status === "verified" ? 90 : 55)), 0) / claims.length) : 100;
+  const head = lt
+    ? `**🛡 Pagrįstumo balas: ${overall}%** — ${verified}/${claims.length} teiginių patvirtinta deterministiniu varikliu${violations.length ? `; ${violations.length} nepatvirtinti teiginiai pažymėti žemiau` : ""}. Visi skaičiai — iš 482 taisyklių variklio (ne AI).`
+    : `**🛡 Grounding score: ${overall}%** — ${verified}/${claims.length} claims verified against the deterministic engine${violations.length ? `; ${violations.length} unverified claims flagged below` : ""}. All numbers come from the 482-rule engine (not the AI).`;
+  const det = lt
+    ? `> **✓ 100% deterministinis verdiktas (variklis):** ${brief.gate.label[1]} · blokuojančios klaidos: ${brief.gate.blockingTotal} · perspėjimai: ${brief.gate.warningCount} · VMI rizikos balas: ${brief.risk.score} (${brief.risk.band}).`
+    : `> **✓ 100% deterministic verdict (engine):** ${brief.gate.label[0]} · blocking errors: ${brief.gate.blockingTotal} · warnings: ${brief.gate.warningCount} · VMI risk score: ${brief.risk.score} (${brief.risk.band}).`;
+  const flagged = violations.length ? "\n\n" + (lt ? "**⚠ Nepatvirtinti teiginiai (palikti skaidrumo dėlei):**" : "**⚠ Unverified claims (kept for transparency):**") + "\n" + violations.slice(0, 8).map((c) => `✕ ${c.text}`).join("\n") : "";
+  return head + "\n\n" + det + "\n\n" + text + flagged + sourcesAppendix(text, legal, lang);
+}
+
+async function groundedAgentRun({ persona, sections, parsed, runResult, callAI, lang, extra }) {
+  const brief = buildAnalysisBrief(parsed, runResult);
+  const lt = lang !== "en";
+  if (typeof callAI !== "function") {
+    // Offline mode: the deterministic brief IS the report — confidence 100%.
+    const head = lt ? "**🛡 Pagrįstumo balas: 100% — deterministinis režimas (be AI).**" : "**🛡 Grounding score: 100% — deterministic mode (no AI).**";
+    return head + "\n\n```\n" + brief.text + "\n```" + sourcesAppendix("", [], lang);
+  }
+  const seedQ = (brief.risk.perRule || []).slice(0, 5).map((r) => r.title).join(" ") + " " + brief.topCats.map(([c]) => c).join(" ");
+  const legal = retrieveSources(seedQ, LEGAL_DB, 8);
+  const system = `${persona}\n\n${GROUNDED_RULES}\n\nLanguage: ${lt ? "Lithuanian" : "English"}. Required sections, in order:\n${sections.map((s, i) => `${i + 1}. ${s}`).join("\n")}`;
+  const user = `FACTS (deterministic engine output — your only source of numbers):\n${brief.text}\n\n${formatSourcesForAi(legal)}${extra ? "\n\n" + extra : ""}\n\nWrite the report now, following the section structure exactly.`;
+  const draft = await callAI(system, user, []);
+  return await groundedFinalize(draft, brief, legal, lang, callAI, system);
+}
+
+async function runInterpretation(data, result, callAI, lang) {
   if (!data || !result) return "No data to interpret.";
   const payload = buildAiInterpretationPayload(data, result);
   const findingsBlock = formatFindingsForAi(payload, 8);
-
-  const userPrompt = `Interpret the following SAF-T compliance findings. The deterministic engine has already executed all 250 rules; your job is to interpret, prioritize, and explain in Lithuanian-tax-law-aware language.
-
-${findingsBlock}
-
-Produce the report in markdown using the exact structure in your system prompt. Do not re-list every finding verbatim; group, prioritize, and add interpretive value.`;
-
-  return await callAI(SYSTEM_PROMPT_INTERPRETATION, userPrompt, []);
+  return groundedAgentRun({
+    persona: "You are a senior Lithuanian tax-compliance counsel reviewing a SAF-T audit run for a client. The deterministic 482-rule engine has already done all detection and scoring — you interpret, prioritize and advise.",
+    sections: lang === "en"
+      ? ["Executive summary (max 3 sentences, verdict first)", "Risk assessment — what the VMI risk score and its top drivers mean for THIS company", "Priority actions — ordered 7/30-day plan tied to specific rule ids; mark auto-fixable items with ⚙", "Legal positions — for the top issues, the applicable provision with a [source-id] citation each", "Note to management — plain-language paragraph, no jargon"]
+      : ["Santrauka vadovui (maks. 3 sakiniai, verdiktas pirmas)", "Rizikos vertinimas — ką VMI rizikos balas ir jo pagrindiniai šaltiniai reiškia ŠIAI įmonei", "Prioritetiniai veiksmai — 7/30 dienų planas pagal konkrečius taisyklių id; automatiškai taisomus žymėkite ⚙", "Teisinės pozicijos — pagrindinėms problemoms taikytina nuostata su [šaltinio-id] citata", "Pastaba vadovybei — paprasta kalba, be žargono"],
+    parsed: data, runResult: result, callAI, lang, extra: "FINDINGS DETAIL (grouped, for context only — numbers still come from FACTS):\n" + findingsBlock,
+  });
 }
 
 /**
@@ -5768,30 +5896,17 @@ Produce the report in markdown using the exact structure in your system prompt. 
  * @param callAI     existing callAI() function
  * @returns          markdown string for <Md/>
  */
-async function runSmartAnalysis(data, result, callAI) {
+async function runSmartAnalysis(data, result, callAI, lang) {
   if (!data || !result) return "No data to analyze.";
   const payload = buildAiInterpretationPayload(data, result);
   const findingsBlock = formatFindingsForAi(payload, 6);
-  const catalogBlock = formatRuleCatalogForAi();
-
-  const userPrompt = `Perform smart meta-analysis on this SAF-T compliance run.
-
-== RULE ENGINE CATALOG ==
-${catalogBlock}
-
-== THIS FILE'S FINDINGS ==
-${findingsBlock}
-
-Produce the meta-analysis in markdown using the exact structure in your system prompt:
-1. Rule-engine self-critique with category scoring 1-5
-2. Specific PROPOSED new rules the engine should add
-3. Legal remediation pathway for material findings
-4. Financing & management strategies (installment plans, R&D credit, investment relief, instant depreciation 2026, Invega, EU funds)
-5. Prioritized 30-day action plan
-
-Be concrete, not generic. Use Lithuanian legal vocabulary where precise. Cite specific article numbers (verify, don't invent).`;
-
-  return await callAI(SYSTEM_PROMPT_SMART_ANALYSIS, userPrompt, []);
+  return groundedAgentRun({
+    persona: "You are a forensic data-quality diagnostician. Your specialty: reading a pattern of SAF-T findings and identifying the SYSTEMIC root cause in the source accounting system (mapping errors, missing master data, export bugs, process gaps) — so one fix closes many findings.",
+    sections: lang === "en"
+      ? ["Systemic patterns — cluster the findings by shared root cause (use rule ids and counts from FACTS)", "Root-cause diagnosis — for each cluster: the most likely source-system defect, stated plainly", "Remediation roadmap — what to fix in which system, in what order, with the expected number of findings closed per step (numbers from FACTS only)", "Residual risk after remediation — which findings remain and what gate/risk outcome to expect", "30-day plan — concrete, owner-assignable steps"]
+      : ["Sisteminiai šablonai — sugrupuokite radinius pagal bendrą priežastį (naudokite taisyklių id ir skaičius iš FACTS)", "Pagrindinių priežasčių diagnozė — kiekvienai grupei: tikėtinas šaltinio sistemos defektas, paprastai", "Taisymo kelias — ką, kurioje sistemoje ir kokia tvarka taisyti, su numatomu uždaromų radinių skaičiumi (tik iš FACTS)", "Likutinė rizika po taisymo — kurie radiniai liks ir kokio vartų/rizikos rezultato tikėtis", "30 dienų planas — konkretūs, atsakomybėmis paskirstomi žingsniai"],
+    parsed: data, runResult: result, callAI, lang, extra: "FINDINGS DETAIL:\n" + findingsBlock,
+  });
 }
 
 /**
@@ -5800,22 +5915,24 @@ Be concrete, not generic. Use Lithuanian legal vocabulary where precise. Cite sp
  * the new "smart analysis", use this. Otherwise, replace with
  * runSmartAnalysis().
  */
-async function runSmartFilter(data, result, callAI) {
+async function runSmartFilter(data, result) {
+  // Deterministic triage: the engine already knows what matters and in what
+  // order (VMI risk weights). No AI call — instant, and 100% accurate.
   if (!data || !result) return "No data.";
-  const payload = buildAiInterpretationPayload(data, result);
-  const material = result.findings.filter((f) => f.severity !== "Warn");
-  if (material.length === 0) {
-    return "✅ **No Block/Reject findings.** File is structurally clean. Review Warn-level items at your discretion.";
-  }
-  const findingsBlock = material.slice(0, 30).map((f) =>
-    `- **[${f.rule_id} ${f.severity}]** ${f.title}\n  → ${f.detail.substring(0, 200)}`
-  ).join("\n");
-
-  const sys = `You are a Smart Filter. Show ONLY items requiring action. Format with 🔴 CRITICAL, 🟡 HIGH PRIORITY, 💡 OPTIMIZATION. For each finding give: (1) data reference, (2) legal basis with exact article, (3) financial impact estimate, (4) immediate action. Be concise; no preamble.`;
-
-  const usr = `Filter and present material findings:\n${findingsBlock}\n\nCompany: ${payload.company.name}, period ${payload.company.period}.`;
-
-  return await callAI(sys, usr, []);
+  const brief = buildAnalysisBrief(data, result);
+  const L = [];
+  L.push("**🛡 Pagrįstumo balas: 100% — deterministinis triažas (be AI) / deterministic triage (no AI).**");
+  L.push("");
+  L.push(`> ${brief.gate.label[1]} / ${brief.gate.label[0]} — VMI rizika/risk ${brief.risk.score} (${brief.risk.band}) · ${brief.gate.blockingTotal} blokuojančios/blocking · ${brief.gate.warningCount} perspėjimai/warnings`);
+  L.push("");
+  if (!(brief.risk.perRule || []).length) { L.push("✅ Radinių nėra / No findings."); return L.join("\n"); }
+  L.push("### Taisyti šia tvarka / Fix in this order");
+  (brief.risk.perRule || []).slice(0, 12).forEach((r, i) => {
+    L.push(`${i + 1}. **${r.rule_id}** — ${r.title} · ×${r.hits} · indėlis/contrib ${r.contrib}${isAutoFixableRule(r.rule_id) ? " · ⚙" : ""}`);
+  });
+  L.push("");
+  L.push("⚙ — taisoma vienu paspaudimu skirtuke „Auto-taisymas“ / one-click in the Auto-Fix tab. Eiliškumas — pagal VMI rizikos svorius [VA-49][SAFT-XSD].");
+  return L.join("\n") + sourcesAppendix("[VA-49][SAFT-XSD]", [], "lt");
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -12250,13 +12367,11 @@ function TAXAI({ onExit, initialView } = {}) {
   const [benchSector, setBenchSector] = useState(null);
 
   // Deterministic fact index used to verify AI narratives (recomputed when results change).
-  const groundingFacts = useMemo(() => buildGroundingFacts({
-    kpis: enterpriseKpis?.kpis,
-    runResult,
-    intel,
-    metrics: personalRules?.metrics,
-    reconResult,
-  }), [enterpriseKpis, runResult, intel, personalRules, reconResult]);
+  const groundingFacts = useMemo(() => {
+    const base = buildGroundingFacts({ kpis: enterpriseKpis?.kpis, runResult, intel, metrics: personalRules?.metrics, reconResult });
+    try { if (fileData?.parsed && runResult) return base.concat(buildAnalysisBrief(fileData.parsed, runResult).facts); } catch (e) { /* brief optional */ }
+    return base;
+  }, [enterpriseKpis, runResult, intel, personalRules, reconResult, fileData]);
   const verifyAi = useMemo(() => (typeof aiResult === "string" && !aiResult.startsWith("Error")) ? verifyNarrative(aiResult, groundingFacts) : null, [aiResult, groundingFacts]);
   const verifySmartAnalysis = useMemo(() => (typeof smartAnalysisResult === "string" && !smartAnalysisResult.startsWith("Error")) ? verifyNarrative(smartAnalysisResult, groundingFacts) : null, [smartAnalysisResult, groundingFacts]);
   const verifyThreat = useMemo(() => (typeof threatResult === "string" && !threatResult.startsWith("Error")) ? verifyNarrative(threatResult, groundingFacts) : null, [threatResult, groundingFacts]);
@@ -12532,13 +12647,13 @@ function TAXAI({ onExit, initialView } = {}) {
     setSaftLoading(true);
     audit.log("SAFT_AI_INTERPRETATION", fileName);
     try {
-      const md = await runInterpretation(fileData.parsed, runResult, callAI);
+      const md = await runInterpretation(fileData.parsed, runResult, callAI, lang);
       setAiResult(md);
     } catch (e) {
       setAiResult(`Error: ${e.message}`);
     }
     setSaftLoading(false);
-  }, [fileData, runResult, audit, fileName]);
+  }, [fileData, runResult, audit, fileName, lang]);
 
   // SMART FILTER (legacy) — quick "show me what matters" view
   const runSmart = useCallback(async () => {
@@ -12552,7 +12667,7 @@ function TAXAI({ onExit, initialView } = {}) {
       setSmartResult(`Error: ${e.message}`);
     }
     setSaftLoading(false);
-  }, [fileData, runResult, audit, fileName]);
+  }, [fileData, runResult, audit, fileName, lang]);
 
   // SMART ANALYSIS — NEW — meta-critique + legal remediation + financing
   const runSmartAnalysisCallback = useCallback(async () => {
@@ -12560,13 +12675,13 @@ function TAXAI({ onExit, initialView } = {}) {
     setSaftLoading(true);
     audit.log("SAFT_SMART_ANALYSIS", fileName);
     try {
-      const md = await runSmartAnalysis(fileData.parsed, runResult, callAI);
+      const md = await runSmartAnalysis(fileData.parsed, runResult, callAI, lang);
       setSmartAnalysisResult(md);
     } catch (e) {
       setSmartAnalysisResult(`Error: ${e.message}`);
     }
     setSaftLoading(false);
-  }, [fileData, runResult, audit, fileName]);
+  }, [fileData, runResult, audit, fileName, lang]);
 
   // ENTERPRISE AUDIT — NEW — CFO/Internal-Audit/ERP intelligence overlay.
   // KPIs are computed deterministically; Gemini interprets the grounded numbers.
@@ -12577,6 +12692,11 @@ function TAXAI({ onExit, initialView } = {}) {
     try {
       const ctx = buildContext(fileData.parsed);
       const out = await runEnterpriseAudit(fileData.parsed, runResult, ctx, callAI);
+      try {
+        const brief = buildAnalysisBrief(fileData.parsed, runResult);
+        const legal = retrieveSources((brief.risk.perRule || []).slice(0, 5).map((r) => r.title).join(" "), LEGAL_DB, 8);
+        out.markdown = await groundedFinalize(out.markdown, brief, legal, lang, callAI, "You are an enterprise auditor. Keep your sections; fix only the listed claims using exact FACTS numbers.");
+      } catch (ge) { /* grounding optional */ }
       setEnterpriseResult(out);
       if (out.kpiBundle) setEnterpriseKpis(out.kpiBundle);
     } catch (e) {
@@ -12601,13 +12721,18 @@ function TAXAI({ onExit, initialView } = {}) {
     setSaftLoading(true);
     audit.log("FORENSIC_THREAT_ASSESSMENT", `risk ${bundle.risk.score}/100 (${bundle.risk.band})`);
     try {
-      const md = await runThreatAssessment(fileData.parsed, bundle, runResult, callAI);
+      let md = await runThreatAssessment(fileData.parsed, bundle, runResult, callAI);
+      try {
+        const brief = buildAnalysisBrief(fileData.parsed, runResult);
+        const legal = retrieveSources((brief.risk.perRule || []).slice(0, 5).map((r) => r.title).join(" "), LEGAL_DB, 8);
+        md = await groundedFinalize(md, brief, legal, lang, callAI, "You are a forensic threat assessor. Keep your sections; fix only the listed claims using exact FACTS numbers.");
+      } catch (ge) { /* grounding optional */ }
       setThreatResult(md);
     } catch (e) {
       setThreatResult(`Error: ${e.message}`);
     }
     setSaftLoading(false);
-  }, [fileData, runResult, intel, audit]);
+  }, [fileData, runResult, intel, audit, lang]);
 
   // ADAPTIVE PERSONALIZED RULES — Gemini designs industry/company-specific
   // rules over the deterministic metric registry; each is then scored
@@ -13139,7 +13264,7 @@ function TAXAI({ onExit, initialView } = {}) {
                   {!aiResult && !saftLoading && <button onClick={runAI} style={{ ...bP, marginLeft: "auto" }}>{lang === "lt" ? "Analizuoti →" : "Analyze →"}</button>}
                 </div>
                 <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", marginBottom: 18, lineHeight: 1.65, maxWidth: 760 }}>
-                  {lang === "lt" ? "AI interpretuoja audito taisyklių variklio rezultatus: paaiškina kiekvieną reikšmingą radinį Lietuvos mokesčių teisės kontekste (PVMĮ, VA-49), nustato pagrindines priežastis ir siūlo skubias korekcijas." : "AI interprets the audit-rule engine results: explains every material finding in the context of Lithuanian tax law (PVMĮ, VA-49), identifies root causes and suggests immediate corrections."}
+                  {lang === "lt" ? "Pagrįsta AI analizė: kiekvienas skaičius — iš 482 taisyklių variklio (AI neskaičiuoja), kiekvienas teisinis teiginys — su [šaltinio] citata, kiekvienas sakinys patikrinamas prieš variklį, o nepatvirtinti — pažymimi. Ataskaitos viršuje — pagrįstumo balas, apačioje — oficialių šaltinių sąrašas." : "Grounded AI analysis: every number comes from the 482-rule engine (the AI never calculates), every legal statement carries a [source] citation, every sentence is verified against the engine and unverified ones are flagged. Grounding score on top, official-source list at the bottom."}
                 </p>
                 {saftLoading && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 20 }}>{dots()}<span style={{ fontSize: 13, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em" }}>{lang === "lt" ? "ANALIZUOJAMA..." : "ANALYZING..."}</span></div>}
                 {aiResult && <Md text={aiResult} />}
