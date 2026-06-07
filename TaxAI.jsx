@@ -5522,7 +5522,7 @@ function buildAiInterpretationPayload(data, runResult) {
 // ─── INTERPRETATION SYSTEM PROMPT ────────────────────────────────────
 const SYSTEM_PROMPT_INTERPRETATION = `You are the **TAXAI SAF-T Senior Auditor** — a forensic-grade Lithuanian tax analyst.
 
-You are interpreting findings from a DETERMINISTIC 250-rule SAF-T engine (XSD v2.01, Order VA-127). The findings are objective facts: each one has a rule_id, severity (Block/Reject/Warn), type (S=Schema/B=Business/C=Consistency/F=Financial), category, title, detail, and evidence samples.
+You are interpreting findings from a DETERMINISTIC 482-rule SAF-T engine (XSD v2.01, Order VA-127). The findings are objective facts: each one has a rule_id, severity (Block/Reject/Warn), type (S=Schema/B=Business/C=Consistency/F=Financial), category, title, detail, and evidence samples.
 
 Your job is NOT to re-validate. Your job is to INTERPRET, PRIORITIZE, and EXPLAIN.
 
@@ -5749,7 +5749,7 @@ function formatRuleCatalogForAi() {
  * @returns          markdown string for <Md/>
  */
 // ═════════════════════════════════════════════════════════════════════════
-// GROUNDED AGENT PIPELINE (Harvey/Sovos-class contract for every AI tab).
+// GROUNDED AGENT PIPELINE (verification contract for every AI tab).
 // Principle: the model NEVER computes — the deterministic engine computes,
 // the model explains. Every number must be copied verbatim from the FACTS
 // brief; every legal statement must cite a [source-id]; the draft is
@@ -7013,7 +7013,7 @@ const SYSTEM_PROMPT_ENTERPRISE_AUDIT = `You are an **Enterprise Financial Intell
 You evaluate the company against: IFRS, IAS, Lithuanian tax law (PVMĮ, PMĮ, GPMĮ, MAĮ), VAT/GST rules, OECD transfer-pricing guidelines, IIA internal-audit standards, SOX-style controls, and corporate-governance frameworks. Where Lithuanian local rules and IFRS differ, note both.
 
 # CRITICAL GROUNDING RULES (non-negotiable)
-1. The deterministic 250-rule SAF-T engine has ALREADY run. Its findings are facts — do not re-validate, do not contradict them.
+1. The deterministic 482-rule SAF-T engine has ALREADY run. Its findings are facts — do not re-validate, do not contradict them.
 2. All KPIs and financial figures are PRE-COMPUTED and given to you below. USE THOSE EXACT NUMBERS. Never invent a revenue, margin, tax, or savings figure that is not derivable from the data provided. If you estimate, label it "EST." and state the assumption.
 3. For every cost-optimization or savings claim, show the arithmetic from the provided figures. No arithmetic = do not state the number.
 4. Distinguish clearly between REAL risks (backed by findings/KPIs) and POSSIBLE FALSE POSITIVES. Give a False-Positive Probability for each material finding.
@@ -7116,7 +7116,7 @@ function formatKpisForAi(kpiBundle) {
 }
 
 function formatFindingsCompact(payload, perCat = 6) {
-  const lines = [`COMPLIANCE FINDINGS (from deterministic 250-rule SAF-T engine):`,
+  const lines = [`COMPLIANCE FINDINGS (from deterministic 482-rule SAF-T engine):`,
     `Total ${payload.summary.total} · Block ${payload.bySeverity.Block} · Reject ${payload.bySeverity.Reject} · Warn ${payload.bySeverity.Warn}`, ""];
   for (const grp of payload.groupedSummary || []) {
     lines.push(`### ${grp.category} (${grp.finding_count})`);
@@ -8073,7 +8073,7 @@ Write the assessment per your system prompt structure. The risk score is ${intel
 // ════════════════════════════════════════════════════════════════════
 // TAXAI · ADAPTIVE RULE ENGINE  (personalized, industry-specific rules)
 // ────────────────────────────────────────────────────────────────────
-// Philosophy (mirrors the deterministic 250-rule engine):
+// Philosophy (mirrors the deterministic 482-rule engine):
 //   • The AI agent proposes WHAT to check and WHY (domain knowledge).
 //   • Every check is evaluated DETERMINISTICALLY against a registry of
 //     pre-computed metrics — so PASS/FAIL is reproducible and grounded,
@@ -8487,7 +8487,7 @@ function sanitizeGeneratedRules(parsed, registry) {
 // ─── PUBLIC RUNNER — adaptive personalized rules ─────────────────────
 // Computes the deterministic metric registry, asks Gemini to design
 // company/industry-specific rules over those metrics, then evaluates
-// each proposed rule DETERMINISTICALLY (PASS/FAIL/N-A). The 250-rule
+// each proposed rule DETERMINISTICALLY (PASS/FAIL/N-A). The 482-rule
 // guarantees are untouched; this is a strictly additive overlay.
 async function runPersonalizedRules(data, runResult, ctx, kpiBundle, callAI) {
   if (!data || !runResult) return { error: "No data to analyze. Run the engine first." };
@@ -10107,7 +10107,7 @@ const EINV_REGIME = {
     note: "Nuo 2030-07-01 ES vidaus B2B sandoriams privaloma EN 16931 e. sąskaita ir skaitmeninis pranešimas (DRR).",
     noteEn: "From 2030-07-01 intra-EU B2B requires EN 16931 e-invoices and digital real-time reporting (DRR).",
   },
-  provenance: ["EC eInvoicing Country Sheet — Lithuania", "Pagero / Thomson Reuters regulatory updates (2024)", "Sovos: Lithuania e-invoicing (2025)", "Comarch: SABIS go-live (2024)", "Council Directive (EU) 2025/516, OJ L 2025/516"],
+  provenance: ["EC eInvoicing Country Sheet — Lithuania", "Council Directive (EU) 2025/516, OJ L 2025/516"],
 };
 // Peppol Electronic Address Scheme (EAS/ICD) codes relevant to LT.
 const PEPPOL_EAS = { legalEntity: "0200", vat: "9937" };   // 0200 = LT juridinio asmens kodas (LT:LEC); 9937 = LT PVM kodas
@@ -11335,7 +11335,7 @@ function exportForensicReport({ company, period, intel, runResult, findings, thr
   <p>${intel?.temporal?.applicable ? `Velocity anomalies: ${intel.temporal.velocitySpikes.length} · Backdated (&gt;30d): ${intel.temporal.backdating.length} · Weekend posting: ${intel.temporal.weekendPostings?.pct ?? "—"}% · After-hours: ${intel.temporal.afterHours?.pct ?? "—"}%` : "Insufficient dated events."}</p>
   <h2>5 · Entity Intelligence</h2>
   <p>Probable duplicate entities: ${intel?.entityRes?.duplicates?.length || 0} · Shared bank accounts: ${intel?.entityRes?.sharedBankAccounts?.length || 0} · Shell-flagged: ${intel?.entityRes?.shellIndicators?.length || 0}</p>
-  <h2>6 · Compliance Findings (250-rule engine)</h2>
+  <h2>6 · Compliance Findings (482-rule engine)</h2>
   <p>Total ${runResult?.summary?.total || 0} — Block ${runResult?.bySeverity?.Block || 0}, Reject ${runResult?.bySeverity?.Reject || 0}, Warn ${runResult?.bySeverity?.Warn || 0}</p>
   <table><thead><tr><th>Rule</th><th>Severity</th><th>Category</th><th>Finding</th></tr></thead><tbody>${findingRows || '<tr><td colspan=4>No findings.</td></tr>'}</tbody></table>
   ${flagged ? `<h2>7 · Investigation Case File</h2><table><thead><tr><th>Item</th><th>Status</th><th>Assignee</th><th>Note</th></tr></thead><tbody>${flagged}</tbody></table>` : ""}
@@ -13383,21 +13383,6 @@ function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData,
         {(() => { const gaps = detectSeqGaps(einv.outbox); return gaps.length ? <span title={gaps.map((g) => `${g.series}: ${g.missing.join(",")}`).join(" · ")} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#ffd43b", border: "1px solid rgba(255,212,59,.4)", padding: "5px 10px", cursor: "help" }}>⚠ {LT ? "Numeracijos spragos" : "Sequence gaps"}: {gaps.map((g) => `${g.series}…×${g.missing.length}`).join(", ")}</span> : liveOut.length ? <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#69db7c" }}>✓ {LT ? "Numeracija be spragų (PVMĮ)" : "Gapless numbering (PVMĮ)"}</span> : null; })()}
       </div>
 
-      <Section title={LT ? "Reguliacinė laiko juosta (šaltiniai apačioje)" : "Regulatory timeline (sources below)"} accent="#74c0fc">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
-          {[
-            ["2017-07-01", LT ? "B2G e. sąskaitos privalomos (2014/55/ES)" : "B2G e-invoicing mandatory (2014/55/EU)"],
-            ["2024-07-01", LT ? "SABIS startas · žodinės sutartys > €1 000 — per SABIS" : "SABIS go-live · verbal contracts > €1,000 via SABIS"],
-            ["2024-09-01", LT ? "SABIS pilnai veikia („E. sąskaita“ atjungta 2024-08-30)" : "SABIS fully operational (eSąskaita disconnected 2024-08-30)"],
-            ["2025-01-01", LT ? "Visos žodinės sutartys — per SABIS" : "All verbal contracts via SABIS"],
-            ["2030-07-01", LT ? "ViDA: ES vidaus B2B e. sąskaitos + DRR (ES) 2025/516" : "ViDA: intra-EU B2B e-invoicing + DRR (EU) 2025/516"],
-          ].map(([d, txt]) => <div key={d} style={{ border: `1px solid ${PL_SOFT}`, padding: "10px 12px" }}>
-            <div style={{ fontFamily: "var(--m)", fontSize: 12, fontWeight: 700, color: "#fff" }}>{d}</div>
-            <div style={{ fontFamily: "var(--s)", fontSize: 11.5, color: "#bcbcb8", marginTop: 4, lineHeight: 1.45 }}>{txt}</div>
-          </div>)}
-        </div>
-        <div style={{ ...lbl, fontSize: 8.5, marginTop: 10, lineHeight: 1.6, textTransform: "none", letterSpacing: ".03em" }}>{LT ? "Šaltiniai" : "Sources"}: {EINV_REGIME.provenance.join(" · ")}</div>
-      </Section>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
         <Section title={LT ? "Atitikties patikra (fixtures)" : "Conformance check (fixtures)"}>
@@ -13638,6 +13623,38 @@ function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData,
     </div>}
   </div>;
 }
+
+// ── Structured Terms & Privacy content (rendered by the disclaimer modal) ──
+const TERMS_CONTENT = {
+  lt: {
+    intro: "TAXAI yra informacinė AI sistema. Tai NĖRA teisinė konsultacija ir negali pakeisti profesionalaus mokesčių konsultanto, auditoriaus ar teisininko.",
+    agreeLead: "Naudodamiesi sistema sutinkate, kad:",
+    items: [
+      "AI atsakymai gali turėti netikslumų ir turi būti vertinami kritiškai.",
+      "Visi mokesčių apskaičiavimai prieš teikiant deklaracijas turi būti patikrinti kvalifikuoto specialisto.",
+      "Sistemos naudojimas nesukuria teisinių ar konsultacinių santykių tarp jūsų ir TAXAI.",
+      "Jūsų duomenys tvarkomi laikantis BDAR (GDPR) reikalavimų.",
+      "SAF-T failų analizė yra pagalbinė priemonė — ne oficialus auditas.",
+      "E. sąskaitų siuntimas (SABIS / Peppol) šioje versijoje yra demonstracinis — dokumentai realiai neperduodami.",
+    ],
+    dataTitle: "Duomenų tvarkymas",
+    dataBody: "Įkelti failai apdorojami tik sesijos metu ir nesaugomi serveryje. AI užklausos siunčiamos šifruotu kanalu. ERP prisijungimo duomenys laikomi tik sesijos atmintyje ir siunčiami tik į jūsų /api/erp relę; gamybinėje aplinkoje naudokite vault/KMS. Turite teisę prašyti ištrinti savo duomenis.",
+  },
+  en: {
+    intro: "TAXAI is an informational AI system. It is NOT legal advice and cannot replace a professional tax consultant, auditor or lawyer.",
+    agreeLead: "By using the system you agree that:",
+    items: [
+      "AI responses may contain inaccuracies and must be reviewed critically.",
+      "All tax calculations must be verified by a qualified specialist before filing.",
+      "Use of the system does not create a legal or advisory relationship between you and TAXAI.",
+      "Your data is processed in accordance with GDPR.",
+      "SAF-T file analysis is an auxiliary tool — not an official audit.",
+      "E-invoice transmission (SABIS / Peppol) in this version is a demonstration — no documents are actually submitted.",
+    ],
+    dataTitle: "Data handling",
+    dataBody: "Uploaded files are processed only during the session and are never stored on the server. AI requests travel over an encrypted channel. ERP credentials live in session memory only and are sent solely to your /api/erp relay; use a vault/KMS in production. You may request deletion of your data at any time.",
+  },
+};
 
 function TAXAI({ onExit, initialView } = {}) {
   const [view, setView] = useState(initialView || "home");
@@ -14235,11 +14252,20 @@ function TAXAI({ onExit, initialView } = {}) {
 
       {/* DISCLAIMER MODAL */}
       {showDisclaimer && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(4px)" }}>
-        <div style={{ background: "var(--bg2)", padding: 40, maxWidth: 580, width: "100%", border: `1px solid ${PL_LINE}` }}>
+        <div style={{ background: "var(--bg2)", padding: 40, maxWidth: 580, width: "100%", border: `1px solid ${PL_LINE}`, maxHeight: "86vh", overflowY: "auto" }}>
           <div style={{ ...lbl, marginBottom: 20 }}><span style={rule} />Terms & Privacy</div>
           <h2 style={{ fontSize: 36, fontWeight: 300, color: "#fff", fontFamily: "var(--f)", marginBottom: 18, letterSpacing: "-.02em", lineHeight: 1.05 }}>{t.termsTitle}</h2>
-          <p style={{ fontSize: 15, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.7, marginBottom: 16 }}>{t.termsText}</p>
-          <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--m)", lineHeight: 1.6, marginBottom: 26, padding: 14, background: "rgba(255,255,255,0.03)", border: `1px solid ${PL_SOFT}` }}>🔒 {t.gdprText}</p>
+          {(() => { const TT = TERMS_CONTENT[lang] || TERMS_CONTENT.en; return <>
+            <p style={{ fontSize: 15, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.7, marginBottom: 16 }}>{TT.intro}</p>
+            <div style={{ fontFamily: "var(--m)", fontSize: 10.5, letterSpacing: ".14em", textTransform: "uppercase", color: "#8c8c88", marginBottom: 10 }}>{TT.agreeLead}</div>
+            <ol style={{ margin: "0 0 18px", paddingLeft: 22, display: "flex", flexDirection: "column", gap: 8 }}>
+              {TT.items.map((it, i) => <li key={i} style={{ fontSize: 13.5, color: "#d2d2ce", fontFamily: "var(--s)", lineHeight: 1.55 }}>{it}</li>)}
+            </ol>
+            <div style={{ marginBottom: 26, padding: "14px 16px", background: "rgba(255,255,255,0.03)", border: `1px solid ${PL_SOFT}` }}>
+              <div style={{ fontFamily: "var(--m)", fontSize: 10.5, letterSpacing: ".14em", textTransform: "uppercase", color: "#8c8c88", marginBottom: 8 }}>🔒 {TT.dataTitle}</div>
+              <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.65, margin: 0 }}>{TT.dataBody}</p>
+            </div>
+          </>; })()}
           <button onClick={() => { setShowDisclaimer(false); audit.log("DISCLAIMER_ACCEPTED"); }} style={{ ...bP, width: "100%", justifyContent: "center", padding: 15 }} onMouseEnter={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#000"; }}>
             {lang === "lt" ? "Sutinku ir tęsiu →" : "I Agree & Continue →"}
           </button>
@@ -14368,7 +14394,6 @@ function TAXAI({ onExit, initialView } = {}) {
               <SEC n="02" en="How it works · Architecture" lt="Kaip tai veikia · Architektūra" />
               <div style={{ display: "flex", gap: 0, alignItems: "baseline", flexWrap: "wrap", marginBottom: 18 }}>
                 <div style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)" }}>{lang === "lt" ? "Deterministiniai varikliai pirmiausia — AI tik aiškina ir kiekvienas jo teiginys tikrinamas." : "Deterministic engines first — the AI only explains, and every claim it makes is verified."}</div>
-                <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#555", letterSpacing: ".06em", marginLeft: "auto" }}>{APP_BUILD}</div>
               </div>
               <div style={{ display: "flex", alignItems: "stretch", flexWrap: "wrap", rowGap: 16 }}>
                 {[
@@ -15646,7 +15671,7 @@ const LANDING_CSS = `
 .lp h1.hero-title .thin{color:var(--lp-faint)}
 @keyframes lpLineUp{to{transform:translateY(0)}}
 .lp .hero-sub{font-size:clamp(17px,1.7vw,22px);color:#d2d2ce;max-width:54ch;line-height:1.7;margin-bottom:44px;font-weight:400;opacity:0;animation:lpFadeUp 1s .9s forwards}
-.lp .hero-actions{display:flex;gap:16px;flex-wrap:wrap;opacity:0;animation:lpFadeUp 1s 1.05s forwards}
+.lp .hero-actions{display:flex;gap:16px;flex-wrap:wrap;position:relative;z-index:3;opacity:0;animation:lpFadeUp 1s 1.05s forwards}
 .lp .btn{display:inline-flex;align-items:center;gap:12px;padding:15px 30px;font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;transition:all .3s;cursor:pointer;border:1px solid #fff}
 .lp .btn-primary{background:#fff;color:#000}
 .lp .btn-primary:hover{background:transparent;color:#fff}
@@ -15655,7 +15680,8 @@ const LANDING_CSS = `
 .lp .btn-ghost{background:transparent;color:#fff;border-color:var(--lp-line)}
 .lp .btn-ghost:hover{border-color:#fff}
 @keyframes lpFadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
-.lp .hero-meta{position:absolute;bottom:34px;left:32px;right:32px;z-index:2;display:flex;justify-content:space-between;font-family:var(--lp-fm);font-size:11px;letter-spacing:.1em;color:var(--lp-faint);text-transform:uppercase;opacity:0;animation:lpFadeUp 1s 1.3s forwards}
+.lp .hero-meta{position:absolute;bottom:34px;left:32px;right:32px;z-index:1;pointer-events:none;display:flex;justify-content:space-between;font-family:var(--lp-fm);font-size:11px;letter-spacing:.1em;color:var(--lp-faint);text-transform:uppercase;opacity:0;animation:lpFadeUp 1s 1.3s forwards}
+@media (max-height:800px){.lp .hero-meta{display:none}}
 .lp .hero-meta .scroll-ind{display:flex;align-items:center;gap:10px}
 .lp .hero-meta .scroll-ind .bar{width:1px;height:34px;background:linear-gradient(#fff,transparent);animation:lpScrollBar 2s infinite}
 @keyframes lpScrollBar{0%{transform:scaleY(0);transform-origin:top}50%{transform:scaleY(1);transform-origin:top}50.1%{transform-origin:bottom}100%{transform:scaleY(0);transform-origin:bottom}}
@@ -15962,7 +15988,7 @@ function LandingPage({ onEnter }) {
             <span className="l"><span>See the <em>signal</em></span></span>
             <span className="l"><span>inside the <span className="thin">noise.</span></span></span>
           </h1>
-          <p className="hero-sub">TAXAI fuses a deterministic 250-rule SAF-T engine with seven forensic intelligence engines and eighteen specialised agents — turning raw accounting data into auditable, court-grade insight.</p>
+          <p className="hero-sub">TAXAI fuses a deterministic {AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length}-rule SAF-T engine with seven forensic intelligence engines and {AGENTS.length} specialised agents — turning raw accounting data into auditable, defensible insight.</p>
           <div className="hero-actions">
             <a href="#" className="btn btn-primary" onClick={(e) => enter(e, "saftview")}>Analyze a SAF-T file <span className="arrow">→</span></a>
             <a href="#" className="btn btn-ghost" onClick={(e) => enter(e, "chat")}>Ask an agent</a>
@@ -15971,14 +15997,14 @@ function LandingPage({ onEnter }) {
         <div className="hero-meta">
           <span>EST. VILNIUS · LT</span>
           <span className="scroll-ind"><span className="bar" />SCROLL TO DECODE</span>
-          <span>v4.8 / OPUS</span>
+          <span>SAF-T LT 2.01</span>
         </div>
       </header>
 
       <div className="marquee">
         <div className="marquee-track">
           {[0, 1].map(k => (
-            <span key={k}>Deterministic by design<span className="m-x">✦</span>250 SAF-T rules<span className="m-x">✦</span>Benford's Law<span className="m-x">✦</span>Entity resolution<span className="m-x">✦</span>Transaction graphs<span className="m-x">✦</span>Threat assessment<span className="m-x">✦</span></span>
+            <span key={k}>Deterministic by design<span className="m-x">✦</span>{AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length} SAF-T rules<span className="m-x">✦</span>Benford's Law<span className="m-x">✦</span>Entity resolution<span className="m-x">✦</span>Transaction graphs<span className="m-x">✦</span>Threat assessment<span className="m-x">✦</span></span>
           ))}
         </div>
       </div>
@@ -16093,7 +16119,7 @@ function LandingPage({ onEnter }) {
         <div className="inner wrap">
           <div className="sec-label reveal" style={{ justifyContent: "center" }}>07 — Begin</div>
           <h2 className="reveal">Decode your <em>data.</em></h2>
-          <p className="reveal">Enter TAXAI and turn a SAF-T file into auditable, court-grade forensic intelligence — grounded in Lithuanian law, reproducible to the last cent.</p>
+          <p className="reveal">Enter TAXAI and turn a SAF-T file into auditable, defensible forensic intelligence — grounded in Lithuanian law, reproducible to the last cent.</p>
           <a href="#" className="btn btn-primary reveal" onClick={(e) => enter(e, "home")}>Enter the Platform <span className="arrow">→</span></a>
         </div>
       </section>
