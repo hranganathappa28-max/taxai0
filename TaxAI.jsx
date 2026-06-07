@@ -10320,7 +10320,7 @@ const EINV_RULES = (() => {
   return R;
 })();
 const EINV_RULE_COUNT = EINV_RULES.length;
-function validateEInvoice(inv, H) {
+function validateEInvoiceDraft(inv, H) {
   const T = computeEinvTotals(inv);
   const D = inv._declared || { lineExt: T.lineExt, taxEx: T.taxEx, taxInc: T.taxInc, payable: T.payable, allowTotal: T.allowSum, chargeTotal: T.chargeSum, prepaid: T.prepaid, rounding: T.rounding, taxTotal: T.taxTotal, subtotals: T.subtotals };
   const sevUi = { Block: "Critical", Reject: "High", Warn: "Medium" };
@@ -10354,7 +10354,7 @@ async function simulateTransmission(entry, settings, archive, H) {
   const sbdh = buildSBDH(inv, settings);
   ev("TRANSMITTED", `SBDH → ${routing.route} (gavėjas ${inv.buyer?.endpoint?.scheme}:${inv.buyer?.endpoint?.id || inv.buyer?.regNo})`);
   await pause(lag);
-  const v = validateEInvoice(inv, H);
+  const v = validateEInvoiceDraft(inv, H);
   if (!v.ok) { const f = v.findings.find((x) => x.severity !== "Warn"); ev("REJECTED", `MLR RE · ${f.rule_id}: ${f.detail}`); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: f.rule_id, reason: f.title } }; }
   if (archive.some((a) => a.invoiceNo === inv.invoiceNo && a.id !== inv.id)) { ev("REJECTED", "MLR RE · DUPLICATE: toks sąskaitos numeris jau išsiųstas"); return { state: "REJECTED", events, routing, sbdh, mlr: { status: "RE", code: "DUPLICATE", reason: "Invoice number already transmitted" } }; }
   await pause(lag);
@@ -10460,7 +10460,7 @@ function buildEinvFixtures(H) {
 function runEinvConformance(H, DOMParserImpl) {
   return runConformance({
     parse: (xml) => { const inv = parseUBLInvoice(xml, DOMParserImpl); if (inv._parseError) throw new Error(inv._parseError); return inv; },
-    run: (inv) => { const v = validateEInvoice(inv, H); const byRule = {}; v.findings.forEach((f) => { byRule[f.rule_id] = (byRule[f.rule_id] || 0) + 1; }); return { byRule }; },
+    run: (inv) => { const v = validateEInvoiceDraft(inv, H); const byRule = {}; v.findings.forEach((f) => { byRule[f.rule_id] = (byRule[f.rule_id] || 0) + 1; }); return { byRule }; },
   }, buildEinvFixtures(H));
 }
 
@@ -10470,7 +10470,7 @@ async function runEinvSelfTest(H, DOMParserImpl) {
   const profile = { name: "UAB TaxAI demo įmonė", regNo: "305123458", vatNo: "LT130512345819", iban: "LT607044060008101234", city: "Vilnius", series: "ST" };
   const mk = (seq, buyerOver, lineOver) => { const inv = newEInvoice(profile, seq, "2026-03-1" + seq); inv.buyer = { name: "UAB Baltijos logistika", regNo: "300011238", vatNo: "LT130001123817", country: "LT", city: "Vilnius", street: "", postal: "", email: "", isPublic: false, endpoint: { scheme: "0200", id: "300011238" }, ...(buyerOver || {}) }; inv.lines = [{ id: "1", description: "Paslauga", qty: 1, unitCode: "H87", unitPrice: 500, pct: 21, reverseCharge: false, exempt: false, exemptReason: "", ...(lineOver || {}) }]; inv.payment.paymentId = inv.invoiceNo; return inv; };
   const b = mk(1);
-  const v = validateEInvoice(b, H);
+  const v = validateEInvoiceDraft(b, H);
   ok("clean invoice validates (0 Block/Reject)", v.ok, Object.entries(v.byLayer).map(([k, n]) => k + ":" + n).join(",") || "0 findings");
   const xml = buildUBLInvoice(b);
   const p = parseUBLInvoice(xml, DOMParserImpl);
@@ -12835,9 +12835,9 @@ function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData,
     else { const c = (erp.store.customers || []).find((x) => x.id === v); if (c) setDraft((d) => ({ ...d, buyer: { ...d.buyer, name: c.name, regNo: c.regNo || "", vatNo: c.vatNo || "", country: c.country || "LT", city: c.city || "", isPublic: false, endpoint: { scheme: "0200", id: c.regNo || "" } } })); }
     setVal(null);
   };
-  const doValidate = () => { const v = validateEInvoice(draft, H); setVal(v); audit.log("EINV_VALIDATED", `${draft.invoiceNo} → ${v.findings.length} findings (${v.ok ? "OK" : "NOT OK"})`); };
+  const doValidate = () => { const v = validateEInvoiceDraft(draft, H); setVal(v); audit.log("EINV_VALIDATED", `${draft.invoiceNo} → ${v.findings.length} findings (${v.ok ? "OK" : "NOT OK"})`); };
   const doIssue = async () => {
-    const v = validateEInvoice(draft, H); setVal(v);
+    const v = validateEInvoiceDraft(draft, H); setVal(v);
     if (!v.ok) { setToast(LT ? "Sąskaita nepraeina patikros — pataisykite radinius" : "Invoice fails validation — fix the findings"); return; }
     const xml = buildUBLInvoice(draft);
     const arch2 = await appendToArchive(einv.archive, draft, xml);
@@ -12862,7 +12862,7 @@ function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData,
   const intakeInbound = async (xml, label) => {
     const inv = parseUBLInvoice(xml);
     if (inv._parseError) { setToast((LT ? "XML klaida: " : "XML error: ") + inv._parseError); return; }
-    const v = validateEInvoice(inv, H);
+    const v = validateEInvoiceDraft(inv, H);
     const m = matchInbound(inv, erp.store);
     const entry = { inv, xml, state: m.matched ? "MATCHED" : "RECEIVED", receivedAt: new Date().toISOString(), validation: { ok: v.ok, total: v.findings.length, bySeverity: v.bySeverity }, match: m };
     setEinv((e) => ({ ...e, inbox: [...e.inbox, entry] }));
