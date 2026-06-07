@@ -6555,16 +6555,36 @@ function kbSearch(pages, q) {
   if (!n) return [];
   return (pages || []).map((p) => { const hay = cpNorm((p.title || "") + "\n" + (p.content || "") + "\n" + (p.labels || []).join(" ")); const c = hay.split(n).length - 1; return c ? { page: p, hits: c, inTitle: cpNorm(p.title || "").indexOf(n) >= 0 } : null; }).filter(Boolean).sort((a, b) => (Number(b.inTitle) - Number(a.inTitle)) || (b.hits - a.hits));
 }
+function kbSlug(s) { return cpNorm(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "h"; }
+function kbToc(md) {
+  const out = []; let inCode = false;
+  String(md || "").split("\n").forEach((line) => {
+    if (/^```/.test(line)) { inCode = !inCode; return; }
+    if (inCode) return;
+    const m = /^(#{1,3}) (.*)$/.exec(line);
+    if (m) out.push({ level: m[1].length, text: m[2].trim(), id: kbSlug(m[2]) });
+  });
+  return out;
+}
+const KB_PANELS = { info: ["#74c0fc", "ℹ"], warn: ["#ffd43b", "⚠"], success: ["#69db7c", "✓"], note: ["#b197fc", "✎"] };
 function kbMdToHtml(md) {
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-  const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*(.+?)\*/g, "<i>$1</i>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  let html = "", inUl = false, inOl = false, inCode = false, inTable = false;
+  const inline = (s) => esc(s)
+    .replace(/\[\[([^\]\n]+)\]\]/g, '<a class="wiki" href="#kb">$1</a>')
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*(.+?)\*/g, "<i>$1</i>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  let html = "", inUl = false, inOl = false, inCode = false, inTable = false, panel = null;
   const closeAll = () => { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } if (inTable) { html += "</table>"; inTable = false; } };
+  const toc = kbToc(md);
   String(md || "").split("\n").forEach((line) => {
     if (/^```/.test(line)) { if (inCode) { html += "</pre>"; inCode = false; } else { closeAll(); html += "<pre>"; inCode = true; } return; }
     if (inCode) { html += esc(line) + "\n"; return; }
+    const pm = /^:::\s*(info|warn|success|note)\s*$/.exec(line.trim());
+    if (pm) { closeAll(); const [c, ic] = KB_PANELS[pm[1]]; html += "<div class='panel' style='border:1px solid #ddd;border-left:4px solid " + c + ";background:#fafaf8;padding:10px 14px;margin:10px 0'>" + ic + " "; panel = pm[1]; return; }
+    if (panel && /^:::\s*$/.test(line.trim())) { closeAll(); html += "</div>"; panel = null; return; }
+    if (/^\s*\[\[TOC\]\]\s*$/i.test(line)) { closeAll(); html += "<nav class='toc' style='border:1px solid #e3e3e3;padding:10px 16px;margin:10px 0'>" + toc.map((t) => "<div style='padding-left:" + ((t.level - 1) * 16) + "px'><a href='#" + t.id + "'>" + esc(t.text) + "</a></div>").join("") + "</nav>"; return; }
     let m;
-    if ((m = /^(#{1,3}) (.*)$/.exec(line))) { closeAll(); const h = m[1].length; html += "<h" + h + ">" + inline(m[2]) + "</h" + h + ">"; return; }
+    if ((m = /^(#{1,3}) (.*)$/.exec(line))) { closeAll(); const h = m[1].length; html += "<h" + h + " id='" + kbSlug(m[2]) + "'>" + inline(m[2]) + "</h" + h + ">"; return; }
     if (/^\s*\|/.test(line)) {
       if (/^[\s|:\-]+$/.test(line)) return;
       if (!inTable) { closeAll(); html += "<table>"; inTable = true; }
@@ -6578,7 +6598,7 @@ function kbMdToHtml(md) {
     if (!line.trim()) { closeAll(); return; }
     closeAll(); html += "<p>" + inline(line) + "</p>";
   });
-  if (inCode) html += "</pre>"; closeAll();
+  if (inCode) html += "</pre>"; closeAll(); if (panel) html += "</div>";
   return html;
 }
 function kbExportHTML(page, brandName) {
@@ -6605,6 +6625,62 @@ const kbIdb = {
   async byPage(pid) { const d = await this.db(); if (!d) return []; return new Promise((res, rej) => { const out = []; const rq = d.transaction("att").objectStore("att").index("pageId").openCursor(IDBKeyRange.only(pid)); rq.onsuccess = () => { const c = rq.result; if (c) { out.push(c.value); c.continue(); } else res(out); }; rq.onerror = () => rej(rq.error); }); },
   async del(id) { const d = await this.db(); if (!d) return false; return new Promise((res) => { const tx = d.transaction("att", "readwrite"); tx.objectStore("att").delete(id); tx.oncomplete = () => res(true); }); },
 };
+// wiki-links: [[Title]] → resolvable internal references
+function kbExtractLinks(content) {
+  const out = []; const re = /\[\[([^\]\n]+)\]\]/g; let m;
+  while ((m = re.exec(String(content || "")))) { const t = m[1].trim(); if (t.toUpperCase() !== "TOC" && !out.includes(t)) out.push(t); }
+  return out;
+}
+function kbResolveWikiLinks(text) { return String(text || "").replace(/\[\[([^\]\n]+)\]\]/g, (mm, t) => /^toc$/i.test(t.trim()) ? mm : "[" + t.trim() + "](#kb=" + encodeURIComponent(t.trim()) + ")"); }
+function kbBacklinks(pages, page) {
+  if (!page) return [];
+  const target = cpNorm(page.title || "");
+  return (pages || []).filter((p) => p.id !== page.id && kbExtractLinks(p.content).some((t) => cpNorm(t) === target));
+}
+function kbDescendants(pages, id) {
+  const out = []; const walk = (pid) => (pages || []).filter((p) => p.parentId === pid).forEach((k) => { out.push(k.id); walk(k.id); });
+  walk(id); return out;
+}
+function kbCanMove(pages, id, newParentId) {
+  if (!newParentId) return true;
+  if (newParentId === id) return false;
+  return !kbDescendants(pages, id).includes(newParentId);
+}
+function kbTitleFromMd(md, fallback) {
+  const m = /^#{1,3} (.+)$/m.exec(String(md || ""));
+  return (m ? m[1] : String(fallback || "").replace(/\.[^.]+$/, "")).trim() || "Importuotas puslapis";
+}
+function kbMergeBackup(current, incoming) {
+  const byId = {}; (current || []).forEach((p) => { byId[p.id] = p; });
+  let added = 0, updated = 0;
+  (incoming || []).forEach((p) => {
+    if (!p || !p.id) return;
+    const ex = byId[p.id];
+    if (!ex) { byId[p.id] = p; added++; }
+    else if ((p.updated || 0) > (ex.updated || 0)) { byId[p.id] = p; updated++; }
+  });
+  return { pages: Object.values(byId), added, updated };
+}
+function kbTaskStats(content) {
+  let open = 0, done = 0;
+  String(content || "").split("\n").forEach((l) => { const m = /^\s*[-*] \[( |x|X)\]/.exec(l); if (m) { if (m[1] === " ") open++; else done++; } });
+  return { open, done, total: open + done };
+}
+function kbAllTemplates(custom) { return KB_TEMPLATES.concat((custom || []).map((t) => ({ ...t, custom: true }))); }
+const KB_SLASH = [
+  { lt: "Užduočių sąrašas", en: "Task list", ic: "☐", snip: "\n- [ ] \n- [ ] \n" },
+  { lt: "Lentelė", en: "Table", ic: "⌗", snip: "\n| A | B | C |\n|---|---|---|\n|  |  |  |\n" },
+  { lt: "Info panelė", en: "Info panel", ic: "ℹ", snip: "\n::: info\n\n:::\n" },
+  { lt: "Įspėjimas", en: "Warning panel", ic: "⚠", snip: "\n::: warn\n\n:::\n" },
+  { lt: "Sėkmės panelė", en: "Success panel", ic: "✓", snip: "\n::: success\n\n:::\n" },
+  { lt: "Pastaba", en: "Note panel", ic: "✎", snip: "\n::: note\n\n:::\n" },
+  { lt: "Turinys (TOC)", en: "Table of contents", ic: "≡", snip: "\n[[TOC]]\n" },
+  { lt: "Vidinė nuoroda", en: "Wiki link", ic: "🔗", snip: "[[Puslapio pavadinimas]]" },
+  { lt: "Citata", en: "Quote", ic: "❝", snip: "\n> \n" },
+  { lt: "Kodas", en: "Code block", ic: "</>", snip: "\n```\n\n```\n" },
+  { lt: "Data", en: "Today's date", ic: "🗓", snip: "" },
+  { lt: "Skirtukas", en: "Divider", ic: "―", snip: "\n---\n" },
+];
 
 const OFFICIAL_SOURCES = [
   { id: "VA-49", lt: "VMI prie FM viršininko 2015-07-21 įsakymas Nr. VA-49 „Dėl Standartinės apskaitos duomenų rinkmenos techninės specifikacijos ir techninių reikalavimų aprašo patvirtinimo“ (suvestinė redakcija)", en: "Order No. VA-49 of the Head of the STI under the MoF (21 Jul 2015) approving the SAF-T technical specification and technical requirements (consolidated)", url: "https://www.vmi.lt/evmi/saf-t" },
@@ -12027,17 +12103,18 @@ function EInvoiceStudio({ lang, fileData, setToast, audit }) {
 // ── Knowledge Bank: Confluence-style wiki (pages · templates · tasks · files) ──
 function KnowledgeBank({ lang, setToast, audit }) {
   const LINE = "rgba(255,255,255,0.12)";
+  const KB_STATUS = { draft: [lang === "lt" ? "Juodraštis" : "Draft", "#8c8c88"], review: [lang === "lt" ? "Peržiūrima" : "In review", "#ffd43b"], approved: [lang === "lt" ? "Patvirtinta" : "Approved", "#69db7c"] };
   const seed = () => {
     const w = kbNewPage({ title: lang === "lt" ? "Žinių bankas — pradžia" : "Knowledge Bank — start", template: "blank", author: "TaxAI" });
     w.icon = "▤";
     w.content = (lang === "lt"
-      ? "# Sveiki atvykę į Žinių banką\n\nČia jūsų komandos vidinė viki — viskas saugoma **šioje naršyklėje** (puslapiai — localStorage, failai — IndexedDB).\n\n## Ką galite daryti\n- Kurti puslapius su **šablonais** (ataskaitos, kursai, SOP, susitikimai)\n- Statyti medį — kiekvienas puslapis gali turėti vaikų (kursas → moduliai)\n- Prisegti **failus ir knygas** (📎), žymėti etiketėmis, žvaigždute\n- Rašyti komentarus, grįžti į ankstesnes **versijas**\n- Sekti užduotis — kiekvienas `- [ ]` tampa interaktyviu langeliu\n\n## Pabandykite dabar\n- [ ] Sukurti pirmą puslapį iš šablono (+)\n- [ ] Prisegti failą\n- [ ] Pažymėti šią užduotį atlikta"
-      : "# Welcome to the Knowledge Bank\n\nYour team wiki — everything stays **in this browser** (pages in localStorage, files in IndexedDB).\n\n## What you can do\n- Create pages from **templates** (reports, courses, SOPs, meetings)\n- Build a tree — every page can have children (course → modules)\n- Attach **files and books** (📎), add labels, star favourites\n- Comment, and restore earlier **versions**\n- Track tasks — every `- [ ]` becomes an interactive checkbox\n\n## Try it now\n- [ ] Create your first page from a template (+)\n- [ ] Attach a file\n- [ ] Tick this task");
+      ? "# Sveiki atvykę į Žinių banką\n\n[[TOC]]\n\nViskas saugoma **šioje naršyklėje** (puslapiai — localStorage, failai — IndexedDB).\n\n## Galimybės\n- Šablonai (ataskaitos, kursai, SOP), medis su vaikais, etiketės, ★, komentarai, versijos\n- Vidinės nuorodos: [[PVM 2026 atmintinė]] — spustelėkite!\n- Rašydami spauskite **/** eilutės pradžioje — greitasis meniu\n\n::: info\nPanelės: ::: info / warn / success / note — kaip Confluence makrokomandos.\n:::\n\n## Pabandykite\n- [ ] Sukurti puslapį iš šablono (+)\n- [ ] Įterpti panelę per /\n- [ ] Pažymėti šią užduotį"
+      : "# Welcome to the Knowledge Bank\n\n[[TOC]]\n\nEverything stays **in this browser** (pages in localStorage, files in IndexedDB).\n\n## Features\n- Templates (reports, courses, SOPs), page tree, labels, ★, comments, versions\n- Wiki links: [[PVM 2026 atmintinė]] — click it!\n- Press **/** at a line start while editing — quick insert menu\n\n::: info\nPanels: ::: info / warn / success / note — Confluence-style macros.\n:::\n\n## Try it\n- [ ] Create a page from a template (+)\n- [ ] Insert a panel via /\n- [ ] Tick this task");
     const v = kbNewPage({ title: "PVM 2026 atmintinė", template: "vat-memo", author: "TaxAI" });
     return [w, v];
   };
   const [pages, setPages] = useState(() => { try { const raw = localStorage.getItem("taxai_kb_pages"); if (raw) { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) return p; } } catch (e) {} return seed(); });
-  const [sel, setSel] = useState(() => null);
+  const [sel, setSel] = useState(null);
   const [tab, setTab] = useState("pages");
   const [mode, setMode] = useState("view");
   const [draft, setDraft] = useState({ title: "", content: "" });
@@ -12045,39 +12122,76 @@ function KnowledgeBank({ lang, setToast, audit }) {
   const [creating, setCreating] = useState(null);
   const [newTitle, setNewTitle] = useState("");
   const [newTpl, setNewTpl] = useState("blank");
+  const [customTpls, setCustomTpls] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_kb_templates") || "[]"); } catch (e) { return []; } });
   const [labelIn, setLabelIn] = useState("");
   const [commentIn, setCommentIn] = useState("");
   const [showHist, setShowHist] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_kb_collapsed") || "[]"); } catch (e) { return []; } });
   const [atts, setAtts] = useState([]);
   const [todos, setTodos] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_kb_todos") || "[]"); } catch (e) { return []; } });
   const [todoIn, setTodoIn] = useState("");
   const [user, setUser] = useState(() => { try { return localStorage.getItem("taxai_kb_user") || ""; } catch (e) { return ""; } });
   const taRef = useRef(null);
+  const viewRef = useRef(null);
   useEffect(() => { try { localStorage.setItem("taxai_kb_pages", JSON.stringify(pages)); } catch (e) {} }, [pages]);
   useEffect(() => { try { localStorage.setItem("taxai_kb_todos", JSON.stringify(todos)); } catch (e) {} }, [todos]);
   useEffect(() => { try { localStorage.setItem("taxai_kb_user", user); } catch (e) {} }, [user]);
+  useEffect(() => { try { localStorage.setItem("taxai_kb_templates", JSON.stringify(customTpls)); } catch (e) {} }, [customTpls]);
+  useEffect(() => { try { localStorage.setItem("taxai_kb_collapsed", JSON.stringify(collapsed)); } catch (e) {} }, [collapsed]);
   const page = pages.find((p) => p.id === sel) || pages[0] || null;
-  useEffect(() => { let dead = false; setAtts([]); if (page) kbIdb.byPage(page.id).then((a) => { if (!dead) setAtts(a); }).catch(() => {}); return () => { dead = true; }; }, [sel, pages.length]);
+  useEffect(() => { let dead = false; setAtts([]); if (page) kbIdb.byPage(page.id).then((x) => { if (!dead) setAtts(x); }).catch(() => {}); return () => { dead = true; }; }, [sel, pages.length]);
+  const dirty = mode === "edit" && page && (draft.content !== page.content || draft.title !== page.title);
+  const goPage = (id) => { if (dirty && !window.confirm(lang === "lt" ? "Yra neišsaugotų pakeitimų. Tęsti be išsaugojimo?" : "Unsaved changes. Continue without saving?")) return; setSel(id); setMode("view"); setTab("pages"); setShowHist(false); setMoving(false); };
   const upd = (id, fn, hist) => setPages((ps) => ps.map((p) => { if (p.id !== id) return p; const c = { ...p }; if (hist) kbPushHistory(c); fn(c); c.updated = Date.now(); return c; }));
-  const kids = (pid) => pages.filter((p) => p.parentId === pid).sort((a, b) => a.created - b.created);
-  const crumbs = (p) => { const out = []; let cur = p; let guard = 0; while (cur && guard++ < 12) { out.unshift(cur); cur = pages.find((x) => x.id === cur.parentId); } return out; };
+  const kids = (pid) => pages.filter((p) => p.parentId === pid).sort((x, y) => x.created - y.created);
+  const crumbs = (p) => { const out = []; let cur = p, g = 0; while (cur && g++ < 12) { out.unshift(cur); cur = pages.find((x) => x.id === cur.parentId); } return out; };
   const startEdit = () => { if (!page) return; setDraft({ title: page.title, content: page.content }); setMode("edit"); };
   const save = () => { if (!page) return; upd(page.id, (c) => { c.title = draft.title || c.title; c.content = draft.content; if (user) c.author = c.author || user; }, true); setMode("view"); setToast && setToast(lang === "lt" ? "Išsaugota" : "Saved"); audit && audit.log("KB_SAVE", draft.title); };
-  const create = () => { const np = kbNewPage({ title: newTitle.trim(), parentId: creating && creating.parentId, template: newTpl, author: user }); setPages((ps) => [...ps, np]); setSel(np.id); setCreating(null); setNewTitle(""); setMode("edit"); setDraft({ title: np.title, content: np.content }); setTab("pages"); audit && audit.log("KB_CREATE", np.title + " (" + newTpl + ")"); };
-  const removePage = () => { if (!page) return; const ids = []; const walk = (pid) => { ids.push(pid); kids(pid).forEach((k) => walk(k.id)); }; walk(page.id); if (!window.confirm((lang === "lt" ? "Ištrinti puslapį" : "Delete page") + ' "' + page.title + '"' + (ids.length > 1 ? " (+" + (ids.length - 1) + (lang === "lt" ? " vaikai" : " children") + ")" : "") + "?")) return; ids.forEach((pid) => { kbIdb.byPage(pid).then((a) => a.forEach((x) => kbIdb.del(x.id))).catch(() => {}); }); setPages((ps) => ps.filter((p) => !ids.includes(p.id))); setSel(null); };
-  const dl = (name, content, type) => { const b = new Blob([content], { type: type || "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
-  const onAttach = (e) => { const fs2 = Array.from(e.target.files || []); fs2.forEach((f) => { const rec = { id: kbUid() + "_a", pageId: page.id, name: f.name, type: f.type, size: f.size, blob: f, ts: Date.now() }; kbIdb.put(rec).then((ok) => { if (ok) setAtts((a) => [...a, rec]); else setToast && setToast("IndexedDB unavailable"); }).catch(() => setToast && setToast("Attach failed")); }); e.target.value = ""; audit && audit.log("KB_ATTACH", fs2.map((f) => f.name).join(", ")); };
-  const openAtt = (a) => { const u = URL.createObjectURL(a.blob); const el = document.createElement("a"); el.href = u; el.download = a.name; el.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
-  const insertMd = (before, after) => { const ta = taRef.current; if (!ta) { setDraft((d) => ({ ...d, content: d.content + "\n" + before + (after || "") })); return; } const s = ta.selectionStart, e = ta.selectionEnd, v = draft.content; const selTxt = v.slice(s, e); setDraft((d) => ({ ...d, content: v.slice(0, s) + before + selTxt + (after || "") + v.slice(e) })); setTimeout(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = s + before.length + selTxt.length + (after || "").length; }, 0); };
+  const create = () => { const all = kbAllTemplates(customTpls); const tt = all.find((x) => x.id === newTpl); const np = kbNewPage({ title: newTitle.trim(), parentId: creating && creating.parentId, template: tt && !tt.custom ? newTpl : "blank", author: user }); if (tt && tt.custom) { np.content = tt.content; np.icon = tt.icon; if (!newTitle.trim()) np.title = tt.lt; } setPages((ps) => [...ps, np]); setSel(np.id); setCreating(null); setNewTitle(""); setMode("edit"); setDraft({ title: np.title, content: np.content }); setTab("pages"); audit && audit.log("KB_CREATE", np.title); };
+  const removePage = () => { if (!page) return; const ids = [page.id].concat(kbDescendants(pages, page.id)); if (!window.confirm((lang === "lt" ? "Ištrinti puslapį" : "Delete page") + " „" + page.title + "“" + (ids.length > 1 ? " (+" + (ids.length - 1) + ")" : "") + "?")) return; ids.forEach((pid) => { kbIdb.byPage(pid).then((x) => x.forEach((y) => kbIdb.del(y.id))).catch(() => {}); }); setPages((ps) => ps.filter((p) => !ids.includes(p.id))); setSel(null); };
+  const dl = (name, content, type) => { const bl = new Blob([content], { type: type || "text/plain" }); const u = URL.createObjectURL(bl); const el = document.createElement("a"); el.href = u; el.download = name; el.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
+  const onAttach = (e) => { const fs2 = Array.from(e.target.files || []); fs2.forEach((f) => { const rec = { id: kbUid() + "_a", pageId: page.id, name: f.name, type: f.type, size: f.size, blob: f, ts: Date.now() }; kbIdb.put(rec).then((ok) => { if (ok) setAtts((x) => [...x, rec]); else setToast && setToast("IndexedDB unavailable"); }).catch(() => setToast && setToast("Attach failed")); }); e.target.value = ""; };
+  const openAtt = (x) => { const u = URL.createObjectURL(x.blob); const el = document.createElement("a"); el.href = u; el.download = x.name; el.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); };
+  const insertMd = (before, after) => { const ta = taRef.current; if (!ta) { setDraft((d) => ({ ...d, content: d.content + before + (after || "") })); return; } const s = ta.selectionStart, e = ta.selectionEnd, v = draft.content; const st = v.slice(s, e); setDraft((d) => ({ ...d, content: v.slice(0, s) + before + st + (after || "") + v.slice(e) })); setTimeout(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = s + before.length + st.length + (after || "").length; }, 0); };
   const toggleTaskOnPage = (pid, idx) => upd(pid, (c) => { c.content = kbToggleTask(c.content, idx); }, false);
-  const renderView = (p) => {
-    const out = []; let buf = []; let idx = 0;
-    const flush = () => { if (buf.length) { out.push(<Md key={"m" + out.length} text={buf.join("\n")} />); buf = []; } };
-    String(p.content || "").split("\n").forEach((line) => {
+  const wikiClick = (e) => {
+    const aEl = e.target && e.target.closest ? e.target.closest("a") : null;
+    const href = aEl && aEl.getAttribute("href");
+    if (!href || href.indexOf("#kb=") !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const title = decodeURIComponent(href.slice(4));
+    const hit = pages.find((p) => cpNorm(p.title) === cpNorm(title));
+    if (hit) goPage(hit.id);
+    else if (window.confirm((lang === "lt" ? "Puslapio nėra. Sukurti" : "Page not found. Create") + " „" + title + "“?")) { const np = kbNewPage({ title, template: "blank", author: user }); setPages((ps) => [...ps, np]); goPage(np.id); }
+  };
+  const scrollToHeading = (text) => { const root = viewRef.current; if (!root) return; const el = Array.prototype.slice.call(root.querySelectorAll("h1,h2,h3")).find((h) => h.textContent.trim() === text); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  const renderLines = (lines, baseKey, pid, ctr) => {
+    const out = []; let buf = [];
+    const flush = () => { if (buf.length) { out.push(<div key={baseKey + "m" + out.length}><Md text={kbResolveWikiLinks(buf.join("\n"))} /></div>); buf = []; } };
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      const pm = /^:::\s*(info|warn|success|note)\s*$/.exec(line.trim());
+      if (pm) {
+        flush(); const inner = []; li++;
+        while (li < lines.length && !/^:::\s*$/.test(lines[li].trim())) { inner.push(lines[li]); li++; }
+        const [c, ic] = KB_PANELS[pm[1]];
+        out.push(<div key={baseKey + "p" + out.length} style={{ border: `1px solid ${LINE}`, borderLeft: `3px solid ${c}`, background: "rgba(255,255,255,0.03)", padding: "10px 16px", margin: "10px 0" }}><span style={{ color: c, fontFamily: "var(--m)", fontSize: 11, marginRight: 8 }}>{ic}</span>{renderLines(inner, baseKey + "p" + out.length + "_", pid, ctr)}</div>);
+        continue;
+      }
+      if (/^\s*\[\[TOC\]\]\s*$/i.test(line)) {
+        flush(); const toc = kbToc(page.content);
+        out.push(<div key={baseKey + "toc" + out.length} style={{ border: `1px solid ${LINE}`, padding: "10px 16px", margin: "10px 0" }}>
+          <div style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 6 }}>{lang === "lt" ? "Turinys" : "Contents"}</div>
+          {toc.map((tt, k) => <div key={k} style={{ paddingLeft: (tt.level - 1) * 14 }}><span onClick={() => scrollToHeading(tt.text)} style={{ cursor: "pointer", color: "#7cc4ff", fontFamily: "var(--s)", fontSize: 12.5 }}>{tt.text}</span></div>)}
+        </div>);
+        continue;
+      }
       const m = /^\s*[-*] \[( |x|X)\] (.*)$/.exec(line);
-      if (m) { flush(); const i = idx++; const done = m[1] !== " "; out.push(<label key={"t" + i} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "3px 0", cursor: "pointer", fontFamily: "var(--s)", fontSize: 14, color: done ? "#7a7a76" : "#e8e8e4", textDecoration: done ? "line-through" : "none" }}><input type="checkbox" checked={done} onChange={() => toggleTaskOnPage(p.id, i)} style={{ accentColor: "#7cc4ff" }} />{m[2]}</label>); }
-      else buf.push(line);
-    });
+      if (m) { flush(); const i = ctr.i++; const done = m[1] !== " "; out.push(<label key={baseKey + "t" + i} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "3px 0", cursor: "pointer", fontFamily: "var(--s)", fontSize: 14, color: done ? "#7a7a76" : "#e8e8e4", textDecoration: done ? "line-through" : "none" }}><input type="checkbox" checked={done} onChange={() => toggleTaskOnPage(pid, i)} style={{ accentColor: "#7cc4ff" }} /><span onClickCapture={wikiClick}><Md text={kbResolveWikiLinks(m[2])} /></span></label>); continue; }
+      buf.push(line);
+    }
     flush();
     return out;
   };
@@ -12086,48 +12200,99 @@ function KnowledgeBank({ lang, setToast, audit }) {
   const inp = { background: "#000", border: `1px solid ${LINE}`, color: "#fff", fontFamily: "var(--s)", fontSize: 13, padding: "8px 11px", outline: "none" };
   const tasks = kbCollectTasks(pages);
   const results = q.trim() ? kbSearch(pages, q) : null;
-  const Row = ({ p, depth }) => <div>
-    <div onClick={() => { setSel(p.id); setMode("view"); setTab("pages"); }} style={{ display: "flex", gap: 7, alignItems: "center", padding: "6px 10px", paddingLeft: 10 + depth * 14, cursor: "pointer", background: page && page.id === p.id && tab === "pages" ? "var(--bg2)" : "transparent", borderLeft: page && page.id === p.id && tab === "pages" ? "2px solid #7cc4ff" : "2px solid transparent" }}
-      onMouseEnter={(e) => { if (!(page && page.id === p.id)) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }} onMouseLeave={(e) => { if (!(page && page.id === p.id && tab === "pages")) e.currentTarget.style.background = "transparent"; }}>
-      <span style={{ fontSize: 12 }}>{p.icon || "▢"}</span>
-      <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
-      {p.fav && <span style={{ fontSize: 10, color: "#ffd43b" }}>★</span>}
-      <span title={lang === "lt" ? "Naujas vaiko puslapis" : "New child page"} onClick={(e) => { e.stopPropagation(); setCreating({ parentId: p.id }); setNewTpl("blank"); setNewTitle(""); }} style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", padding: "0 3px" }}>+</span>
-    </div>
-    {kids(p.id).map((k) => <Row key={k.id} p={k} depth={depth + 1} />)}
-  </div>;
+  const stats = page ? kbTaskStats(page.content) : { open: 0, done: 0, total: 0 };
+  const backlinks = page ? kbBacklinks(pages, page) : [];
+  const flatRow = (p) => <div key={p.id} onClick={() => goPage(p.id)} style={{ display: "flex", gap: 7, alignItems: "center", padding: "4px 14px", cursor: "pointer", fontFamily: "var(--s)", fontSize: 12, color: "#bcbcb8" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}><span style={{ fontSize: 11 }}>{p.icon || "▢"}</span><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span></div>;
+  const Row = ({ p, depth }) => {
+    const ch = kids(p.id); const isCol = collapsed.includes(p.id); const ts2 = kbTaskStats(p.content);
+    const active = page && page.id === p.id && tab === "pages";
+    return <div>
+      <div onClick={() => goPage(p.id)} style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 10px", paddingLeft: 8 + depth * 13, cursor: "pointer", background: active ? "var(--bg2)" : "transparent", borderLeft: active ? "2px solid #7cc4ff" : "2px solid transparent" }}
+        onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }} onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}>
+        <span onClick={(e) => { e.stopPropagation(); if (ch.length) setCollapsed((c) => c.includes(p.id) ? c.filter((x) => x !== p.id) : [...c, p.id]); }} style={{ width: 12, fontFamily: "var(--m)", fontSize: 9, color: "#666", cursor: ch.length ? "pointer" : "default" }}>{ch.length ? (isCol ? "▸" : "▾") : ""}</span>
+        <span style={{ fontSize: 12 }}>{p.icon || "▢"}</span>
+        <span style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+        {p.status && KB_STATUS[p.status] && <span title={KB_STATUS[p.status][0]} style={{ width: 7, height: 7, borderRadius: "50%", background: KB_STATUS[p.status][1] }} />}
+        {ts2.open > 0 && <span style={{ fontFamily: "var(--m)", fontSize: 8.5, color: "#7cc4ff" }}>{ts2.open}☐</span>}
+        {p.fav && <span style={{ fontSize: 10, color: "#ffd43b" }}>★</span>}
+        <span title={lang === "lt" ? "Naujas vaiko puslapis" : "New child page"} onClick={(e) => { e.stopPropagation(); setCreating({ parentId: p.id }); setNewTpl("blank"); setNewTitle(""); }} style={{ fontFamily: "var(--m)", fontSize: 11, color: "#8c8c88", padding: "0 3px" }}>+</span>
+      </div>
+      {!isCol && ch.map((k) => <Row key={k.id} p={k} depth={depth + 1} />)}
+    </div>;
+  };
+  const onBackup = () => dl("taxai-kb-backup.json", JSON.stringify({ exportedAt: new Date().toISOString(), pages, todos }, null, 2), "application/json");
+  const onImport = (e) => {
+    Array.from(e.target.files || []).forEach((f) => {
+      const r = new FileReader();
+      r.onload = (ev) => {
+        const txt = String(ev.target.result || "");
+        try {
+          if (/\.json$/i.test(f.name)) {
+            const data = JSON.parse(txt);
+            const res = kbMergeBackup(pages, (data && data.pages) || []);
+            setPages(res.pages);
+            if (data && Array.isArray(data.todos)) setTodos((t0) => kbMergeBackup(t0.map(x => ({...x, updated: 0})), data.todos.map(x => ({...x, updated: 1}))).pages);
+            setToast && setToast((lang === "lt" ? "Importuota: +" : "Imported: +") + res.added + " · ↻" + res.updated);
+          } else {
+            const np = kbNewPage({ title: kbTitleFromMd(txt, f.name), template: "blank", author: user, content: txt });
+            setPages((ps) => [...ps, np]); goPage(np.id);
+          }
+        } catch (err) { setToast && setToast("Import: " + String(err && err.message || err).slice(0, 90)); }
+      };
+      r.readAsText(f);
+    });
+    e.target.value = "";
+  };
+  const onTaKey = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+    if (e.key === "Escape") { e.preventDefault(); if (slashOpen) setSlashOpen(false); else setMode("view"); return; }
+    if (e.key === "/") { const ta = e.currentTarget; const v = ta.value, s = ta.selectionStart; if (s === 0 || v[s - 1] === "\n") { e.preventDefault(); setSlashOpen(true); } }
+  };
   return <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-    <div style={{ width: 264, flexShrink: 0, borderRight: `1px solid ${LINE}`, display: "flex", flexDirection: "column", background: "rgba(255,255,255,0.015)" }}>
+    <div style={{ width: 272, flexShrink: 0, borderRight: `1px solid ${LINE}`, display: "flex", flexDirection: "column", background: "rgba(255,255,255,0.015)" }}>
       <div style={{ padding: "16px 14px 10px" }}>
         <div style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".18em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 10 }}>▤ {lang === "lt" ? "Žinių bankas" : "Knowledge Bank"}</div>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={lang === "lt" ? "Ieškoti…" : "Search…"} style={{ ...inp, width: "100%", boxSizing: "border-box", fontSize: 12, padding: "7px 10px" }} />
       </div>
-      <div onClick={() => setTab("tasks")} style={{ display: "flex", gap: 8, alignItems: "center", padding: "7px 14px", cursor: "pointer", background: tab === "tasks" ? "var(--bg2)" : "transparent", borderLeft: tab === "tasks" ? "2px solid #69db7c" : "2px solid transparent", fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4" }}>✓ {lang === "lt" ? "Užduotys" : "Tasks"} <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{tasks.filter((t) => !t.done).length + todos.filter((t) => !t.done).length}</span></div>
-      <div style={{ display: "flex", alignItems: "center", padding: "10px 14px 4px" }}>
-        <span style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#666", textTransform: "uppercase" }}>{lang === "lt" ? "Puslapiai" : "Pages"}</span>
-        <button onClick={() => { setCreating({ parentId: null }); setNewTpl("blank"); setNewTitle(""); }} style={{ ...btn, marginLeft: "auto", padding: "3px 9px" }}>+</button>
-      </div>
+      <div onClick={() => { if (!dirty || window.confirm(lang === "lt" ? "Yra neišsaugotų pakeitimų. Tęsti?" : "Unsaved changes. Continue?")) { setTab("tasks"); setMode("view"); } }} style={{ display: "flex", gap: 8, alignItems: "center", padding: "7px 14px", cursor: "pointer", background: tab === "tasks" ? "var(--bg2)" : "transparent", borderLeft: tab === "tasks" ? "2px solid #69db7c" : "2px solid transparent", fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4" }}>✓ {lang === "lt" ? "Užduotys" : "Tasks"} <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{tasks.filter((t) => !t.done).length + todos.filter((t) => !t.done).length}</span></div>
       <div style={{ flex: 1, overflowY: "auto", paddingBottom: 10 }}>
         {results ? <div style={{ padding: "4px 0" }}>
           {results.length === 0 && <div style={{ padding: "8px 14px", color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12 }}>{lang === "lt" ? "Nieko nerasta." : "No matches."}</div>}
-          {results.map((r) => <div key={r.page.id} onClick={() => { setSel(r.page.id); setMode("view"); setTab("pages"); }} style={{ padding: "7px 14px", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+          {results.map((r) => <div key={r.page.id} onClick={() => goPage(r.page.id)} style={{ padding: "7px 14px", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
             <div style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#fff" }}>{r.page.icon} {r.page.title}</div>
             <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88" }}>{r.hits} {lang === "lt" ? "atitikmenys" : "matches"}{r.inTitle ? " · " + (lang === "lt" ? "pavadinime" : "in title") : ""}</div>
           </div>)}
-        </div> : kids(null).map((p) => <Row key={p.id} p={p} depth={0} />)}
+        </div> : <>
+          {pages.some((p) => p.fav) && <>
+            <div style={{ padding: "8px 14px 2px", fontFamily: "var(--m)", fontSize: 9, letterSpacing: ".14em", color: "#666", textTransform: "uppercase" }}>★ {lang === "lt" ? "Mėgstami" : "Favourites"}</div>
+            {pages.filter((p) => p.fav).slice(0, 8).map(flatRow)}
+          </>}
+          <div style={{ padding: "8px 14px 2px", fontFamily: "var(--m)", fontSize: 9, letterSpacing: ".14em", color: "#666", textTransform: "uppercase" }}>🕐 {lang === "lt" ? "Naujausi" : "Recent"}</div>
+          {pages.slice().sort((x, y) => y.updated - x.updated).slice(0, 4).map(flatRow)}
+          <div style={{ display: "flex", alignItems: "center", padding: "10px 14px 4px" }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 9, letterSpacing: ".14em", color: "#666", textTransform: "uppercase" }}>{lang === "lt" ? "Puslapiai" : "Pages"}</span>
+            <button onClick={() => { setCreating({ parentId: null }); setNewTpl("blank"); setNewTitle(""); }} style={{ ...btn, marginLeft: "auto", padding: "3px 9px" }}>+</button>
+          </div>
+          {kids(null).map((p) => <Row key={p.id} p={p} depth={0} />)}
+        </>}
       </div>
-      <div style={{ padding: "10px 14px", borderTop: `1px solid ${LINE}` }}>
+      <div style={{ padding: "10px 14px", borderTop: `1px solid ${LINE}`, display: "flex", flexDirection: "column", gap: 8 }}>
         <input value={user} onChange={(e) => setUser(e.target.value)} placeholder={lang === "lt" ? "Jūsų vardas (autorius)" : "Your name (author)"} style={{ ...inp, width: "100%", boxSizing: "border-box", fontSize: 11.5, padding: "6px 9px" }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onBackup} style={{ ...btn, flex: 1, padding: "5px 8px", fontSize: 9 }}>⤓ {lang === "lt" ? "Atsarginė" : "Backup"}</button>
+          <label style={{ ...btn, flex: 1, padding: "5px 8px", fontSize: 9, textAlign: "center" }}>⤒ {lang === "lt" ? "Importas" : "Import"}<input type="file" multiple accept=".json,.md,.markdown,.txt" onChange={onImport} style={{ display: "none" }} /></label>
+        </div>
       </div>
     </div>
     <div style={{ flex: 1, overflowY: "auto", padding: "22px 34px 60px" }}>
-      {creating && <div style={{ border: `1px solid ${LINE}`, background: "var(--bg2)", padding: 18, marginBottom: 22, maxWidth: 760 }}>
+      {creating && <div style={{ border: `1px solid ${LINE}`, background: "var(--bg2)", padding: 18, marginBottom: 22, maxWidth: 780 }}>
         <div style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 10 }}>{lang === "lt" ? "Naujas puslapis" : "New page"}{creating.parentId ? " · " + (lang === "lt" ? "vaikas" : "child of") + " „" + ((pages.find((x) => x.id === creating.parentId) || {}).title || "") + "“" : ""}</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") create(); }} placeholder={lang === "lt" ? "Pavadinimas" : "Title"} style={{ ...inp, flex: "1 1 220px" }} />
           <select value={newTpl} onChange={(e) => setNewTpl(e.target.value)} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11.5 }}>
-            {KB_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.icon} {lang === "lt" ? t.lt : t.en}</option>)}
+            {kbAllTemplates(customTpls).map((t) => <option key={t.id} value={t.id}>{t.icon} {lang === "lt" ? t.lt : t.en}{t.custom ? " ·" : ""}</option>)}
           </select>
+          {(kbAllTemplates(customTpls).find((t) => t.id === newTpl) || {}).custom && <button onClick={() => { setCustomTpls((c) => c.filter((t) => t.id !== newTpl)); setNewTpl("blank"); }} style={{ ...btn, color: "#ff8a8a" }}>✕</button>}
           <button onClick={create} style={btnS}>{lang === "lt" ? "Sukurti" : "Create"}</button>
           <button onClick={() => setCreating(null)} style={btn}>{lang === "lt" ? "Atšaukti" : "Cancel"}</button>
         </div>
@@ -12135,9 +12300,7 @@ function KnowledgeBank({ lang, setToast, audit }) {
       {tab === "tasks" ? <div style={{ maxWidth: 820 }}>
         <h2 style={{ fontFamily: "var(--f)", fontWeight: 300, fontSize: 30, color: "#fff", margin: "0 0 6px" }}>✓ {lang === "lt" ? "Užduotys" : "Tasks"}</h2>
         <div style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#8c8c88", marginBottom: 20 }}>{lang === "lt" ? "Surinkta iš visų puslapių langelių + greitosios užduotys." : "Aggregated from every page's checkboxes + quick todos."}</div>
-        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-          <input value={todoIn} onChange={(e) => setTodoIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && todoIn.trim()) { setTodos((t) => [...t, { id: kbUid(), text: todoIn.trim(), done: false }]); setTodoIn(""); } }} placeholder={lang === "lt" ? "Greita užduotis… (Enter)" : "Quick todo… (Enter)"} style={{ ...inp, flex: 1, maxWidth: 460 }} />
-        </div>
+        <input value={todoIn} onChange={(e) => setTodoIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && todoIn.trim()) { setTodos((t) => [...t, { id: kbUid(), text: todoIn.trim(), done: false }]); setTodoIn(""); } }} placeholder={lang === "lt" ? "Greita užduotis… (Enter)" : "Quick todo… (Enter)"} style={{ ...inp, width: "100%", maxWidth: 460, boxSizing: "border-box", marginBottom: 14 }} />
         {todos.map((t) => <div key={t.id} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "4px 0" }}>
           <input type="checkbox" checked={t.done} onChange={() => setTodos((ts) => ts.map((x) => x.id === t.id ? { ...x, done: !x.done } : x))} style={{ accentColor: "#69db7c" }} />
           <span style={{ fontFamily: "var(--s)", fontSize: 13.5, color: t.done ? "#7a7a76" : "#e8e8e4", textDecoration: t.done ? "line-through" : "none", flex: 1 }}>{t.text}</span>
@@ -12147,31 +12310,45 @@ function KnowledgeBank({ lang, setToast, audit }) {
         {tasks.map((t, i) => <div key={i} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "4px 0" }}>
           <input type="checkbox" checked={t.done} onChange={() => toggleTaskOnPage(t.pageId, t.idx)} style={{ accentColor: "#7cc4ff" }} />
           <span style={{ fontFamily: "var(--s)", fontSize: 13.5, color: t.done ? "#7a7a76" : "#e8e8e4", textDecoration: t.done ? "line-through" : "none", flex: 1 }}>{t.text}</span>
-          <span onClick={() => { setSel(t.pageId); setTab("pages"); setMode("view"); }} style={{ cursor: "pointer", color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 10.5 }}>{t.pageTitle} →</span>
+          <span onClick={() => goPage(t.pageId)} style={{ cursor: "pointer", color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 10.5 }}>{t.pageTitle} →</span>
         </div>)}
       </div>
       : !page ? <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? "Pasirinkite arba sukurkite puslapį." : "Select or create a page."}</div>
-      : <div style={{ maxWidth: 900 }}>
-        <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", marginBottom: 10 }}>{crumbs(page).map((c, i, arr) => <span key={c.id}><span onClick={() => setSel(c.id)} style={{ cursor: "pointer", color: i === arr.length - 1 ? "#d2d2ce" : "#8c8c88" }}>{c.title}</span>{i < arr.length - 1 ? "  /  " : ""}</span>)}</div>
+      : <div style={{ maxWidth: 920 }}>
+        <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", marginBottom: 10 }}>{crumbs(page).map((c, i, arr) => <span key={c.id}><span onClick={() => goPage(c.id)} style={{ cursor: "pointer", color: i === arr.length - 1 ? "#d2d2ce" : "#8c8c88" }}>{c.title}</span>{i < arr.length - 1 ? "  /  " : ""}</span>)}</div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
           {mode === "edit"
-            ? <input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} style={{ ...inp, fontFamily: "var(--f)", fontSize: 26, fontWeight: 300, flex: "1 1 300px" }} />
+            ? <input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); } }} style={{ ...inp, fontFamily: "var(--f)", fontSize: 26, fontWeight: 300, flex: "1 1 300px" }} />
             : <h2 style={{ fontFamily: "var(--f)", fontWeight: 300, fontSize: 32, color: "#fff", margin: 0, flex: "1 1 300px" }}>{page.icon} {page.title}</h2>}
-          <span onClick={() => upd(page.id, (c) => { c.fav = !c.fav; }, false)} title={lang === "lt" ? "Mėgstamas" : "Favourite"} style={{ cursor: "pointer", fontSize: 17, color: page.fav ? "#ffd43b" : "#555" }}>★</span>
+          <span onClick={() => upd(page.id, (c) => { const order = [undefined, "draft", "review", "approved"]; c.status = order[(order.indexOf(c.status) + 1) % order.length]; }, false)} title={lang === "lt" ? "Būsena (spustelėkite)" : "Status (click)"} style={{ cursor: "pointer", fontFamily: "var(--m)", fontSize: 9.5, padding: "3px 10px", border: `1px solid ${page.status && KB_STATUS[page.status] ? KB_STATUS[page.status][1] : LINE}`, color: page.status && KB_STATUS[page.status] ? KB_STATUS[page.status][1] : "#666", letterSpacing: ".08em" }}>{page.status && KB_STATUS[page.status] ? KB_STATUS[page.status][0] : "—"}</span>
+          <span onClick={() => upd(page.id, (c) => { c.fav = !c.fav; }, false)} style={{ cursor: "pointer", fontSize: 17, color: page.fav ? "#ffd43b" : "#555" }}>★</span>
           {mode === "view" ? <button onClick={startEdit} style={btnS}>{lang === "lt" ? "Redaguoti" : "Edit"}</button>
-            : <><button onClick={save} style={btnS}>{lang === "lt" ? "Išsaugoti" : "Save"}</button><button onClick={() => setMode("view")} style={btn}>{lang === "lt" ? "Atšaukti" : "Cancel"}</button></>}
+            : <><button onClick={save} style={btnS}>{lang === "lt" ? "Išsaugoti" : "Save"} ⌃S</button><button onClick={() => setMode("view")} style={btn}>Esc</button></>}
         </div>
+        {stats.total > 0 && <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, maxWidth: 360 }}>
+          <div style={{ flex: 1, height: 4, background: "rgba(255,255,255,0.08)" }}><div style={{ width: (100 * stats.done / stats.total) + "%", height: "100%", background: "#69db7c", transition: "width .3s" }} /></div>
+          <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88" }}>{stats.done}/{stats.total}</span>
+        </div>}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
           <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666" }}>{new Date(page.updated).toISOString().slice(0, 10)}{page.author ? " · " + page.author : ""} · v{(page.history || []).length + 1}</span>
           {(page.labels || []).map((l) => <span key={l} style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#7cc4ff", border: `1px solid ${LINE}`, padding: "2px 8px" }}>#{l} <span onClick={() => upd(page.id, (c) => { c.labels = c.labels.filter((x) => x !== l); }, false)} style={{ cursor: "pointer", color: "#666" }}>×</span></span>)}
           <input value={labelIn} onChange={(e) => setLabelIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && labelIn.trim()) { const v = labelIn.trim().replace(/^#/, ""); upd(page.id, (c) => { if (!c.labels.includes(v)) c.labels = [...c.labels, v]; }, false); setLabelIn(""); } }} placeholder="#" style={{ ...inp, width: 84, fontSize: 10.5, padding: "3px 8px", fontFamily: "var(--m)" }} />
           <span style={{ flex: 1 }} />
           <button onClick={() => dl(page.title.replace(/[^\w.-]+/g, "_") + ".md", page.content, "text/markdown")} style={btn}>↓ MD</button>
-          <button onClick={() => dl(page.title.replace(/[^\w.-]+/g, "_") + ".html", kbExportHTML(page, taxaiBrand().name), "text/html")} style={btn}>↓ HTML</button>
-          <button onClick={() => { const np = kbNewPage({ title: page.title + (lang === "lt" ? " (kopija)" : " (copy)"), parentId: page.parentId, template: "blank", author: user }); np.content = page.content; np.icon = page.icon; np.labels = [...(page.labels || [])]; setPages((ps) => [...ps, np]); setSel(np.id); }} style={btn}>{lang === "lt" ? "Kopija" : "Duplicate"}</button>
+          <button onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write(kbExportHTML(page, taxaiBrand().name)); w.document.close(); } else dl(page.title.replace(/[^\w.-]+/g, "_") + ".html", kbExportHTML(page, taxaiBrand().name), "text/html"); }} style={btn}>↓ HTML</button>
+          <button onClick={() => { setCustomTpls((c) => [...c, { id: "custom_" + kbUid(), lt: page.title, en: page.title, icon: page.icon || "▢", content: page.content }]); setToast && setToast(lang === "lt" ? "Šablonas išsaugotas" : "Template saved"); }} style={btn} title={lang === "lt" ? "Išsaugoti kaip šabloną" : "Save as template"}>💾</button>
+          <button onClick={() => { const np = kbNewPage({ title: page.title + (lang === "lt" ? " (kopija)" : " (copy)"), parentId: page.parentId, template: "blank", author: user }); np.content = page.content; np.icon = page.icon; np.labels = [...(page.labels || [])]; setPages((ps) => [...ps, np]); goPage(np.id); }} style={btn}>{lang === "lt" ? "Kopija" : "Copy"}</button>
+          <button onClick={() => setMoving((m) => !m)} style={{ ...btn, color: moving ? "#7cc4ff" : "#d2d2ce" }}>⇥</button>
           <button onClick={() => setShowHist((s) => !s)} style={{ ...btn, color: showHist ? "#7cc4ff" : "#d2d2ce" }}>⟲ {(page.history || []).length}</button>
           <button onClick={removePage} style={{ ...btn, color: "#ff8a8a" }}>🗑</button>
         </div>
+        {moving && <div style={{ border: `1px solid ${LINE}`, background: "var(--bg2)", padding: 12, marginBottom: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", letterSpacing: ".1em" }}>{lang === "lt" ? "PERKELTI Į" : "MOVE TO"}</span>
+          <select onChange={(e) => { const v = e.target.value || null; if (kbCanMove(pages, page.id, v)) { upd(page.id, (c) => { c.parentId = v; }, false); setMoving(false); } }} defaultValue={page.parentId || ""} style={{ ...inp, fontFamily: "var(--m)", fontSize: 11.5 }}>
+            <option value="">{lang === "lt" ? "(šaknis)" : "(root)"}</option>
+            {pages.filter((p) => kbCanMove(pages, page.id, p.id)).map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+          </select>
+        </div>}
         {showHist && (page.history || []).length > 0 && <div style={{ border: `1px solid ${LINE}`, background: "var(--bg2)", padding: 14, marginBottom: 16 }}>
           <div style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "Versijų istorija" : "Version history"}</div>
           {(page.history || []).map((h, i) => <div key={i} style={{ display: "flex", gap: 12, alignItems: "baseline", padding: "4px 0", fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8" }}>
@@ -12179,25 +12356,34 @@ function KnowledgeBank({ lang, setToast, audit }) {
             <span onClick={() => { if (window.confirm(lang === "lt" ? "Atkurti šią versiją?" : "Restore this version?")) { upd(page.id, (c) => { c.title = h.title; c.content = h.content; }, true); setShowHist(false); } }} style={{ cursor: "pointer", color: "#7cc4ff" }}>{lang === "lt" ? "Atkurti" : "Restore"}</span>
           </div>)}
         </div>}
-        {mode === "edit" ? <>
+        {mode === "edit" ? <div style={{ position: "relative" }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            {[["B", "**", "**"], ["I", "*", "*"], ["H2", "\n## ", ""], ["•", "\n- ", ""], ["☐", "\n- [ ] ", ""], ["1.", "\n1. ", ""], ["⌗", "\n| A | B |\n|---|---|\n|  |  |\n", ""], ["</>", "\n```\n", "\n```\n"], ["―", "\n---\n", ""]].map(([lb, b, a]) => <button key={lb} onClick={() => insertMd(b, a)} style={{ ...btn, padding: "4px 9px", fontSize: 10 }}>{lb}</button>)}
+            {[["B", "**", "**"], ["I", "*", "*"], ["H2", "\n## ", ""], ["•", "\n- ", ""], ["☐", "\n- [ ] ", ""], ["1.", "\n1. ", ""], ["⌗", "\n| A | B |\n|---|---|\n|  |  |\n", ""], ["</>", "\n```\n", "\n```\n"], ["[[", "[[", "]]"], ["―", "\n---\n", ""]].map(([lb, bb, aa]) => <button key={lb} onClick={() => insertMd(bb, aa)} style={{ ...btn, padding: "4px 9px", fontSize: 10 }}>{lb}</button>)}
+            <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666", alignSelf: "center" }}>/ {lang === "lt" ? "meniu eilutės pradžioje" : "menu at line start"}</span>
           </div>
+          {slashOpen && <div style={{ position: "absolute", zIndex: 5, top: 38, left: 0, background: "#0a0a0a", border: `1px solid ${LINE}`, boxShadow: "0 10px 30px rgba(0,0,0,0.6)", width: 250, maxHeight: 280, overflowY: "auto" }}>
+            {KB_SLASH.map((it, i) => <div key={i} onClick={() => { setSlashOpen(false); insertMd(it.snip === "" ? new Date().toISOString().slice(0, 10) : it.snip, ""); }} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "8px 12px", cursor: "pointer", fontFamily: "var(--s)", fontSize: 12.5, color: "#e8e8e4" }} onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg2)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}><span style={{ fontFamily: "var(--m)", fontSize: 11, width: 18 }}>{it.ic}</span>{lang === "lt" ? it.lt : it.en}</div>)}
+          </div>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(330px,1fr))", gap: 14 }}>
-            <textarea ref={taRef} value={draft.content} onChange={(e) => setDraft((d) => ({ ...d, content: e.target.value }))} spellCheck={false} style={{ ...inp, minHeight: 440, fontFamily: "var(--m)", fontSize: 12, lineHeight: 1.7, resize: "vertical" }} />
-            <div style={{ border: `1px solid ${LINE}`, padding: "4px 16px", minHeight: 440, overflowY: "auto" }}><Md text={draft.content} /></div>
+            <textarea ref={taRef} value={draft.content} onChange={(e) => setDraft((d) => ({ ...d, content: e.target.value }))} onKeyDown={onTaKey} spellCheck={false} style={{ ...inp, minHeight: 440, fontFamily: "var(--m)", fontSize: 12, lineHeight: 1.7, resize: "vertical" }} />
+            <div onClickCapture={wikiClick} style={{ border: `1px solid ${LINE}`, padding: "4px 16px", minHeight: 440, overflowY: "auto" }}><Md text={kbResolveWikiLinks(draft.content)} /></div>
           </div>
-        </> : <div>{renderView(page)}</div>}
-        <div style={{ marginTop: 30, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+          <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666", marginTop: 6 }}>{(draft.content.trim().split(/\s+/).filter(Boolean)).length} {lang === "lt" ? "ž." : "words"} · {draft.content.length} {lang === "lt" ? "simb." : "chars"} · ~{Math.max(1, Math.ceil((draft.content.trim().split(/\s+/).filter(Boolean)).length / 200))} min</div>
+        </div> : <div ref={viewRef} onClickCapture={wikiClick}>{renderLines(String(page.content || "").split("\n"), "r", page.id, { i: 0 })}</div>}
+        {backlinks.length > 0 && <div style={{ marginTop: 26, borderTop: `1px solid ${LINE}`, paddingTop: 12 }}>
+          <div style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 6 }}>🔗 {lang === "lt" ? "Nuorodos į šį puslapį" : "Linked from"} ({backlinks.length})</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{backlinks.map((b2) => <span key={b2.id} onClick={() => goPage(b2.id)} style={{ cursor: "pointer", fontFamily: "var(--s)", fontSize: 12, color: "#7cc4ff", border: `1px solid ${LINE}`, padding: "3px 10px" }}>{b2.icon} {b2.title}</span>)}</div>
+        </div>}
+        <div style={{ marginTop: 26, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontFamily: "var(--m)", fontSize: 9.5, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase" }}>📎 {lang === "lt" ? "Priedai" : "Attachments"} ({atts.length})</span>
             <label style={{ ...btn, padding: "4px 10px" }}>+ {lang === "lt" ? "Failas" : "File"}<input type="file" multiple onChange={onAttach} style={{ display: "none" }} /></label>
-            <span style={{ fontFamily: "var(--s)", fontSize: 10.5, color: "#666" }}>{lang === "lt" ? "Saugoma šioje naršyklėje (IndexedDB) — tinka ir knygoms." : "Stored in this browser (IndexedDB) — books welcome."}</span>
+            <span style={{ fontFamily: "var(--s)", fontSize: 10.5, color: "#666" }}>{lang === "lt" ? "IndexedDB — tinka ir knygoms." : "IndexedDB — books welcome."}</span>
           </div>
-          {atts.map((a) => <div key={a.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8" }}>
-            <span style={{ color: "#fff" }}>{a.name}</span><span style={{ color: "#666" }}>{(a.size / 1024).toFixed(0)} KB</span>
-            <span onClick={() => openAtt(a)} style={{ cursor: "pointer", color: "#7cc4ff" }}>↓</span>
-            <span onClick={() => { kbIdb.del(a.id); setAtts((x) => x.filter((y) => y.id !== a.id)); }} style={{ cursor: "pointer", color: "#666" }}>✕</span>
+          {atts.map((x) => <div key={x.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8" }}>
+            <span style={{ color: "#fff" }}>{x.name}</span><span style={{ color: "#666" }}>{(x.size / 1024).toFixed(0)} KB</span>
+            <span onClick={() => openAtt(x)} style={{ cursor: "pointer", color: "#7cc4ff" }}>↓</span>
+            <span onClick={() => { kbIdb.del(x.id); setAtts((y) => y.filter((z) => z.id !== x.id)); }} style={{ cursor: "pointer", color: "#666" }}>✕</span>
           </div>)}
         </div>
         <div style={{ marginTop: 22, borderTop: `1px solid ${LINE}`, paddingTop: 14, maxWidth: 720 }}>
@@ -12206,9 +12392,7 @@ function KnowledgeBank({ lang, setToast, audit }) {
             <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88" }}>{c.author || "—"} · {new Date(c.ts).toISOString().slice(0, 16).replace("T", " ")} <span onClick={() => upd(page.id, (x) => { x.comments = x.comments.filter((y) => y.id !== c.id); }, false)} style={{ cursor: "pointer", color: "#555" }}>✕</span></div>
             <div style={{ fontFamily: "var(--s)", fontSize: 13, color: "#e8e8e4" }}>{c.text}</div>
           </div>)}
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <input value={commentIn} onChange={(e) => setCommentIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && commentIn.trim()) { upd(page.id, (c) => { c.comments = [...(c.comments || []), { id: kbUid() + "_c", author: user || "—", text: commentIn.trim(), ts: Date.now() }]; }, false); setCommentIn(""); } }} placeholder={lang === "lt" ? "Komentaras… (Enter)" : "Comment… (Enter)"} style={{ ...inp, flex: 1 }} />
-          </div>
+          <input value={commentIn} onChange={(e) => setCommentIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && commentIn.trim()) { upd(page.id, (c) => { c.comments = [...(c.comments || []), { id: kbUid() + "_c", author: user || "—", text: commentIn.trim(), ts: Date.now() }]; }, false); setCommentIn(""); } }} placeholder={lang === "lt" ? "Komentaras… (Enter)" : "Comment… (Enter)"} style={{ ...inp, width: "100%", boxSizing: "border-box", marginTop: 10 }} />
         </div>
       </div>}
     </div>
