@@ -889,7 +889,7 @@ LiteNode.prototype = {
     if (this._tc !== undefined) return this._tc;
     let out = this._t || "";
     const st = [...this.children];
-    while (st.length) { const n = st.shift(); out += n._t || ""; for (let i = 0; i < n.children.length; i++) st.push(n.children[i]); }
+    for (let qi = 0; qi < st.length; qi++) { const n = st[qi]; out += n._t || ""; for (let i = 0; i < n.children.length; i++) st.push(n.children[i]); }
     this._tc = out;
     return out;
   },
@@ -915,8 +915,8 @@ LiteNode.prototype = {
   getElementsByTagName(name) {
     const out = [], any = name === "*";
     const st = [...this.children];
-    while (st.length) {
-      const n = st.shift();
+    for (let qi = 0; qi < st.length; qi++) {
+      const n = st[qi];
       if (any || n.localName === name || n.tagName === name) out.push(n);
       for (let i = 0; i < n.children.length; i++) st.push(n.children[i]);
     }
@@ -1468,6 +1468,7 @@ function parseSAFTFull(xmlStr) {
             unitOfMeasure: txt(l, "UnitOfMeasure") || txt(l, "InvoiceUOM"),
             unitPrice: num(l, "UnitPrice"),
             settlementAmount: num(l, "SettlementAmount") ?? null, // absent ≠ 0: VMI semantics = optional line discount (fix: ??0 broke SAL_004/PUR_003 on every discount-free file)
+            shippingCosts: l.getElementsByTagName("ShippingCostsAmount")[0] ? (num(l.getElementsByTagName("ShippingCostsAmount")[0], "Amount") ?? null) : null,
             taxPointDate: txt(l, "TaxPointDate"),
             debitAmount: dbEl ? (num(dbEl, "Amount") ?? 0) : (ilaEl && (dci === "D" || (!dci && sectionTag !== "SalesInvoices")) ? (num(ilaEl, "Amount") ?? 0) : null),
             creditAmount: crEl ? (num(crEl, "Amount") ?? 0) : (ilaEl && (dci === "K" || (!dci && sectionTag === "SalesInvoices")) ? (num(ilaEl, "Amount") ?? 0) : null),
@@ -1514,6 +1515,7 @@ function parseSAFTFull(xmlStr) {
             netTotal: num(dt, "NetTotal") ?? 0,
             taxPayable: num(dt, "TaxPayable") ?? titTax ?? 0,
             grossTotal: num(dt, "GrossTotal") ?? 0,
+            shippingCostsTotal: num(dt, "ShippingCostsAmountTotal") ?? (dt.getElementsByTagName("ShippingCostsAmountTotal")[0] ? num(dt.getElementsByTagName("ShippingCostsAmountTotal")[0], "Amount") : null),
             currencyCode: txt(dt, "CurrencyCode"),
             currencyAmount: num(dt, "CurrencyAmount"),
             exchangeRate: num(dt, "ExchangeRate"),
@@ -1921,19 +1923,19 @@ const RULE_PACKS = [
     changes: ["11 rule-scoped fixers: header version/country/currency, EUR currency-amounts, tax & line-amount recomputation, GL/section control totals, document totals, ISO country normalization, exact-duplicate removal", "Dry-run plan with before→after preview; SAFE vs SUGGESTED safety classes", "One-click corrected XML + fix manifest; full 482-rule re-audit with before/after gate & risk", "Form-only principle: representation is normalized and derived totals recomputed — business facts are never invented"] },
   { version: "2026.06-explain", date: "2026-06-07", title: "Per-finding explanation engine", titleLt: "Radinių paaiškinimų variklis",
     changes: ["WHAT/WHY/HOW explanation for all rules in LT + EN", "Numbered, abbreviation-safe fix steps", "Severity-aware urgency lead on every finding", "Inline fix line in the findings list"] },
-  { version: "2026.06-parity3", date: "2026-06-06", title: "ColBi parity — final 25 gaps closed (100 %)", titleLt: "ColBi paritetas — uždarytos paskutinės 25 spragos (100 %)",
+  { version: "2026.06-parity3", date: "2026-06-06", title: "Rule-catalogue parity — final 25 gaps closed (100 %)", titleLt: "Taisyklių katalogo paritetas — uždarytos paskutinės 25 spragos (100 %)",
     changes: ["SAFT_HDR_009, SAFT_PAY_005 (header date, payment tax totals)", "SAFT_PDT_PMSPEC + 4 APA rules (PM/APA classifier substance tests)", "SAFT_TRT_011/012/013 (monthly Sodra/GPM, guarantee-fund ratio)", "SAFT_AET_003 (VSAFAS public-sector equation), SAFT_BAT_019/020"] },
-  { version: "2026.06-parity2", date: "2026-06-06", title: "ColBi parity — coverage patches 1–2", titleLt: "ColBi paritetas — 1–2 pataisos",
+  { version: "2026.06-parity2", date: "2026-06-06", title: "Rule-catalogue parity — coverage patches 1–2", titleLt: "Taisyklių katalogo paritetas — 1–2 pataisos",
     changes: ["24 structural rules: source-data referential set, EUR/tax/line-amount recomputation, control totals, batch & open-item checks", "One-pass DOM engine (runGenChecks) for whole-file recomputations"] },
   { version: "2026.05-vat117", date: "2026-06-05", title: "VAT audit engine — 117 rules (120-workbook, corrected)", titleLt: "PVM audito variklis — 117 taisyklių (120 darbaknygė, pataisyta)",
-    changes: ["All 114 unique ColBi VAT rules implemented", "Workbook defects fixed: missing PL, stale GB-as-EU, PS/PR copy-paste rows, inverted CASE 056", "2026 VA-107 reform pack: PVM58–60 (12 %), PVM2/PVM49 expiry, GB Brexit handling"] },
-  { version: "2020.09-base", date: "2020-09-01", title: "VMI/ColBi LT_RULES base set (337 rules)", titleLt: "VMI/ColBi LT_RULES bazinis rinkinys (337 taisyklės)",
+    changes: ["All 114 unique catalogue VAT rules implemented", "Workbook defects fixed: missing PL, stale GB-as-EU, PS/PR copy-paste rows, inverted CASE 056", "2026 VA-107 reform pack: PVM58–60 (12 %), PVM2/PVM49 expiry, GB Brexit handling"] },
+  { version: "2020.09-base", date: "2020-09-01", title: "VMI LT_RULES base set (337 rules)", titleLt: "VMI LT_RULES bazinis rinkinys (337 taisyklės)",
     changes: ["XSD v2.01 conformance + full schema validation (205 types)", "Structural & integrity rules, duplicates (Table 6), classifiers (VA-49 Annex 2)", "Risk weights (risk_value 0–5) imported per rule"] },
 ];
 
-// VMI risk weights (risk_value column of the ColBi LT_RULES export, scale 0–5),
+// VMI risk weights (risk_value column of the VMI LT_RULES export, scale 0–5),
 // joined onto TaxAI rule ids through the verified per-rule coverage mapping.
-const VMI_RISK_WEIGHTS = {"PP_LT_PVM_010\u2013014":0.1,"PP_LT_PVM_010\u2013018":0.1,"PP_LT_PVM_010\u2013018 (ES tiekimai)":0.1,"PP_LT_PVM_019\u2013021":0.1,"PP_LT_PVM_019\u2013021 (trikamp\u0117 prekyba)":0.1,"PP_LT_PVM_030\u2013038":0.1,"PP_LT_PVM_044\u2013046":0.1,"PP_LT_PVM_044\u2013046 (PVM5)":0.1,"PP_LT_PVM_047\u2013052":0.1,"PP_LT_PVM_047\u2013052 (96 str. atvirk\u0161tinis)":0.1,"PP_LT_PVM_075":0.1,"PP_LT_PVM_075\u2013081":0.1,"PP_LT_PVM_075\u2013081 (paslaugos u\u017e LT rib\u0173)":0.1,"PP_LT_PVM_087":3.0,"PP_LT_PVM_109":3.0,"SAFT_AAT_001":0.1,"SAFT_AAT_002":0.1,"SAFT_AAT_003":0.1,"SAFT_AAT_005":0.1,"SAFT_AET_001":0.1,"SAFT_AET_002":0.1,"SAFT_AET_003":0.1,"SAFT_APT_001":0.1,"SAFT_AST_002":0.1,"SAFT_AST_003":0.1,"SAFT_AST_VAL_ACCT":0.1,"SAFT_ATX_001":0.1,"SAFT_ATX_002":0.3,"SAFT_BAT_011":0.1,"SAFT_BAT_012":0.1,"SAFT_BAT_013":0.1,"SAFT_BAT_015":0.1,"SAFT_BAT_019":0.1,"SAFT_BAT_020":0.1,"SAFT_BAT_021":0.1,"SAFT_CFA_001":0.1,"SAFT_CLS_STITaxCode":0.1,"SAFT_CLS_TaxCode":0.1,"SAFT_CTL_001":0.3,"SAFT_CTL_002":0.3,"SAFT_CTL_003":0.3,"SAFT_CTL_004":0.3,"SAFT_CTL_005":0.3,"SAFT_CUS_002":0.1,"SAFT_CUS_004":0.1,"SAFT_DET_001":0.1,"SAFT_DET_002":0.1,"SAFT_DET_003":0.1,"SAFT_DET_004":0.3,"SAFT_DET_005":0.3,"SAFT_DET_006":0.3,"SAFT_DUBL_AnalysisTypeTableEntry":0.1,"SAFT_DUBL_Asset":0.1,"SAFT_DUBL_AssetTransaction":0.1,"SAFT_DUBL_Customer":0.1,"SAFT_DUBL_GLTransaction":0.1,"SAFT_DUBL_Journal":0.1,"SAFT_DUBL_MovementTypeTableEntry":0.1,"SAFT_DUBL_OpenPurchaseInvoice":0.1,"SAFT_DUBL_OpenSalesInvoice":0.1,"SAFT_DUBL_Owner":0.1,"SAFT_DUBL_Payment":0.1,"SAFT_DUBL_PhysicalStockAcquisition":0.1,"SAFT_DUBL_PhysicalStockEntry":0.1,"SAFT_DUBL_Product":0.1,"SAFT_DUBL_PurchaseInvoice":0.1,"SAFT_DUBL_SalesInvoice":0.1,"SAFT_DUBL_StockMovement":0.1,"SAFT_DUBL_Supplier":0.1,"SAFT_DUBL_TaxCodeDetail":0.1,"SAFT_DUBL_UOMTableEntry":0.1,"SAFT_DVT_022":0.5,"SAFT_DVT_023":0.5,"SAFT_DVT_024":0.1,"SAFT_DVT_APC":0.1,"SAFT_DVT_EUR":0.5,"SAFT_DVT_LINEAMT":0.1,"SAFT_DVT_OPENDATES":0.3,"SAFT_DVT_PSADATES":0.3,"SAFT_DVT_STOCKFLOW":0.3,"SAFT_DVT_TAXC":0.5,"SAFT_FAO_001":0.1,"SAFT_FAO_002":0.1,"SAFT_GLT_002":0.3,"SAFT_GLT_003":1.0,"SAFT_GLT_004":0.3,"SAFT_GLT_006":0.3,"SAFT_HDR_003":0.1,"SAFT_HDR_007":0.1,"SAFT_HDR_008":0.1,"SAFT_HDR_009":0.1,"SAFT_HFA_001":0.1,"SAFT_INT_017":0.1,"SAFT_INT_022":0.1,"SAFT_INT_025":0.1,"SAFT_INT_034":0.1,"SAFT_INT_043":0.1,"SAFT_INT_SD_ACCT":0.1,"SAFT_INT_SD_ANL":0.1,"SAFT_INT_SD_PARTY":0.1,"SAFT_INT_SD_PROD":0.1,"SAFT_INT_SD_TAX":0.1,"SAFT_INT_SD_UOM":0.1,"SAFT_ISO_001":0.1,"SAFT_MOV_001":0.1,"SAFT_MOV_003":0.1,"SAFT_MOV_004":0.3,"SAFT_OST_001":0.1,"SAFT_OST_004":0.1,"SAFT_OST_005":0.1,"SAFT_OWN_001":0.1,"SAFT_PAY_002":0.1,"SAFT_PAY_003":0.3,"SAFT_PAY_004":0.5,"SAFT_PAY_005":0.5,"SAFT_PDT_002":0.1,"SAFT_PDT_020":0.1,"SAFT_PDT_ADDBACK":5.0,"SAFT_PDT_APA_690":0.1,"SAFT_PDT_APA_ACCT":0.1,"SAFT_PDT_APA_DESC":0.1,"SAFT_PDT_APA_USE":0.1,"SAFT_PDT_FINES":0.1,"SAFT_PDT_NORM":0.1,"SAFT_PDT_PMSPEC":0.1,"SAFT_PET_DATES":0.3,"SAFT_PRD_002":0.1,"SAFT_PUR_002":0.1,"SAFT_PUR_003":0.5,"SAFT_PUR_004":0.1,"SAFT_PUR_005":0.5,"SAFT_PUR_006":0.3,"SAFT_RATE_PM0":0.1,"SAFT_RATE_PVM0":0.1,"SAFT_RATE_PVM0 (PVM12 klasifikatorius/tarifas)":0.1,"SAFT_SAL_002":0.1,"SAFT_SAL_003":0.1,"SAFT_SAL_004":0.5,"SAFT_SAL_005":0.1,"SAFT_SAL_006":0.3,"SAFT_SAL_007":0.5,"SAFT_SEQ_001":0.1,"SAFT_SID_001":0.3,"SAFT_SID_002":0.3,"SAFT_SID_003":0.1,"SAFT_SID_004":0.3,"SAFT_SID_005":0.3,"SAFT_SUP_002":0.1,"SAFT_SUP_004":0.1,"SAFT_TAX_004":0.1,"SAFT_TRT_001":0.1,"SAFT_TRT_002":0.1,"SAFT_TRT_003":0.1,"SAFT_TRT_004":0.1,"SAFT_TRT_005":0.1,"SAFT_TRT_006":0.1,"SAFT_TRT_007":0.1,"SAFT_TRT_011":0.1,"SAFT_TRT_012":0.1,"SAFT_TRT_013":0.1,"SAFT_VDT_003":0.1,"SAFT_VDT_007":0.1,"SAFT_VDT_008":0.1,"SAFT_VDT_009":0.1,"SAFT_VDT_010":0.1,"SAFT_VDT_011":0.1,"SAFT_VDT_012":0.1,"SAFT_VDT_013":0.1,"SAFT_VDT_014":0.1,"SAFT_VDT_015":0.1,"SAFT_VDT_016":0.1,"SAFT_VDT_017":0.1,"SAFT_VDT_018":0.1,"SAFT_VDT_019":0.3,"SAFT_VDT_019 (momento netiesioginis testas)":0.1,"SAFT_VDT_020":0.1,"SAFT_VDT_021":0.1,"SAFT_VDT_031":0.1,"SAFT_VDT_036":0.1,"SAFT_VDT_050":0.1};
+const VMI_RISK_WEIGHTS = {"PP_LT_PVM_010\u2013014":0.1,"PP_LT_PVM_010\u2013018":0.1,"PP_LT_PVM_010\u2013018 (ES tiekimai)":0.1,"PP_LT_PVM_019\u2013021":0.1,"PP_LT_PVM_019\u2013021 (trikamp\u0117 prekyba)":0.1,"PP_LT_PVM_030\u2013038":0.1,"PP_LT_PVM_044\u2013046":0.1,"PP_LT_PVM_044\u2013046 (PVM5)":0.1,"PP_LT_PVM_047\u2013052":0.1,"PP_LT_PVM_047\u2013052 (96 str. atvirk\u0161tinis)":0.1,"PP_LT_PVM_075":0.1,"PP_LT_PVM_075\u2013081":0.1,"PP_LT_PVM_075\u2013081 (paslaugos u\u017e LT rib\u0173)":0.1,"PP_LT_PVM_087":3.0,"PP_LT_PVM_109":3.0,"SAFT_AAT_001":0.1,"SAFT_AAT_002":0.1,"SAFT_AAT_003":0.1,"SAFT_AAT_005":0.1,"SAFT_AET_001":0.1,"SAFT_AET_002":0.1,"SAFT_AET_003":0.1,"SAFT_APT_001":0.1,"SAFT_AST_002":0.1,"SAFT_AST_003":0.1,"SAFT_AST_VAL_ACCT":0.1,"SAFT_ATX_001":0.1,"SAFT_ATX_002":0.3,"SAFT_BAT_011":0.1,"SAFT_BAT_012":0.1,"SAFT_BAT_013":0.1,"SAFT_BAT_015":0.1,"SAFT_BAT_019":0.1,"SAFT_BAT_020":0.1,"SAFT_BAT_021":0.1,"SAFT_CFA_001":0.1,"SAFT_CLS_STITaxCode":0.1,"SAFT_CLS_TaxCode":0.1,"SAFT_CTL_001":0.3,"SAFT_CTL_002":0.3,"SAFT_CTL_003":0.3,"SAFT_CTL_004":0.3,"SAFT_CTL_005":0.3,"SAFT_CUS_002":0.1,"SAFT_CUS_004":0.1,"SAFT_DET_001":0.1,"SAFT_DET_002":0.1,"SAFT_DET_003":0.1,"SAFT_DET_004":0.3,"SAFT_DET_005":0.3,"SAFT_DET_006":0.3,"SAFT_DUBL_AnalysisTypeTableEntry":0.1,"SAFT_DUBL_Asset":0.1,"SAFT_DUBL_AssetTransaction":0.1,"SAFT_DUBL_Customer":0.1,"SAFT_DUBL_GLTransaction":0.1,"SAFT_DUBL_Journal":0.1,"SAFT_DUBL_MovementTypeTableEntry":0.1,"SAFT_DUBL_OpenPurchaseInvoice":0.1,"SAFT_DUBL_OpenSalesInvoice":0.1,"SAFT_DUBL_Owner":0.1,"SAFT_DUBL_Payment":0.1,"SAFT_DUBL_PhysicalStockAcquisition":0.1,"SAFT_DUBL_PhysicalStockEntry":0.1,"SAFT_DUBL_Product":0.1,"SAFT_DUBL_PurchaseInvoice":0.1,"SAFT_DUBL_SalesInvoice":0.1,"SAFT_DUBL_StockMovement":0.1,"SAFT_DUBL_Supplier":0.1,"SAFT_DUBL_TaxCodeDetail":0.1,"SAFT_DUBL_UOMTableEntry":0.1,"SAFT_DVT_022":0.5,"SAFT_DVT_023":0.5,"SAFT_DVT_024":0.1,"SAFT_DVT_APC":0.1,"SAFT_DVT_EUR":0.5,"SAFT_DVT_LINEAMT":0.1,"SAFT_DVT_OPENDATES":0.3,"SAFT_DVT_PSADATES":0.3,"SAFT_DVT_STOCKFLOW":0.3,"SAFT_DVT_TAXC":0.5,"SAFT_FAO_001":0.1,"SAFT_FAO_002":0.1,"SAFT_GLT_002":0.3,"SAFT_GLT_003":1.0,"SAFT_GLT_004":0.3,"SAFT_GLT_006":0.3,"SAFT_HDR_003":0.1,"SAFT_HDR_007":0.1,"SAFT_HDR_008":0.1,"SAFT_HDR_009":0.1,"SAFT_HFA_001":0.1,"SAFT_INT_017":0.1,"SAFT_INT_022":0.1,"SAFT_INT_025":0.1,"SAFT_INT_034":0.1,"SAFT_INT_043":0.1,"SAFT_INT_SD_ACCT":0.1,"SAFT_INT_SD_ANL":0.1,"SAFT_INT_SD_PARTY":0.1,"SAFT_INT_SD_PROD":0.1,"SAFT_INT_SD_TAX":0.1,"SAFT_INT_SD_UOM":0.1,"SAFT_ISO_001":0.1,"SAFT_MOV_001":0.1,"SAFT_MOV_003":0.1,"SAFT_MOV_004":0.3,"SAFT_OST_001":0.1,"SAFT_OST_004":0.1,"SAFT_OST_005":0.1,"SAFT_OWN_001":0.1,"SAFT_PAY_002":0.1,"SAFT_PAY_003":0.3,"SAFT_PAY_004":0.5,"SAFT_PAY_005":0.5,"SAFT_PDT_002":0.1,"SAFT_PDT_020":0.1,"SAFT_PDT_ADDBACK":5.0,"SAFT_PDT_APA_690":0.1,"SAFT_PDT_APA_ACCT":0.1,"SAFT_PDT_APA_DESC":0.1,"SAFT_PDT_APA_USE":0.1,"SAFT_PDT_FINES":0.1,"SAFT_PDT_NORM":0.1,"SAFT_PDT_PMSPEC":0.1,"SAFT_PET_DATES":0.3,"SAFT_PRD_002":0.1,"SAFT_PUR_002":0.1,"SAFT_PUR_003":0.5,"SAFT_PUR_004":0.1,"SAFT_PUR_005":0.5,"SAFT_PUR_006":0.3,"SAFT_RATE_PM0":0.1,"SAFT_RATE_PVM0":0.1,"SAFT_RATE_PVM0 (PVM12 klasifikatorius/tarifas)":0.1,"SAFT_SAL_002":0.1,"SAFT_SAL_003":0.1,"SAFT_SAL_004":0.5,"SAFT_SAL_005":0.1,"SAFT_SAL_006":0.3,"SAFT_SAL_007":0.5,"SAFT_SEQ_001":0.1,"SAFT_SID_001":0.3,"SAFT_SID_002":0.3,"SAFT_SID_003":0.1,"SAFT_SID_004":0.3,"SAFT_SID_005":0.3,"SAFT_SUP_002":0.1,"SAFT_SUP_004":0.1,"SAFT_TAX_004":0.1,"SAFT_TRT_001":0.1,"SAFT_TRT_002":0.1,"SAFT_TRT_003":0.1,"SAFT_TRT_004":0.1,"SAFT_TRT_005":0.1,"SAFT_TRT_006":0.1,"SAFT_TRT_007":0.1,"SAFT_TRT_011":0.1,"SAFT_TRT_012":0.1,"SAFT_TRT_013":0.1,"SAFT_VDT_003":0.1,"SAFT_VDT_007":0.1,"SAFT_VDT_008":0.1,"SAFT_VDT_009":0.1,"SAFT_VDT_010":0.1,"SAFT_VDT_011":0.1,"SAFT_VDT_012":0.1,"SAFT_VDT_013":0.1,"SAFT_VDT_014":0.1,"SAFT_VDT_015":0.1,"SAFT_VDT_016":0.1,"SAFT_VDT_017":0.1,"SAFT_VDT_018":0.1,"SAFT_VDT_019":0.3,"SAFT_VDT_019 (momento netiesioginis testas)":0.1,"SAFT_VDT_020":0.1,"SAFT_VDT_021":0.1,"SAFT_VDT_031":0.1,"SAFT_VDT_036":0.1,"SAFT_VDT_050":0.1,"SAFT_VDT_033":0.1,"SAFT_VDT_038":0.1,"SAFT_CTL_TOTALS":0.3,"SAFT_DVT_SHIP":0.1};
 
 // Rules without a workbook weight (TaxAI originals, 2026 reform pack) fall back
 // to a severity default on the same 0–5 scale — stated in the methodology.
@@ -1953,7 +1955,7 @@ function computeRiskScore(findings) {
     if (!f || f.status === "rejected") return;
     const k = f.rule_id || f.title || "?";
     const e = byRule.get(k) || { rule_id: k, title: (f.ruleMeta && f.ruleMeta.titleLt) || f.title || k, titleEn: (f.ruleMeta && f.ruleMeta.titleEn) || f.title || k, severity: f.severity, category: f.category || "—", hits: 0 };
-    e.hits += 1;
+    e.hits += (f.count || 1);
     byRule.set(k, e);
   });
   const perRule = [...byRule.values()].map((e) => {
@@ -1968,7 +1970,7 @@ function computeRiskScore(findings) {
   perRule.forEach((r) => { perCategory[r.category] = Math.round(((perCategory[r.category] || 0) + r.contrib) * 100) / 100; });
   return { score, band, perRule, perCategory,
     bandLabel: { clean: ["Clean", "Švaru"], low: ["Low risk", "Žema rizika"], elevated: ["Elevated risk", "Padidėjusi rizika"], high: ["High risk", "Aukšta rizika"] }[band],
-    methodology: "score = Σ over flagged rules of weight × (1 + ln(1+min(hits,50))/ln 51); weights = VMI risk_value (0–5) via the verified ColBi mapping, severity defaults (5/3/1/0.3) otherwise" };
+    methodology: "score = Σ over flagged rules of weight × (1 + ln(1+min(hits,50))/ln 51); weights = VMI risk_value (0–5) via the verified rule-catalogue mapping, severity defaults (5/3/1/0.3) otherwise" };
 }
 
 // i.SAF-T acceptance-gate simulation. VMI's assessment environment refuses a
@@ -1984,7 +1986,7 @@ function simulateAcceptanceGate(parsed, findings) {
   };
   (findings || []).forEach((f) => {
     if (!f || f.status === "rejected") return;
-    if (f.type === "X" || f.type === "V") addReason(f.rule_id, (f.ruleMeta && f.ruleMeta.titleLt) || f.title, 1);
+    if (f.type === "X" || f.type === "V") addReason(f.rule_id, (f.ruleMeta && f.ruleMeta.titleLt) || f.title, f.count || 1);
   });
   if (parsed && parsed._parseError) addReason("XML", "Rinkmena nėra korektiškas XML (parse error)", 1);
   const h = (parsed && parsed.header) || null;
@@ -1993,7 +1995,7 @@ function simulateAcceptanceGate(parsed, findings) {
   ((parsed && parsed._parts && parsed._parts.inconsistencies) || []).forEach((x) => addReason("PARTS", "Daugiadalė rinkmena: " + x.issue, 1));
   const reasons = [...reasonMap.values()].sort((a, b) => b.count - a.count);
   const blockingTotal = reasons.reduce((s, r) => s + r.count, 0);
-  const warningCount = (findings || []).filter((f) => f && f.status !== "rejected" && f.type !== "X" && f.type !== "V").length;
+  const warningCount = (findings || []).reduce((s, f) => s + (f && f.status !== "rejected" && f.type !== "X" && f.type !== "V" ? (f.count || 1) : 0), 0);
   const verdict = reasons.length ? "rejected" : warningCount ? "warnings" : "clean";
   return { verdict, reasons, blockingTotal, warningCount,
     label: { rejected: ["FILE WOULD BE REJECTED", "RINKMENA BŪTŲ ATMESTA"], warnings: ["ACCEPTED WITH WARNINGS", "PRIIMTA SU PERSPĖJIMAIS"], clean: ["ACCEPTED — CLEAN", "PRIIMTA — ŠVARI"] }[verdict],
@@ -2086,7 +2088,7 @@ function buildAuditReportHTML(payload) {
     "<table><tr><th>" + T("Rule", "Taisyklė") + "</th><th>" + T("Title", "Pavadinimas") + "</th><th class='n'>" + T("Hits", "Atvejai") + "</th><th class='n'>" + T("VMI weight", "VMI svoris") + "</th><th class='n'>" + T("Contribution", "Indėlis") + "</th></tr>" + (topRisk || "<tr><td colspan='5'>—</td></tr>") + "</table>" +
     "<h2>" + T("Findings — what was found, why it matters, how to fix it", "Radiniai — kas nustatyta, kodėl tai svarbu ir kaip ištaisyti") + "</h2>" + (catBlocks || "<p>" + T("No findings.", "Radinių nėra.") + "</p>") +
     "<h2>" + T("Methodology", "Metodologija") + "</h2>" +
-    "<p class='sub'>" + esc(risk.methodology) + ".<br>" + T("Rule base: 482 named rules + full XSD v2.01 schema validation; verified 1:1 against the VMI/ColBi LT_RULES (2020-09) and 120-audit-rules (2021-02) engine exports, extended with the 2026 VA-107 VAT reform pack.", "Taisyklių bazė: 482 įvardytos taisyklės + pilna XSD v2.01 schemos validacija; patikrinta 1:1 su VMI/ColBi LT_RULES (2020-09) ir 120 audito taisyklių (2021-02) variklio eksportais, papildyta 2026 m. VA-107 PVM reformos paketu.") + "</p>" +
+    "<p class='sub'>" + esc(risk.methodology) + ".<br>" + T("Rule base: 482 named rules + full XSD v2.01 schema validation; verified 1:1 against the VMI LT_RULES (2020-09) and 120-audit-rules (2021-02) engine exports, extended with the 2026 VA-107 VAT reform pack.", "Taisyklių bazė: 482 įvardytos taisyklės + pilna XSD v2.01 schemos validacija; patikrinta 1:1 su VMI LT_RULES (2020-09) ir 120 audito taisyklių (2021-02) variklio eksportais, papildyta 2026 m. VA-107 PVM reformos paketu.") + "</p>" +
     "<footer>" + esc(B.name) + " v" + esc(engineVersion) + (B.footer ? " · " + esc(B.footer) : "") + " · " + esc(generatedAt) + " · " + T("Generated entirely client-side — accounting data never left this computer.", "Sugeneruota vien kliento pusėje — apskaitos duomenys nepaliko šio kompiuterio.") + "</footer>" +
     "</body></html>";
 }
@@ -2280,7 +2282,7 @@ function auditCopilotAnswer(query, ctx) {
     if (top) ids.push(top.rule_id);
     return reply((lt ? `Rizikos balas: ${r.score} — ${r.bandLabel[1]}.` : `Risk score: ${r.score} — ${r.bandLabel[0]}.`) +
       (top ? (lt ? ` Didžiausias šaltinis: ${top.rule_id} (indėlis ${top.contrib}).` : ` Largest contributor: ${top.rule_id} (contrib ${top.contrib}).`) : "") +
-      (lt ? " Svoriai — VMI risk_value (0–5) per patikrintą ColBi atitikmenų žemėlapį." : " Weights — VMI risk_value (0–5) via the verified ColBi mapping."));
+      (lt ? " Svoriai — VMI risk_value (0–5) per patikrintą taisyklių katalogo atitikmenų žemėlapį." : " Weights — VMI risk_value (0–5) via the verified rule-catalogue mapping."));
   }
 
   if (/(parodyk|rask|surask|isvardink|show|find|search|list)/.test(q)) {
@@ -3270,7 +3272,7 @@ const AUDIT_RULES = [
     descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) with the origin country missing). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
     failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
     when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (!F && T==='LT') },
-  { id: "PP_LT_PVM_106", severity: "High", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
+  { id: "PP_LT_PVM_106", severity: "Low" /* calibrated: ShipTo is XSD-optional — review signal, not rejection */, level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
     codes: ["PVM1"], cls: "PR", perLine: true,
     titleEn: "Local supply of goods (PVM1) with the destination country missing", title: "Vietinis prekių tiekimas (PVM1) be nurodytos paskirties šalies",
     descriptionEn: "Flags each line where STI code PVM1 is combined with facts that contradict or fail to support that treatment (local supply of goods (PVM1) with the destination country missing). Legal basis: PVMĮ 4 str..", description: "Žymimos eilutės, kuriose STI kodas PVM1 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 4 str..", legal: "PVMĮ 4 str.",
@@ -3343,13 +3345,13 @@ const AUDIT_RULES = [
     failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Informational review list — confirm the VAT treatment of the listed transactions is intentional and supported by documents. No action needed if verified.", fixLt: "Informacinis peržiūros sąrašas — patvirtinkite, kad išvardytų sandorių PVM vertinimas yra sąmoningas ir pagrįstas dokumentais. Jei patikrinta — veiksmų nereikia.",
     when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
   { id: "PP_LT_PVM_118", severity: "Low", level: 3, kind: "signal", scope: "sales", dataTypes: "F-Full; SI-Sales Invoices", refType: "SaftLt::InvoiceLine",
-    codes: ["PVM5"], cls: "MISSING_OR_KT_IT", perLine: true,
+    codes: ["PVM5"], cls: "MISSING_OR_KT_IT", perLine: true, dedupeBy: "InvoiceNo",
     titleEn: "VAT-exempt sales with goods/services class missing or non-specific", title: "PVM neapmokestinami pardavimai be požymio arba su nespecifiniu požymiu",
     descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt sales with goods/services class missing or non-specific). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
     failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
     when: (ctx, inv, regs, F, T, pv, r0, raC, hasRA, hasAddr) => (true) },
   { id: "PP_LT_PVM_119", severity: "Low", level: 3, kind: "signal", scope: "purchases", dataTypes: "F-Full; PI-Purchase Invoices", refType: "SaftLt::InvoiceLine",
-    codes: ["PVM5"], cls: "MISSING_OR_KT_IT", perLine: true,
+    codes: ["PVM5"], cls: "MISSING_OR_KT_IT", perLine: true, dedupeBy: "InvoiceNo",
     titleEn: "VAT-exempt purchases with goods/services class missing or non-specific", title: "PVM neapmokestinami pirkimai be požymio arba su nespecifiniu požymiu",
     descriptionEn: "Flags each line where STI code PVM5 is combined with facts that contradict or fail to support that treatment (vAT-exempt purchases with goods/services class missing or non-specific). Legal basis: PVMĮ 20-33 str..", description: "Žymimos eilutės, kuriose STI kodas PVM5 derinamas su faktais, kurie prieštarauja šiam vertinimui arba jo nepagrindžia. Teisinis pagrindas: PVMĮ 20-33 str..", legal: "PVMĮ 20-33 str.",
     failTpl: "InvoiceNo = @InvoiceNo | Class = @Class | Code = @Code | ShipFrom = @ShipFrom | ShipTo = @ShipTo | CtpReg = @RegType/@RegCountry | NetTotal = @NetTotal", fixEn: "Complete the missing data (goods/services indicator, product code, Ship-From/Ship-To country or counterparty tax registration) so the transaction can be classified unambiguously.", fixLt: "Užpildykite trūkstamus duomenis (prekių/paslaugų požymį, produkto kodą, Ship-From/Ship-To šalį ar kontrahento mokesčių registracijos duomenis), kad sandorį būtų galima vienareikšmiškai klasifikuoti.",
@@ -3414,6 +3416,7 @@ function runAuditRules(data) {
     let hits = [];
     let error = null;
     if (applicable) { try { hits = evalVatRule(rule, data, ctx) || []; } catch (e) { error = e.message; } }
+    if (rule.dedupeBy && hits.length > 1) { const seen = new Set(); hits = hits.filter((row) => { const k = row && row[rule.dedupeBy] != null ? String(row[rule.dedupeBy]) : JSON.stringify(row); if (seen.has(k)) return false; seen.add(k); return true; }); }
     const status = error ? "error" : !applicable ? "na" : hits.length ? "flagged" : "clear";
     return {
       id: rule.id, severity: rule.severity, level: rule.level, kind: rule.kind, dataTypes: rule.dataTypes, refType: rule.refType, scope: rule.scope,
@@ -3757,7 +3760,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @id | RecordID = @rec | AccountID = @acct",
     fixEn: "Add the referenced account to the chart of accounts, or correct the line's AccountID.",
     fixLt: "Įtraukite nurodytą sąskaitą į sąskaitų planą arba pataisykite eilutės AccountID.",
-    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.accountID && !ctx.accountMap.has(l.accountID)) out.push({ id: t.transactionID || "—", rec: l.recordID || "—", acct: l.accountID }); })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { if (!(d.accounts || []).length) return []; const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.accountID && !ctx.accountMap.has(l.accountID)) out.push({ id: t.transactionID || "—", rec: l.recordID || "—", acct: l.accountID }); })); return out; } },
   { id: "SAFT_GLT_004", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "Transaction", requires: "transactions",
     title: "Operacijos data turi patekti į mokestinį laikotarpį",
     titleEn: "Transaction date must fall within the fiscal period",
@@ -3766,7 +3769,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @id | TransactionDate = @date | Period = @period",
     fixEn: "Confirm the posting period; transactions dated outside the declared fiscal period usually indicate a wrong period or export window.",
     fixLt: "Patikrinkite apskaitos laikotarpį; už deklaruoto laikotarpio ribų datuotos operacijos paprastai rodo neteisingą laikotarpį ar eksporto langą.",
-    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.transactions || []).forEach((x) => { const dt = (x.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ id: x.transactionID || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.transactions || []).forEach((x) => { const dt = (x.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ id: x.transactionID || "—", date: dt, period: `${lo}…${hi}` }); }); return out; } },
   { id: "SAFT_GLT_005", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "TransactionLine", requires: "transactions",
     title: "Operacijos eilutė turi turėti debeto arba kredito sumą",
     titleEn: "Each transaction line must carry a debit or a credit amount",
@@ -3775,7 +3778,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @id | RecordID = @rec",
     fixEn: "Populate either a debit or a credit amount on every GL line.",
     fixLt: "Užpildykite arba debeto, arba kredito sumą kiekvienoje DK eilutėje.",
-    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.debitAmount == null && l.creditAmount == null) out.push({ id: t.transactionID || "—", rec: l.recordID || "—" }); })); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.debitAmount == null && l.creditAmount == null) out.push({ id: t.transactionID || "—", rec: l.recordID || "—" }); })); return out; } },
   { id: "SAFT_GLT_006", family: "SCHEMA", category: "GL Transactions", severity: "Low", dataTypes: "F-Full; PA", refType: "GeneralLedgerEntries", requires: "transactions",
     title: "DK kontrolinės sumos turi sutapti su faktiniais įrašais",
     titleEn: "GL control totals must match the actual entries",
@@ -3822,7 +3825,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | NetTotal = @net | LinesSum = @sum | Diff = @diff",
     fixEn: "Reconcile the invoice: the sum of line amounts should equal DocumentTotals/NetTotal.",
     fixLt: "Suderinkite sąskaitą: eilučių sumų suma turi būti lygi DocumentTotals/NetTotal.",
-    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const lines = i.lines || []; if (!lines.length || !i.documentTotals) return; let s = 0, has = false; lines.forEach((l) => { const amt = l.settlementAmount ?? (l.creditAmount != null ? l.creditAmount : (l.debitAmount != null ? l.debitAmount : (l.tax?.taxableAmount ?? null))); if (amt != null) { s += amt; has = true; } }); if (has) { const net = i.documentTotals.netTotal || 0; if (!within(net, s, Math.max(0.05, Math.abs(net) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(net), sum: r2s(s), diff: r2s(net - s) }); } }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const lines = i.lines || []; if (!lines.length || !i.documentTotals) return; let s = 0, has = false; lines.forEach((l) => { const amt = l.settlementAmount ?? (l.creditAmount != null ? l.creditAmount : (l.debitAmount != null ? l.debitAmount : (l.tax?.taxableAmount ?? null))); if (amt != null) { s += amt; has = true; } }); if (has) { const net = i.documentTotals.netTotal || 0; if (!within(net, s, Math.max(0.05, Math.abs(net) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(net), sum: r2s(s), diff: r2s(net - s) }); } }); return out; } },
   { id: "SAFT_SAL_005", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "InvoiceLine", requires: "sales",
     title: "Pardavimo sąskaitų eilučių mokesčių kodai turi egzistuoti mokesčių lentelėje",
     titleEn: "Sales line tax codes must exist in the tax table",
@@ -3831,7 +3834,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | TaxCode = @tax",
     fixEn: "Add the tax code to the tax table, or correct the line to use a defined code.",
     fixLt: "Įtraukite mokesčių kodą į mokesčių lentelę arba pataisykite eilutę naudoti apibrėžtą kodą.",
-    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); const out = []; (d.sales?.items || []).forEach((i) => (i.lines || []).forEach((l) => { const tc = l.tax?.taxCode; if (tc && !codes.has(tc)) out.push({ no: i.invoiceNo || "—", tax: tc }); })); return out.slice(0, 200); } },
+    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); const out = []; (d.sales?.items || []).forEach((i) => (i.lines || []).forEach((l) => { const tc = l.tax?.taxCode; if (tc && !codes.has(tc)) out.push({ no: i.invoiceNo || "—", tax: tc }); })); return out; } },
   { id: "SAFT_SAL_006", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "Invoice", requires: "sales",
     title: "Pardavimo sąskaitos data turi patekti į mokestinį laikotarpį",
     titleEn: "Sales invoice date must fall within the fiscal period",
@@ -3840,7 +3843,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | InvoiceDate = @date | Period = @period",
     fixEn: "Confirm the period; invoices dated outside the declared period usually indicate a wrong export window.",
     fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos sąskaitos paprastai rodo neteisingą eksporto langą.",
-    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.sales?.items || []).forEach((i) => { const dt = (i.invoiceDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ no: i.invoiceNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.sales?.items || []).forEach((i) => { const dt = (i.invoiceDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ no: i.invoiceNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out; } },
   { id: "SAFT_SAL_007", family: "SCHEMA", category: "Sales", severity: "Low", dataTypes: "F-Full; SI-Sales Invoices", refType: "DocumentTotals", requires: "sales",
     title: "Bruto = neto + PVM pardavimo sąskaitose",
     titleEn: "Gross total should equal net total plus tax payable",
@@ -3849,7 +3852,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Net = @net | Tax = @tax | Gross = @gross | Expected = @expected",
     fixEn: "Correct the document totals so gross = net + tax.",
     fixLt: "Pataisykite sąskaitos sumas, kad bruto = neto + PVM.",
-    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const dt = i.documentTotals; if (!dt) return; if (dt.grossTotal != null && (dt.netTotal != null || dt.taxPayable != null)) { const exp = (dt.netTotal || 0) + (dt.taxPayable || 0); if (!within(dt.grossTotal, exp, Math.max(0.05, Math.abs(exp) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(dt.netTotal), tax: r2s(dt.taxPayable), gross: r2s(dt.grossTotal), expected: r2s(exp) }); } }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const dt = i.documentTotals; if (!dt) return; if (dt.grossTotal != null && (dt.netTotal != null || dt.taxPayable != null)) { const exp = (dt.netTotal || 0) + (dt.taxPayable || 0); if (!within(dt.grossTotal, exp, Math.max(0.05, Math.abs(exp) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(dt.netTotal), tax: r2s(dt.taxPayable), gross: r2s(dt.grossTotal), expected: r2s(exp) }); } }); return out; } },
 
   // ── PURCHASE INVOICES ─────────────────────────────────────────────
   { id: "SAFT_PUR_001", family: "SCHEMA", category: "Purchases", severity: "High", dataTypes: "F-Full; PI-Purchase Invoices", refType: "Invoice", requires: "purchases",
@@ -3878,7 +3881,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | NetTotal = @net | LinesSum = @sum | Diff = @diff",
     fixEn: "Reconcile the invoice: the sum of line amounts should equal DocumentTotals/NetTotal.",
     fixLt: "Suderinkite sąskaitą: eilučių sumų suma turi būti lygi DocumentTotals/NetTotal.",
-    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const lines = i.lines || []; if (!lines.length || !i.documentTotals) return; let s = 0, has = false; lines.forEach((l) => { const amt = l.settlementAmount ?? (l.debitAmount != null ? l.debitAmount : (l.creditAmount != null ? l.creditAmount : (l.tax?.taxableAmount ?? null))); if (amt != null) { s += amt; has = true; } }); if (has) { const net = i.documentTotals.netTotal || 0; if (!within(net, s, Math.max(0.05, Math.abs(net) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(net), sum: r2s(s), diff: r2s(net - s) }); } }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const lines = i.lines || []; if (!lines.length || !i.documentTotals) return; let s = 0, has = false; lines.forEach((l) => { const amt = l.settlementAmount ?? (l.debitAmount != null ? l.debitAmount : (l.creditAmount != null ? l.creditAmount : (l.tax?.taxableAmount ?? null))); if (amt != null) { s += amt; has = true; } }); if (has) { const net = i.documentTotals.netTotal || 0; if (!within(net, s, Math.max(0.05, Math.abs(net) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(net), sum: r2s(s), diff: r2s(net - s) }); } }); return out; } },
   { id: "SAFT_PUR_004", family: "SCHEMA", category: "Purchases", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "InvoiceLine", requires: "purchases",
     title: "Pirkimo sąskaitų eilučių mokesčių kodai turi egzistuoti mokesčių lentelėje",
     titleEn: "Purchase line tax codes must exist in the tax table",
@@ -3887,16 +3890,56 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | TaxCode = @tax",
     fixEn: "Add the tax code to the tax table, or correct the line to use a defined code.",
     fixLt: "Įtraukite mokesčių kodą į mokesčių lentelę arba pataisykite eilutę naudoti apibrėžtą kodą.",
-    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); const out = []; (d.purchases?.items || []).forEach((i) => (i.lines || []).forEach((l) => { const tc = l.tax?.taxCode; if (tc && !codes.has(tc)) out.push({ no: i.invoiceNo || "—", tax: tc }); })); return out.slice(0, 200); } },
+    evaluate: (d) => { if (!(d.taxCodes || []).length) return []; const codes = new Set((d.taxCodes || []).map((t) => t.taxCode)); const out = []; (d.purchases?.items || []).forEach((i) => (i.lines || []).forEach((l) => { const tc = l.tax?.taxCode; if (tc && !codes.has(tc)) out.push({ no: i.invoiceNo || "—", tax: tc }); })); return out; } },
   { id: "SAFT_PUR_005", family: "SCHEMA", category: "Purchases", severity: "Low", dataTypes: "F-Full; PI-Purchase Invoices", refType: "DocumentTotals", requires: "purchases",
     title: "Bruto = neto + PVM pirkimo sąskaitose",
     titleEn: "Gross total should equal net total plus tax payable (purchases)",
-    description: "DocumentTotals: GrossTotal turi būti lygus NetTotal + TaxPayable (kai visi pateikti).",
+    description: "DocumentTotals: GrossTotal turi būti lygus NetTotal + TaxPayable (kai visi pateikti). Atvirkštinio apmokestinimo išdėstymas (PVM dokumento sumose = 0, bet GrossTotal = NetTotal + Σ eilučių PVM) laikomas suderinamu.",
     legalReq: "SAF-T XSD v2.01 — DocumentTotals arithmetic",
     failTpl: "InvoiceNo = @no | Net = @net | Tax = @tax | Gross = @gross | Expected = @expected",
     fixEn: "Correct the document totals so gross = net + tax.",
     fixLt: "Pataisykite sąskaitos sumas, kad bruto = neto + PVM.",
-    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const dt = i.documentTotals; if (!dt) return; if (dt.grossTotal != null && (dt.netTotal != null || dt.taxPayable != null)) { const exp = (dt.netTotal || 0) + (dt.taxPayable || 0); if (!within(dt.grossTotal, exp, Math.max(0.05, Math.abs(exp) * 0.01))) out.push({ no: i.invoiceNo || "—", net: r2s(dt.netTotal), tax: r2s(dt.taxPayable), gross: r2s(dt.grossTotal), expected: r2s(exp) }); } }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const dt = i.documentTotals; if (!dt) return; if (dt.grossTotal != null && (dt.netTotal != null || dt.taxPayable != null)) { const exp = (dt.netTotal || 0) + (dt.taxPayable || 0); if (!within(dt.grossTotal, exp, Math.max(0.05, Math.abs(exp) * 0.01))) { const lineTax = (i.lines || []).reduce((s, l) => s + (l.tax && l.tax.taxAmount != null ? Number(l.tax.taxAmount) || 0 : 0), 0); const exp2 = (dt.netTotal || 0) + lineTax; if (lineTax > 0.005 && within(dt.grossTotal, exp2, Math.max(0.05, Math.abs(exp2) * 0.01))) return; out.push({ no: i.invoiceNo || "—", net: r2s(dt.netTotal), tax: r2s(dt.taxPayable), gross: r2s(dt.grossTotal), expected: r2s(exp) }); } } }); return out; } },
+  { id: "SAFT_VDT_033", family: "SCHEMA", category: "Purchases", severity: "High", dataTypes: "F-Full; PI-Purchase Invoices", refType: "Supplier", requires: "purchases",
+    title: "Tiekėjo PVM mokėtojo kodas pirkimo sąskaitose",
+    titleEn: "Supplier VAT payer code present for purchase invoices",
+    description: "Pirkimo sąskaitose nurodyti tiekėjai pagrindinėje duomenų byloje turi turėti PVM mokėtojo kodą (TaxRegistrationNumber). Atitinka VMI TAX_VDT_033.",
+    legalReq: "PVMĮ 80 str.; VMI TAX_VDT_033",
+    failTpl: "SupplierID = @sup | Invoices = @n | VAT code = @vat",
+    fixEn: "Add the supplier's VAT payer code to MasterFiles, or confirm the supplier is not a VAT payer.",
+    fixLt: "Įrašykite tiekėjo PVM mokėtojo kodą pagrindinėje duomenų byloje arba patvirtinkite, kad tiekėjas nėra PVM mokėtojas.",
+    evaluate: (d) => { const vat = new Map(); (d.suppliers || []).forEach((s) => { const v = s.taxRegistrationNumber || (s.taxRegistrations || []).map((t) => t.number).find(Boolean) || ""; vat.set(s.supplierID, v); }); const cnt = new Map(); (d.purchases?.items || []).forEach((i) => { if (!i.supplierID || !vat.has(i.supplierID)) return; if (!vat.get(i.supplierID)) cnt.set(i.supplierID, (cnt.get(i.supplierID) || 0) + 1); }); return [...cnt.entries()].map(([sup, n]) => ({ sup, n, vat: "—" })); } },
+  { id: "SAFT_VDT_038", family: "SCHEMA", category: "Sales", severity: "High", dataTypes: "F-Full; SI-Sales Invoices", refType: "Customer", requires: "sales",
+    title: "Pirkėjo PVM mokėtojo kodas pardavimo sąskaitose",
+    titleEn: "Buyer VAT payer code present for sales invoices",
+    description: "Pardavimo sąskaitose nurodyti pirkėjai pagrindinėje duomenų byloje turi turėti PVM mokėtojo kodą (TaxRegistrationNumber), kai jie yra PVM mokėtojai. Atitinka VMI TAX_VDT_038.",
+    legalReq: "PVMĮ 80 str.; VMI TAX_VDT_038",
+    failTpl: "CustomerID = @cus | Invoices = @n | VAT code = @vat",
+    fixEn: "Add the buyer's VAT payer code to MasterFiles, or confirm the buyer is not a VAT payer.",
+    fixLt: "Įrašykite pirkėjo PVM mokėtojo kodą pagrindinėje duomenų byloje arba patvirtinkite, kad pirkėjas nėra PVM mokėtojas.",
+    evaluate: (d) => { const vat = new Map(); (d.customers || []).forEach((c) => { const v = c.taxRegistrationNumber || (c.taxRegistrations || []).map((t) => t.number).find(Boolean) || ""; vat.set(c.customerID, v); }); const cnt = new Map(); (d.sales?.items || []).forEach((i) => { if (!i.customerID || !vat.has(i.customerID)) return; if (!vat.get(i.customerID)) cnt.set(i.customerID, (cnt.get(i.customerID) || 0) + 1); }); return [...cnt.entries()].map(([cus, n]) => ({ cus, n, vat: "—" })); } },
+  { id: "SAFT_CTL_TOTALS", family: "SCHEMA", category: "Control totals", severity: "Low", dataTypes: "F-Full", refType: "SourceDocuments", requires: "any",
+    title: "Pirminių dokumentų sekcijų TotalDebit/TotalCredit turi atitikti dokumentų sumas",
+    titleEn: "Source-document section TotalDebit/TotalCredit must match the documents",
+    description: "Kiekvienos pirminių dokumentų sekcijos deklaruoti TotalDebit ir TotalCredit lyginami su faktine dokumentų bendrųjų sumų suma. Apibendrina VMI SCHEMA_DVT_050–057.",
+    legalReq: "SAF-T XSD v2.01 — section control totals; VMI SCHEMA_DVT_050–057",
+    failTpl: "Section = @sec | Declared = @decl | Computed = @comp | Side = @side",
+    fixEn: "Recompute the section's TotalDebit/TotalCredit from the documents it contains.",
+    fixLt: "Perskaičiuokite sekcijos TotalDebit/TotalCredit pagal joje esančius dokumentus.",
+    evaluate: (d) => { const out = []; const chk = (sec, decl, comp, side) => { if (decl == null || comp == null) return; const tol = Math.max(0.05, Math.abs(decl) * 0.005); if (Math.abs(decl - comp) > tol) out.push({ sec, decl: Math.round(decl * 100) / 100, comp: Math.round(comp * 100) / 100, side }); };
+      const sumInv = (items, side) => (items || []).reduce((s, i) => { const g = i.documentTotals?.grossTotal; if (g == null) return s; const ks = String(i.invoiceType || "").toUpperCase() === "KS"; const main = side === "credit"; return s + ((ks ? !main : main) ? Math.abs(g) : 0); }, 0);
+      if (d.sales) { chk("SalesInvoices", d.sales.meta?.totalCredit, sumInv(d.sales.items, "credit"), "credit"); chk("SalesInvoices", d.sales.meta?.totalDebit, sumInv(d.sales.items, "debit"), "debit"); }
+      if (d.purchases) { chk("PurchaseInvoices", d.purchases.meta?.totalDebit, sumInv(d.purchases.items, "credit"), "debit"); chk("PurchaseInvoices", d.purchases.meta?.totalCredit, sumInv(d.purchases.items, "debit"), "credit"); }
+      return out; } },
+  { id: "SAFT_DVT_SHIP", family: "SCHEMA", category: "Data validation", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "DocumentTotals", requires: "any",
+    title: "Gabenimo išlaidų suma dokumento sumose turi atitikti eilučių sumą",
+    titleEn: "Shipping-costs total must equal the sum of line shipping costs",
+    description: "Pirkimo ir pardavimo sąskaitose deklaruota ShippingCostsAmountTotal lyginama su eilučių ShippingCostsAmount aritmetine suma. Atitinka VMI SCHEMA_DVT_040/041.",
+    legalReq: "SAF-T XSD v2.01 — DocumentTotals/ShippingCostsAmountTotal; VMI SCHEMA_DVT_040/041",
+    failTpl: "InvoiceNo = @no | Declared = @decl | Lines = @comp | Scope = @scope",
+    fixEn: "Recompute the shipping-costs total from the invoice lines.",
+    fixLt: "Perskaičiuokite gabenimo išlaidų sumą pagal sąskaitos eilutes.",
+    evaluate: (d) => { const out = []; const scan = (items, scope) => (items || []).forEach((i) => { const decl = i.documentTotals?.shippingCostsTotal; if (decl == null) return; const comp = (i.lines || []).reduce((s, l) => s + (l.shippingCosts != null ? Number(l.shippingCosts) || 0 : 0), 0); const tol = Math.max(0.02, Math.abs(decl) * 0.005); if (Math.abs(decl - comp) > tol) out.push({ no: i.invoiceNo || "—", decl: Math.round(decl * 100) / 100, comp: Math.round(comp * 100) / 100, scope }); }); scan(d.purchases?.items, "PI"); scan(d.sales?.items, "SI"); return out; } },
 
   // ── PAYMENTS ──────────────────────────────────────────────────────
   { id: "SAFT_PAY_001", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MG", refType: "Payment", requires: "payments",
@@ -3916,7 +3959,7 @@ const STRUCTURAL_RULES = [
     failTpl: "PaymentRefNo = @ref | CustomerID = @cust | SupplierID = @sup",
     fixEn: "Add the referenced customer/supplier to master data, or correct the payment line's reference.",
     fixLt: "Įtraukite nurodytą pirkėją/tiekėją į pagrindinius duomenis arba pataisykite mokėjimo eilutės nuorodą.",
-    evaluate: (d, ctx) => { const hasC = (d.customers || []).length, hasS = (d.suppliers || []).length; if (!hasC && !hasS) return []; const out = []; (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => { if (l.customerID && hasC && !ctx.customerMap.has(l.customerID)) out.push({ ref: p.paymentRefNo || "—", cust: l.customerID, sup: l.supplierID || "—" }); else if (l.supplierID && hasS && !ctx.supplierMap.has(l.supplierID)) out.push({ ref: p.paymentRefNo || "—", cust: l.customerID || "—", sup: l.supplierID }); })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const hasC = (d.customers || []).length, hasS = (d.suppliers || []).length; if (!hasC && !hasS) return []; const out = []; (d.payments || []).forEach((p) => (p.lines || []).forEach((l) => { if (l.customerID && hasC && !ctx.customerMap.has(l.customerID)) out.push({ ref: p.paymentRefNo || "—", cust: l.customerID, sup: l.supplierID || "—" }); else if (l.supplierID && hasS && !ctx.supplierMap.has(l.supplierID)) out.push({ ref: p.paymentRefNo || "—", cust: l.customerID || "—", sup: l.supplierID }); })); return out; } },
 
   // ── STOCK MOVEMENTS ───────────────────────────────────────────────
   { id: "SAFT_MOV_001", family: "SCHEMA", category: "Stock Movements", severity: "Low", dataTypes: "F-Full; MG", refType: "StockMovement", requires: "stockMovements",
@@ -3996,7 +4039,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Entity = @entity | ID = @id | Country = @country",
     fixEn: "Correct any non-ISO country code on customer/supplier records to a valid two-letter ISO code.",
     fixLt: "Pataisykite bet kokį ne ISO šalies kodą pirkėjų/tiekėjų įrašuose į galiojantį dviraidį ISO kodą.",
-    evaluate: (d) => { const out = []; (d.customers || []).forEach((c) => { const cc = (c.addressCountry || c.country || "").trim(); if (cc && !ISO2.has(cc.toUpperCase())) out.push({ entity: "Customer", id: c.customerID || "—", country: cc }); }); (d.suppliers || []).forEach((s) => { const cc = (s.addressCountry || s.country || "").trim(); if (cc && !ISO2.has(cc.toUpperCase())) out.push({ entity: "Supplier", id: s.supplierID || "—", country: cc }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.customers || []).forEach((c) => { const cc = (c.addressCountry || c.country || "").trim(); if (cc && !ISO2.has(cc.toUpperCase())) out.push({ entity: "Customer", id: c.customerID || "—", country: cc }); }); (d.suppliers || []).forEach((s) => { const cc = (s.addressCountry || s.country || "").trim(); if (cc && !ISO2.has(cc.toUpperCase())) out.push({ entity: "Supplier", id: s.supplierID || "—", country: cc }); }); return out; } },
   { id: "SAFT_TAX_004", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxTable", requires: "any",
     title: "Mokesčių klasifikatoriaus dalyje turi būti bent vienas LT valstybės kodas",
     titleEn: "TaxTable should declare at least one LT country code",
@@ -4014,7 +4057,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | InvoiceDate = @date | Period = @period",
     fixEn: "Confirm the period; purchase invoices dated outside the declared period usually indicate a wrong export window.",
     fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos pirkimo sąskaitos paprastai rodo neteisingą eksporto langą.",
-    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.purchases?.items || []).forEach((i) => { const dt = (i.invoiceDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ no: i.invoiceNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.purchases?.items || []).forEach((i) => { const dt = (i.invoiceDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ no: i.invoiceNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out; } },
   { id: "SAFT_MOV_004", family: "SCHEMA", category: "Stock Movements", severity: "Low", dataTypes: "F-Full; MG", refType: "StockMovement", requires: "stockMovements",
     title: "Prekių judėjimo data turi patekti į mokestinį laikotarpį",
     titleEn: "Stock movement date must fall within the fiscal period",
@@ -4023,7 +4066,7 @@ const STRUCTURAL_RULES = [
     failTpl: "SourceDocumentID = @doc | Date = @date | Period = @period",
     fixEn: "Confirm the period; stock movements dated outside the declared period usually indicate a wrong export window.",
     fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos prekių judėjimo operacijos paprastai rodo neteisingą eksporto langą.",
-    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.stockMovements || []).forEach((s) => { const dt = (s.movementDate || s.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ doc: s.sourceDocumentID || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.stockMovements || []).forEach((s) => { const dt = (s.movementDate || s.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ doc: s.sourceDocumentID || "—", date: dt, period: `${lo}…${hi}` }); }); return out; } },
   { id: "SAFT_ATX_002", family: "SCHEMA", category: "Asset Transactions", severity: "Low", dataTypes: "F-Full; AS", refType: "AssetTransaction", requires: "assetTransactions",
     title: "Turto operacijos data turi patekti į mokestinį laikotarpį",
     titleEn: "Asset transaction date must fall within the fiscal period",
@@ -4032,7 +4075,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetID = @id | Date = @date | Period = @period",
     fixEn: "Confirm the period; asset transactions dated outside the declared period usually indicate a wrong export window.",
     fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuotos turto operacijos paprastai rodo neteisingą eksporto langą.",
-    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.assetTransactions || []).forEach((a) => { const dt = (a.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ id: a.assetID || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.assetTransactions || []).forEach((a) => { const dt = (a.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ id: a.assetID || "—", date: dt, period: `${lo}…${hi}` }); }); return out; } },
   { id: "SAFT_RATE_PVM21", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Standartinio tarifo PVM kodai (PVM1/6/9/16/20/21/25/32/43) turi atitikti 21 proc.",
     titleEn: "Standard-rate PVM codes must carry 21% where a non-zero rate is declared",
@@ -4041,7 +4084,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the tax-table rate for this STITaxCode to 21%, or map the entry to the correct classifier code.",
     fixLt: "Pataisykite mokesčių lentelės tarifą šiam STITaxCode į 21 proc. arba susiekite įrašą su teisingu klasifikatoriaus kodu.",
-    evaluate: (d) => { const C = ["PVM1","PVM6","PVM9","PVM16","PVM20","PVM21","PVM25","PVM32","PVM43"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 21) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 21 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const C = ["PVM1","PVM6","PVM9","PVM16","PVM20","PVM21","PVM25","PVM32","PVM43"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 21) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 21 }); }); return out; } },
   { id: "SAFT_RATE_PVM9", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Lengvatinio 9 proc. tarifo PVM kodai (PVM2/7/17/26/30/44/52/54/57) turi atitikti 9 proc.",
     titleEn: "Reduced-rate (9%) PVM codes must carry 9% where a non-zero rate is declared",
@@ -4050,7 +4093,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the rate to 9%, or remap the entry to the right classifier code.",
     fixLt: "Pataisykite tarifą į 9 proc. arba susiekite įrašą su teisingu klasifikatoriaus kodu.",
-    evaluate: (d) => { const C = ["PVM2","PVM7","PVM17","PVM26","PVM30","PVM44","PVM52","PVM54","PVM57"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 9) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 9 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const C = ["PVM2","PVM7","PVM17","PVM26","PVM30","PVM44","PVM52","PVM54","PVM57"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 9) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 9 }); }); return out; } },
   { id: "SAFT_RATE_PVM5", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Lengvatinio 5 proc. tarifo PVM kodai (PVM3/8/18/27/31/37/40/45/53) turi atitikti 5 proc.",
     titleEn: "Reduced-rate (5%) PVM codes must carry 5% where a non-zero rate is declared",
@@ -4059,7 +4102,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the rate to 5%, or remap the entry to the right classifier code.",
     fixLt: "Pataisykite tarifą į 5 proc. arba susiekite įrašą su teisingu klasifikatoriaus kodu.",
-    evaluate: (d) => { const C = ["PVM3","PVM8","PVM18","PVM27","PVM31","PVM37","PVM40","PVM45","PVM53"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 5) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 5 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const C = ["PVM3","PVM8","PVM18","PVM27","PVM31","PVM37","PVM40","PVM45","PVM53"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 5) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 5 }); }); return out; } },
   { id: "SAFT_RATE_PVM6", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Kompensacinio 6 proc. tarifo kodas (PVM49) turi atitikti 6 proc.",
     titleEn: "The 6% compensatory-rate code (PVM49) must carry 6% where a non-zero rate is declared",
@@ -4068,7 +4111,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the rate to 6%, or remap the entry.",
     fixLt: "Pataisykite tarifą į 6 proc. arba susiekite įrašą iš naujo.",
-    evaluate: (d) => { const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (sti !== "PVM49") return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 6) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 6 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (sti !== "PVM49") return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 6) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 6 }); }); return out; } },
   { id: "SAFT_RATE_PVM12", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Naujo 12 proc. tarifo kodai (PVM58/59/60, nuo 2026-01-01) turi atitikti 12 proc.",
     titleEn: "New 12% rate codes (PVM58/59/60, from 2026-01-01) must carry 12% where a non-zero rate is declared",
@@ -4077,7 +4120,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the rate to 12%, or remap the entry.",
     fixLt: "Pataisykite tarifą į 12 proc. arba susiekite įrašą iš naujo.",
-    evaluate: (d) => { const C = ["PVM58","PVM59","PVM60"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 12) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 12 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const C = ["PVM58","PVM59","PVM60"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01 && Math.abs(p - 12) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 12 }); }); return out; } },
   { id: "SAFT_RATE_PVM0", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "0 proc. PVM kodai (PVM12/13/14/28/33/35/38/41/46/50/51/55) negali turėti nenulinio tarifo",
     titleEn: "0% PVM codes must not carry a non-zero rate",
@@ -4086,7 +4129,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = 0",
     fixEn: "Set the rate to 0% for this 0%-classifier code, or remap the entry.",
     fixLt: "Nustatykite 0 proc. tarifą šiam 0 proc. klasifikatoriaus kodui arba susiekite įrašą iš naujo.",
-    evaluate: (d) => { const C = ["PVM12","PVM13","PVM14","PVM28","PVM33","PVM35","PVM38","PVM41","PVM46","PVM50","PVM51","PVM55"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 0 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const C = ["PVM12","PVM13","PVM14","PVM28","PVM33","PVM35","PVM38","PVM41","PVM46","PVM50","PVM51","PVM55"]; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!C.includes(sti)) return; const p = t.taxPercentage; if (p == null) return; if (p > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: 0 }); }); return out; } },
   { id: "SAFT_DET_001", family: "SCHEMA", category: "GL Accounts", severity: "High", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
     title: "Didžiosios knygos sąskaitų likučiai laikotarpio pradžiai turi būti subalansuoti (D = K)",
     titleEn: "Opening trial balance must balance (total debit = total credit)",
@@ -4122,7 +4165,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Date = @date | Amount = @amount",
     fixEn: "Review the underlying contracts/documents for these round-amount purchases; round figures on large invoices warrant substantiation.",
     fixLt: "Peržiūrėkite šių apvalių sumų pirkimų sutartis/dokumentus; didelės apvalios sumos reikalauja pagrindimo.",
-    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a == null || a < 10000) return; if (Math.abs(a % 1000) < 0.005) out.push({ no: i.invoiceNo || "—", date: (i.invoiceDate || "").slice(0, 10), amount: r2s(a) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a == null || a < 10000) return; if (Math.abs(a % 1000) < 0.005) out.push({ no: i.invoiceNo || "—", date: (i.invoiceDate || "").slice(0, 10), amount: r2s(a) }); }); return out; } },
   { id: "SAFT_TRT_005", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; PI", refType: "Invoice", requires: "purchases",
     title: "Reikšmingi pirkimai savaitgaliais (≥ 5 000 EUR)",
     titleEn: "Significant weekend purchases (≥ €5,000)",
@@ -4131,7 +4174,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Date = @date (@weekday) | Amount = @amount",
     fixEn: "Confirm the business reason for large weekend-dated purchase invoices.",
     fixLt: "Patvirtinkite didelių savaitgalį datuotų pirkimo sąskaitų verslo pagrindą.",
-    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); const ds = (i.invoiceDate || "").slice(0, 10); if (a == null || a < 5000 || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return; const day = new Date(ds + "T00:00:00Z").getUTCDay(); if (day === 0 || day === 6) out.push({ no: i.invoiceNo || "—", date: ds, weekday: day === 6 ? "Sat" : "Sun", amount: r2s(a) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.purchases?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); const ds = (i.invoiceDate || "").slice(0, 10); if (a == null || a < 5000 || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return; const day = new Date(ds + "T00:00:00Z").getUTCDay(); if (day === 0 || day === 6) out.push({ no: i.invoiceNo || "—", date: ds, weekday: day === 6 ? "Sat" : "Sun", amount: r2s(a) }); }); return out; } },
   { id: "SAFT_TRT_006", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; PI", refType: "Invoice", requires: "purchases",
     title: "Ženklūs pirkimai laikotarpio pabaigoje (paskutinės 14 d., ≥ 3× vidurkio)",
     titleEn: "Significant end-of-period purchases (last 14 days, ≥ 3× average)",
@@ -4140,7 +4183,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Date = @date | Amount = @amount | Avg = @avg",
     fixEn: "Verify cut-off and substance of large purchases booked in the final two weeks of the period.",
     fixLt: "Patikrinkite laikotarpio pabaigos didelių pirkimų priskyrimo laikotarpiui pagrįstumą ir turinį.",
-    evaluate: (d) => { const t = d?.header?.fiscalYearTo; if (!isISODate(t)) return []; const end = new Date(t.slice(0, 10) + "T00:00:00Z").getTime(); const items = d.purchases?.items || []; if (!items.length) return []; let sum = 0, n = 0; items.forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a != null) { sum += a; n++; } }); const avg = n ? sum / n : 0; const thr = Math.max(5000, 3 * avg); const out = []; items.forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); const ds = (i.invoiceDate || "").slice(0, 10); if (a == null || a < thr || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return; const diff = (end - new Date(ds + "T00:00:00Z").getTime()) / 86400000; if (diff >= 0 && diff <= 14) out.push({ no: i.invoiceNo || "—", date: ds, amount: r2s(a), avg: r2s(avg) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const t = d?.header?.fiscalYearTo; if (!isISODate(t)) return []; const end = new Date(t.slice(0, 10) + "T00:00:00Z").getTime(); const items = d.purchases?.items || []; if (!items.length) return []; let sum = 0, n = 0; items.forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a != null) { sum += a; n++; } }); const avg = n ? sum / n : 0; const thr = Math.max(5000, 3 * avg); const out = []; items.forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); const ds = (i.invoiceDate || "").slice(0, 10); if (a == null || a < thr || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return; const diff = (end - new Date(ds + "T00:00:00Z").getTime()) / 86400000; if (diff >= 0 && diff <= 14) out.push({ no: i.invoiceNo || "—", date: ds, amount: r2s(a), avg: r2s(avg) }); }); return out; } },
   { id: "SAFT_TRT_007", family: "SCHEMA", category: "Risk Analytics", severity: "Low", dataTypes: "F-Full; SI", refType: "Invoice", requires: "sales",
     title: "Ženklios kreditinės pardavimo sąskaitos (≥ 10 000 EUR)",
     titleEn: "Significant sales credit notes (≥ €10,000)",
@@ -4149,7 +4192,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Date = @date | Amount = @amount | Type = @type",
     fixEn: "Review the documentation for large credit notes (returns, discounts, corrections) and their VAT treatment.",
     fixLt: "Peržiūrėkite didelių kreditinių sąskaitų dokumentaciją (grąžinimai, nuolaidos, koregavimai) ir jų PVM traktavimą.",
-    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a == null) return; const ty = String(i.invoiceType || "").toUpperCase(); const isCredit = a < 0 || ty === "KS" || ty === "K"; if (isCredit && Math.abs(a) >= 10000) out.push({ no: i.invoiceNo || "—", date: (i.invoiceDate || "").slice(0, 10), amount: r2s(a), type: ty || "neg" }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.sales?.items || []).forEach((i) => { const a = (i.documentTotals && i.documentTotals.grossTotal != null) ? i.documentTotals.grossTotal : ((i.documentTotals && i.documentTotals.netTotal != null) ? i.documentTotals.netTotal : null); if (a == null) return; const ty = String(i.invoiceType || "").toUpperCase(); const isCredit = a < 0 || ty === "KS" || ty === "K"; if (isCredit && Math.abs(a) >= 10000) out.push({ no: i.invoiceNo || "—", date: (i.invoiceDate || "").slice(0, 10), amount: r2s(a), type: ty || "neg" }); }); return out; } },
   { id: "SAFT_INT_017", family: "SCHEMA", category: "GL Transactions", severity: "High", dataTypes: "F-Full", refType: "TransactionID", requires: "transactions",
     title: "Pirminių dokumentų ūkinių operacijų numeriai (TransactionID) turi egzistuoti didžiosios knygos įrašuose",
     titleEn: "Source-document TransactionIDs must resolve to GL transactions",
@@ -4158,7 +4201,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Source = @src | Ref = @ref | TransactionID = @tid",
     fixEn: "Include the referenced GL transaction in GeneralLedgerEntries, or correct the document's TransactionID.",
     fixLt: "Įtraukite nurodytą operaciją į GeneralLedgerEntries arba pataisykite dokumento TransactionID.",
-    evaluate: (d) => { const tx = d.transactions || []; if (!tx.length) return []; const ids = new Set(); tx.forEach((t) => { if (t.transactionID) ids.add(String(t.transactionID).trim()); }); if (!ids.size) return []; const out = []; const chk = (tid, src, ref) => { const v = String(tid || "").trim(); if (v && !ids.has(v)) out.push({ src, ref: ref || "—", tid: v }); }; (d.sales?.items || []).forEach((i) => chk(i.transactionID, "SalesInvoice", i.invoiceNo)); (d.purchases?.items || []).forEach((i) => chk(i.transactionID, "PurchaseInvoice", i.invoiceNo)); (d.payments || []).forEach((p) => chk(p.transactionID, "Payment", p.paymentRefNo)); (d.stockMovements || []).forEach((s) => chk(s.glTransactionID, "StockMovement", s.sourceDocumentID || "")); (d.assetTransactions || []).forEach((t) => chk(t.glTransactionID, "AssetTransaction", t.assetTransactionID || t.assetID || "")); return out.slice(0, 200); } },
+    evaluate: (d) => { const tx = d.transactions || []; if (!tx.length) return []; const ids = new Set(); tx.forEach((t) => { if (t.transactionID) ids.add(String(t.transactionID).trim()); }); if (!ids.size) return []; const out = []; const chk = (tid, src, ref) => { const v = String(tid || "").trim(); if (v && !ids.has(v)) out.push({ src, ref: ref || "—", tid: v }); }; (d.sales?.items || []).forEach((i) => chk(i.transactionID, "SalesInvoice", i.invoiceNo)); (d.purchases?.items || []).forEach((i) => chk(i.transactionID, "PurchaseInvoice", i.invoiceNo)); (d.payments || []).forEach((p) => chk(p.transactionID, "Payment", p.paymentRefNo)); (d.stockMovements || []).forEach((s) => chk(s.glTransactionID, "StockMovement", s.sourceDocumentID || "")); (d.assetTransactions || []).forEach((t) => chk(t.glTransactionID, "AssetTransaction", t.assetTransactionID || t.assetID || "")); return out; } },
   { id: "SAFT_PAY_003", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MP", refType: "Payment", requires: "payments",
     title: "Mokėjimo data turi patekti į mokestinį laikotarpį",
     titleEn: "Payment date must fall within the fiscal period",
@@ -4167,7 +4210,7 @@ const STRUCTURAL_RULES = [
     failTpl: "PaymentRefNo = @ref | Date = @date | Period = @period",
     fixEn: "Confirm the period; payments dated outside the declared period usually indicate a wrong export window.",
     fixLt: "Patikrinkite laikotarpį; už deklaruoto laikotarpio datuoti mokėjimai paprastai rodo neteisingą eksporto langą.",
-    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.payments || []).forEach((p) => { const dt = (p.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ ref: p.paymentRefNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const f = d?.header?.fiscalYearFrom, t = d?.header?.fiscalYearTo; if (!isISODate(f) || !isISODate(t)) return []; const lo = f.slice(0,10), hi = t.slice(0,10); const out = []; (d.payments || []).forEach((p) => { const dt = (p.transactionDate || "").slice(0,10); if (dt && (dt < lo || dt > hi)) out.push({ ref: p.paymentRefNo || "—", date: dt, period: `${lo}…${hi}` }); }); return out; } },
   { id: "SAFT_AET_001", family: "SCHEMA", category: "GL Accounts", severity: "Low", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
     title: "Fundamentinė apskaitos lygybė: turtas (1-2 kl.) = nuosavybė + įsipareigojimai (3-4 kl.)",
     titleEn: "Fundamental accounting equation: assets (classes 1-2) = equity + liabilities (classes 3-4)",
@@ -4185,7 +4228,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
     fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
     fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
-    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("120") === 0 && id.indexOf("1250") !== 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("120") === 0 && id.indexOf("1250") !== 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out; } },
   { id: "SAFT_BAT_012", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
     title: "Žemės, kaip investicinio turto, nusidėvėjimas neskaičiuojamas (1250x)",
     titleEn: "Investment-property land must not be depreciated (accounts 1250x)",
@@ -4194,7 +4237,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
     fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
     fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
-    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("1250") === 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("1250") === 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out; } },
   { id: "SAFT_BAT_013", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
     title: "Avansų ir vykdomų statybos darbų nusidėvėjimas neskaičiuojamas (126x)",
     titleEn: "Advances and construction-in-progress must not be depreciated (accounts 126x)",
@@ -4203,7 +4246,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
     fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
     fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
-    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("126") === 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(id.indexOf("126") === 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out; } },
   { id: "SAFT_BAT_015", family: "SCHEMA", category: "Assets", severity: "High", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
     title: "Ruošiamo naudoti turto nusidėvėjimas neskaičiuojamas (1212/1222/1232/1242/1272/1282)",
     titleEn: "Assets being prepared for use must not be depreciated",
@@ -4212,7 +4255,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetID = @id | Account = @acct | AccumDep = @accumDep | DepPeriod = @depPeriod",
     fixEn: "Remove the depreciation from this asset class or move the asset to the correct account; depreciation here is an accounting error.",
     fixLt: "Pašalinkite nusidėvėjimą šiai turto klasei arba perkelkite turtą į teisingą sąskaitą; nusidėvėjimas čia yra apskaitos klaida.",
-    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(["1212","1222","1232","1242","1272","1282"].indexOf(id) >= 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!(["1212","1222","1232","1242","1272","1282"].indexOf(id) >= 0)) return; const ad = a.accumulatedDepreciation || 0, dp = a.depreciationForPeriod || 0; if (ad > 0.005 || dp > 0.005) out.push({ id: a.assetID || "—", acct: id, accumDep: r2s(ad), depPeriod: r2s(dp) }); }); return out; } },
   { id: "SAFT_OST_001", family: "SCHEMA", category: "Payments", severity: "Low", dataTypes: "F-Full; MP", refType: "Payment", requires: "payments",
     title: "Mokėjimai be nurodytų banko sąskaitų numerių",
     titleEn: "Payments without bank account references",
@@ -4231,7 +4274,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | STITaxCode = @sti",
     fixEn: "Replace with the correct supply-side code (e.g., PVM1/2/3, PVM12, PVM13) or move the document to purchases.",
     fixLt: "Pakeiskite teisingu tiekimo pusės kodu (pvz., PVM1/2/3, PVM12, PVM13) arba perkelkite dokumentą į pirkimus.",
-    evaluate: (d) => { const P = ["PVM16","PVM17","PVM18","PVM35","PVM36","PVM20","PVM37","PVM38","PVM39","PVM21","PVM40","PVM41","PVM42","PVM23","PVM24","PVM48","PVM49","PVM54","PVM56","PVM57","PVM60"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && P.indexOf(s) >= 0 && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sti: s }); })); return out.slice(0, 200); } },
+    evaluate: (d) => { const P = ["PVM16","PVM17","PVM18","PVM35","PVM36","PVM20","PVM37","PVM38","PVM39","PVM21","PVM40","PVM41","PVM42","PVM23","PVM24","PVM48","PVM49","PVM54","PVM56","PVM57","PVM60"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && P.indexOf(s) >= 0 && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sti: s }); })); return out; } },
   { id: "SAFT_VDT_002", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
     title: "Tiekimo pusės PVM kodai negali būti naudojami pirkimo sąskaitose",
     titleEn: "Supply-side PVM codes must not appear on purchase invoices",
@@ -4240,7 +4283,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | STITaxCode = @sti",
     fixEn: "Use the acquisition-side code that matches the transaction (e.g., PVM16-18 for EU goods).",
     fixLt: "Naudokite operaciją atitinkantį įsigijimo kodą (pvz., PVM16-18 ES prekėms).",
-    evaluate: (d) => { const S = ["PVM12","PVM13","PVM15","PVM34","PVM6","PVM7","PVM8","PVM9","PVM28","PVM29","PVM30","PVM31","PVM50","PVM59"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && S.indexOf(s) >= 0 && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sti: s }); })); return out.slice(0, 200); } },
+    evaluate: (d) => { const S = ["PVM12","PVM13","PVM15","PVM34","PVM6","PVM7","PVM8","PVM9","PVM28","PVM29","PVM30","PVM31","PVM50","PVM59"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && S.indexOf(s) >= 0 && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sti: s }); })); return out; } },
   { id: "SAFT_VDT_003", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
     title: "ES prekių įsigijimo kodai (PVM16-18/35/36) turi būti naudojami su ES (ne LT) tiekėjais",
     titleEn: "EU goods-acquisition codes (PVM16-18/35/36) should be used with EU (non-LT) suppliers",
@@ -4249,7 +4292,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Supplier = @sup | Country = @country | STITaxCode = @sti",
     fixEn: "Check the supplier master country or the chosen code; EU acquisition codes presume an EU (non-LT) counterparty.",
     fixLt: "Patikrinkite tiekėjo valstybę kortelėje arba pasirinktą kodą; ES įsigijimo kodai suponuoja ES (ne LT) kontrahentą.",
-    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM35","PVM36"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) < 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM35","PVM36"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) < 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out; } },
   { id: "SAFT_VDT_004", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
     title: "ES paslaugų įsigijimo kodai (PVM21/40/41/42) turi būti naudojami su ES (ne LT) tiekėjais",
     titleEn: "EU services-acquisition codes (PVM21/40/41/42) should be used with EU (non-LT) suppliers",
@@ -4258,7 +4301,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Supplier = @sup | Country = @country | STITaxCode = @sti",
     fixEn: "Check the supplier master country or use PVM20/37-39 for non-EU service providers.",
     fixLt: "Patikrinkite tiekėjo valstybę arba ne ES paslaugų teikėjams naudokite PVM20/37-39.",
-    evaluate: (d, ctx) => { const C = ["PVM21","PVM40","PVM41","PVM42"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) < 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM21","PVM40","PVM41","PVM42"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) < 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out; } },
   { id: "SAFT_VDT_005", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "InvoiceLine", requires: "purchases",
     title: "Ne ES paslaugų kodai (PVM20/37/38/39) turi būti naudojami su ne ES tiekėjais",
     titleEn: "Non-EU services codes (PVM20/37/38/39) should be used with non-EU suppliers",
@@ -4267,7 +4310,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Supplier = @sup | Country = @country | STITaxCode = @sti",
     fixEn: "Check the supplier master country or use PVM21/40-42 for EU service providers.",
     fixLt: "Patikrinkite tiekėjo valstybę arba ES paslaugų teikėjams naudokite PVM21/40-42.",
-    evaluate: (d, ctx) => { const C = ["PVM20","PVM37","PVM38","PVM39"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) >= 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM20","PVM37","PVM38","PVM39"]; const EU = ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","GR","HU","IE","IT","LV","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; const cc = String((rec && (rec.country || rec.addressCountry)) || "").trim().toUpperCase(); if (!cc) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && C.indexOf(s) >= 0 && (cc === "LT" || EU.indexOf(cc) >= 0) && String(inv.invoiceType || "").toUpperCase() !== "AN") out.push({ no: inv.invoiceNo || "—", sup: inv.supplierID || "—", country: cc, sti: s }); }); }); return out; } },
   { id: "SAFT_RATE_PM0", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full", refType: "TaxCodeDetail", requires: "any",
     title: "Fiksuoto tarifo PM kodai (PM2/8/10/12=0; PM7/11=5; PM3=10) — tarifas lentelėje turi atitikti",
     titleEn: "Fixed-rate PM codes (PM2/8/10/12=0%; PM7/11=5%; PM3=10%) must match the classifier rate",
@@ -4276,7 +4319,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TaxCode = @code | STITaxCode = @sti | Rate = @rate | Expected = 0",
     fixEn: "Set the rate to 0% for this 0%-classifier code, or remap the entry.",
     fixLt: "Nustatykite 0 proc. tarifą šiam 0 proc. klasifikatoriaus kodui arba susiekite įrašą iš naujo.",
-    evaluate: (d) => { const M = { PM2: 0, PM8: 0, PM10: 0, PM12: 0, PM3: 10, PM7: 5, PM11: 5 }; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!(sti in M)) return; const p = t.taxPercentage; if (p != null && Math.abs(p - M[sti]) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: M[sti] }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const M = { PM2: 0, PM8: 0, PM10: 0, PM12: 0, PM3: 10, PM7: 5, PM11: 5 }; const out = []; (d.taxCodes || []).forEach((t) => { const sti = (t.stiTaxCode || "").trim().toUpperCase(); if (!(sti in M)) return; const p = t.taxPercentage; if (p != null && Math.abs(p - M[sti]) > 0.01) out.push({ code: t.taxCode || "—", sti, rate: p, expected: M[sti] }); }); return out; } },
 
   { id: "SAFT_VDT_006", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
     title: "Eilutės PVM tarifas turi atitikti jos STI kodo klasifikatoriaus tarifą",
@@ -4286,7 +4329,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | STITaxCode = @sti | Rate = @rate | Expected = @expected",
     fixEn: "Correct the line rate or the tax code; a non-zero rate contradicting the classifier is a coding error.",
     fixLt: "Pataisykite eilutės tarifą arba mokesčio kodą; klasifikatoriui prieštaraujantis nenulinis tarifas yra kodavimo klaida.",
-    evaluate: (d) => { const RM = {PVM1:21,PVM6:21,PVM9:21,PVM16:21,PVM20:21,PVM21:21,PVM25:21,PVM32:21,PVM43:21,PVM2:9,PVM7:9,PVM17:9,PVM26:9,PVM30:9,PVM44:9,PVM52:9,PVM54:9,PVM57:9,PVM3:5,PVM8:5,PVM18:5,PVM27:5,PVM31:5,PVM37:5,PVM40:5,PVM45:5,PVM53:5,PVM49:6,PVM58:12,PVM59:12,PVM60:12,PVM12:0,PVM13:0,PVM14:0,PVM28:0,PVM33:0,PVM35:0,PVM38:0,PVM41:0,PVM46:0,PVM50:0,PVM51:0,PVM55:0,PVM5:0,PVM15:0,PVM19:0,PVM29:0,PVM34:0,PVM36:0,PVM39:0,PVM42:0,PVM47:0,PVM48:0,PVM56:0}; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || !(s in RM)) return; const p = l.tax && l.tax.taxPercentage; if (p == null) return; const exp = RM[s]; const bad = exp > 0 ? (p > 0.01 && Math.abs(p - exp) > 0.01) : (p > 0.01); if (bad) out.push({ no: inv.invoiceNo || "—", sti: s, rate: p, expected: exp }); })); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+    evaluate: (d) => { const RM = {PVM1:21,PVM6:21,PVM9:21,PVM16:21,PVM20:21,PVM21:21,PVM25:21,PVM32:21,PVM43:21,PVM2:9,PVM7:9,PVM17:9,PVM26:9,PVM30:9,PVM44:9,PVM52:9,PVM54:9,PVM57:9,PVM3:5,PVM8:5,PVM18:5,PVM27:5,PVM31:5,PVM37:5,PVM40:5,PVM45:5,PVM53:5,PVM49:6,PVM58:12,PVM59:12,PVM60:12,PVM12:0,PVM13:0,PVM14:0,PVM28:0,PVM33:0,PVM35:0,PVM38:0,PVM41:0,PVM46:0,PVM50:0,PVM51:0,PVM55:0,PVM5:0,PVM15:0,PVM19:0,PVM29:0,PVM34:0,PVM36:0,PVM39:0,PVM42:0,PVM47:0,PVM48:0,PVM56:0}; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || !(s in RM)) return; const p = l.tax && l.tax.taxPercentage; if (p == null) return; const exp = RM[s]; const bad = exp > 0 ? (p > 0.01 && Math.abs(p - exp) > 0.01) : (p > 0.01); if (bad) out.push({ no: inv.invoiceNo || "—", sti: s, rate: p, expected: exp }); })); scan(d.sales?.items); scan(d.purchases?.items); return out; } },
   { id: "SAFT_VDT_010", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI", refType: "InvoiceLine", requires: "sales",
     title: "Tapačioms prekėms taikomi skirtingi nenuliniai PVM tarifai",
     titleEn: "Identical goods sold under different non-zero VAT rates",
@@ -4295,7 +4338,7 @@ const STRUCTURAL_RULES = [
     failTpl: "ProductCode = @product | Rates = @rates",
     fixEn: "Review why the same product carries different positive rates; usually one of them is wrong.",
     fixLt: "Peržiūrėkite, kodėl ta pati prekė apmokestinta skirtingais nenuliniais tarifais; dažniausiai vienas iš jų klaidingas.",
-    evaluate: (d) => { const RM = {PVM1:21,PVM6:21,PVM9:21,PVM16:21,PVM20:21,PVM21:21,PVM25:21,PVM32:21,PVM43:21,PVM2:9,PVM7:9,PVM17:9,PVM26:9,PVM30:9,PVM44:9,PVM52:9,PVM54:9,PVM57:9,PVM3:5,PVM8:5,PVM18:5,PVM27:5,PVM31:5,PVM37:5,PVM40:5,PVM45:5,PVM53:5,PVM49:6,PVM58:12,PVM59:12,PVM60:12,PVM12:0,PVM13:0,PVM14:0,PVM28:0,PVM33:0,PVM35:0,PVM38:0,PVM41:0,PVM46:0,PVM50:0,PVM51:0,PVM55:0,PVM5:0,PVM15:0,PVM19:0,PVM29:0,PVM34:0,PVM36:0,PVM39:0,PVM42:0,PVM47:0,PVM48:0,PVM56:0}; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const pr = {}; (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || !(s in RM) || RM[s] <= 0) return; const pc = (l.productCode || "").trim(); if (!pc) return; (pr[pc] = pr[pc] || new Set()).add(RM[s]); })); const out = []; Object.keys(pr).forEach((pc) => { if (pr[pc].size > 1) out.push({ product: pc, rates: Array.from(pr[pc]).sort((a,b)=>a-b).join("% / ") + "%" }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const RM = {PVM1:21,PVM6:21,PVM9:21,PVM16:21,PVM20:21,PVM21:21,PVM25:21,PVM32:21,PVM43:21,PVM2:9,PVM7:9,PVM17:9,PVM26:9,PVM30:9,PVM44:9,PVM52:9,PVM54:9,PVM57:9,PVM3:5,PVM8:5,PVM18:5,PVM27:5,PVM31:5,PVM37:5,PVM40:5,PVM45:5,PVM53:5,PVM49:6,PVM58:12,PVM59:12,PVM60:12,PVM12:0,PVM13:0,PVM14:0,PVM28:0,PVM33:0,PVM35:0,PVM38:0,PVM41:0,PVM46:0,PVM50:0,PVM51:0,PVM55:0,PVM5:0,PVM15:0,PVM19:0,PVM29:0,PVM34:0,PVM36:0,PVM39:0,PVM42:0,PVM47:0,PVM48:0,PVM56:0}; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const pr = {}; (d.sales?.items || []).forEach((inv) => (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || !(s in RM) || RM[s] <= 0) return; const pc = (l.productCode || "").trim(); if (!pc) return; (pr[pc] = pr[pc] || new Set()).add(RM[s]); })); const out = []; Object.keys(pr).forEach((pc) => { if (pr[pc].size > 1) out.push({ product: pc, rates: Array.from(pr[pc]).sort((a,b)=>a-b).join("% / ") + "%" }); }); return out; } },
   { id: "SAFT_PDT_NORM", family: "SCHEMA", category: "Assets", severity: "Low", dataTypes: "F-Full; AS", refType: "Asset", requires: "assets",
     title: "Turto nusidėvėjimo laikotarpis trumpesnis už PMĮ 1 priedėlio normatyvą",
     titleEn: "Asset depreciation period shorter than the PMĮ Appendix 1 minimum",
@@ -4304,7 +4347,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetID = @id | Account = @acct | Life = @life m. | Min = @min m.",
     fixEn: "Confirm the tax-depreciation period for this asset meets the PMĮ Appendix 1 minimum, or document the applicable exception (R&D, very small entity, financial-only books).",
     fixLt: "Įsitikinkite, kad šio turto mokestinio nusidėvėjimo laikotarpis atitinka PMĮ 1 priedėlio minimumą, arba pagrįskite taikomą išimtį (MTEP, labai maža įmonė, tik finansinė apskaita).",
-    evaluate: (d) => { const MIN = { "112":15, "113":3, "114":3, "115":4, "121":8, "122":5, "123":4, "124":3 }; const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); let min = null; for (const p in MIN) { if (id.indexOf(p) === 0) { min = MIN[p]; break; } } if (min == null) return; const ly = a.assetLifeYear, lm = a.assetLifeMonth; if (ly == null && lm == null) return; const life = (ly || 0) + (lm || 0) / 12; if (life > 0 && life < min - 0.01) out.push({ id: a.assetID || "—", acct: id, life: Math.round(life * 100) / 100, min }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const MIN = { "112":15, "113":3, "114":3, "115":4, "121":8, "122":5, "123":4, "124":3 }; const out = []; (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); let min = null; for (const p in MIN) { if (id.indexOf(p) === 0) { min = MIN[p]; break; } } if (min == null) return; const ly = a.assetLifeYear, lm = a.assetLifeMonth; if (ly == null && lm == null) return; const life = (ly || 0) + (lm || 0) / 12; if (life > 0 && life < min - 0.01) out.push({ id: a.assetID || "—", acct: id, life: Math.round(life * 100) / 100, min }); }); return out; } },
 
   { id: "SAFT_AAT_001", family: "SCHEMA", category: "Reconciliation", severity: "Low", dataTypes: "F-Full; MF; GL", refType: "Account", requires: "customers",
     title: "Pirkėjų analitinių likučių sutikrinimas su DK (peržiūra)",
@@ -4332,7 +4375,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Account = @acct | Register = @reg | GL = @gl | Diff = @diff",
     fixEn: "Investigate register entries vs GL postings on this cost account; the totals must reconcile.",
     fixLt: "Ištirkite turto registro įrašus ir DK įrašus šioje savikainos sąskaitoje; sumos privalo sutapti.",
-    evaluate: (d) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, { c: (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0), o: (g.openingDebitBalance || 0) - (g.openingCreditBalance || 0) })); const agg = new Map(); (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!id) return; const e = agg.get(id) || { c: 0, o: 0, hasO: false }; const v = a.acquisitionCostEnd; if (v != null) e.c += v; const b = a.valuation ? a.valuation.acquisitionAndProductionCostsBegin : null; if (b != null) { e.o += b; e.hasO = true; } agg.set(id, e); }); const out = []; agg.forEach((v, aid) => { if (!gl.has(aid)) return; const g = gl.get(aid); const dC = v.c - g.c; if (Math.abs(dC) > Math.max(1, Math.abs(g.c) * 1e-6)) out.push({ when: "close", acct: aid, reg: Math.round(v.c * 100) / 100, gl: Math.round(g.c * 100) / 100, diff: Math.round(dC * 100) / 100 }); if (v.hasO) { const dO = v.o - g.o; if (Math.abs(dO) > Math.max(1, Math.abs(g.o) * 1e-6)) out.push({ when: "open", acct: aid, reg: Math.round(v.o * 100) / 100, gl: Math.round(g.o * 100) / 100, diff: Math.round(dO * 100) / 100 }); } }); return out.slice(0, 200); } },
+    evaluate: (d) => { const gl = new Map(); (d.accounts || []).forEach((g) => gl.set(g.accountID, { c: (g.closingDebitBalance || 0) - (g.closingCreditBalance || 0), o: (g.openingDebitBalance || 0) - (g.openingCreditBalance || 0) })); const agg = new Map(); (d.assets || []).forEach((a) => { const id = String(a.accountID || ""); if (!id) return; const e = agg.get(id) || { c: 0, o: 0, hasO: false }; const v = a.acquisitionCostEnd; if (v != null) e.c += v; const b = a.valuation ? a.valuation.acquisitionAndProductionCostsBegin : null; if (b != null) { e.o += b; e.hasO = true; } agg.set(id, e); }); const out = []; agg.forEach((v, aid) => { if (!gl.has(aid)) return; const g = gl.get(aid); const dC = v.c - g.c; if (Math.abs(dC) > Math.max(1, Math.abs(g.c) * 1e-6)) out.push({ when: "close", acct: aid, reg: Math.round(v.c * 100) / 100, gl: Math.round(g.c * 100) / 100, diff: Math.round(dC * 100) / 100 }); if (v.hasO) { const dO = v.o - g.o; if (Math.abs(dO) > Math.max(1, Math.abs(g.o) * 1e-6)) out.push({ when: "open", acct: aid, reg: Math.round(v.o * 100) / 100, gl: Math.round(g.o * 100) / 100, diff: Math.round(dO * 100) / 100 }); } }); return out; } },
 
   { id: "SAFT_SID_001", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "sales",
     title: "Pardavimo sąskaitų SystemID unikalumas",
@@ -4342,7 +4385,7 @@ const STRUCTURAL_RULES = [
     failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
     fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
     fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
-    evaluate: (d) => { const m = new Map(); (d.sales?.items || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.invoiceNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const m = new Map(); (d.sales?.items || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.invoiceNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out; } },
   { id: "SAFT_SID_002", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "purchases",
     title: "Pirkimo sąskaitų SystemID unikalumas",
     titleEn: "Purchase invoice SystemID uniqueness",
@@ -4351,7 +4394,7 @@ const STRUCTURAL_RULES = [
     failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
     fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
     fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
-    evaluate: (d) => { const m = new Map(); (d.purchases?.items || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.invoiceNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const m = new Map(); (d.purchases?.items || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.invoiceNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out; } },
   { id: "SAFT_SID_003", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "payments",
     title: "Mokėjimų SystemID unikalumas",
     titleEn: "Payment SystemID uniqueness",
@@ -4360,7 +4403,7 @@ const STRUCTURAL_RULES = [
     failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
     fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
     fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
-    evaluate: (d) => { const m = new Map(); (d.payments || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.paymentRefNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const m = new Map(); (d.payments || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.paymentRefNo || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out; } },
   { id: "SAFT_SID_004", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full", refType: "SystemID", requires: "stockMovements",
     title: "Atsargų judėjimų SystemID unikalumas",
     titleEn: "Stock movement SystemID uniqueness",
@@ -4369,7 +4412,7 @@ const STRUCTURAL_RULES = [
     failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
     fixEn: "Deduplicate the records sharing this SystemID or correct the export.",
     fixLt: "Pašalinkite įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
-    evaluate: (d) => { const m = new Map(); (d.stockMovements || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.movementReference || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const m = new Map(); (d.stockMovements || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.movementReference || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out; } },
   { id: "SAFT_INT_025", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "DK eilučių pirkėjų numeriai egzistuoja pirkėjų byloje",
     titleEn: "GL line CustomerIDs exist in the customer master",
@@ -4378,7 +4421,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @txn | Value = @value",
     fixEn: "Add the missing master-file record or correct the line reference.",
     fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
-    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => { const hc = (t.customerID || "").trim(); if (hc && ctx && ctx.customerMap && !ctx.customerMap.has(hc)) out.push({ txn: t.transactionID || "—", value: hc }); (t.lines || []).forEach((l) => { const c = (l.customerID || "").trim(); if (c && ctx && ctx.customerMap && !ctx.customerMap.has(c)) out.push({ txn: t.transactionID || "—", value: c }); }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => { const hc = (t.customerID || "").trim(); if (hc && ctx && ctx.customerMap && !ctx.customerMap.has(hc)) out.push({ txn: t.transactionID || "—", value: hc }); (t.lines || []).forEach((l) => { const c = (l.customerID || "").trim(); if (c && ctx && ctx.customerMap && !ctx.customerMap.has(c)) out.push({ txn: t.transactionID || "—", value: c }); }); }); return out; } },
   { id: "SAFT_INT_022", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "DK eilučių tiekėjų numeriai egzistuoja tiekėjų byloje",
     titleEn: "GL line SupplierIDs exist in the supplier master",
@@ -4387,7 +4430,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @txn | Value = @value",
     fixEn: "Add the missing master-file record or correct the line reference.",
     fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
-    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => { const hs = (t.supplierID || "").trim(); if (hs && ctx && ctx.supplierMap && !ctx.supplierMap.has(hs)) out.push({ txn: t.transactionID || "—", value: hs }); (t.lines || []).forEach((l) => { const s = (l.supplierID || "").trim(); if (s && ctx && ctx.supplierMap && !ctx.supplierMap.has(s)) out.push({ txn: t.transactionID || "—", value: s }); }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const out = []; (d.transactions || []).forEach((t) => { const hs = (t.supplierID || "").trim(); if (hs && ctx && ctx.supplierMap && !ctx.supplierMap.has(hs)) out.push({ txn: t.transactionID || "—", value: hs }); (t.lines || []).forEach((l) => { const s = (l.supplierID || "").trim(); if (s && ctx && ctx.supplierMap && !ctx.supplierMap.has(s)) out.push({ txn: t.transactionID || "—", value: s }); }); }); return out; } },
   { id: "SAFT_INT_034", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "DK eilučių mokesčių kodai egzistuoja mokesčių lentelėje",
     titleEn: "GL line TaxCodes exist in the tax table",
@@ -4396,7 +4439,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @txn | Value = @value",
     fixEn: "Add the missing master-file record or correct the line reference.",
     fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
-    evaluate: (d, ctx) => { const set = new Set(); (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) set.add(tc.taxCode); }); const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const code = ((l.taxInfo && l.taxInfo.taxCode) || "").trim(); if (code && set.size && !set.has(code)) out.push({ txn: t.transactionID || "—", value: code }); })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const set = new Set(); (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) set.add(tc.taxCode); }); const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const code = ((l.taxInfo && l.taxInfo.taxCode) || "").trim(); if (code && set.size && !set.has(code)) out.push({ txn: t.transactionID || "—", value: code }); })); return out; } },
   { id: "SAFT_INT_043", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "DK eilučių analizės numeriai egzistuoja analizės klasifikatoriuje",
     titleEn: "GL line AnalysisIDs exist in the analysis table",
@@ -4405,7 +4448,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @txn | Value = @value",
     fixEn: "Add the missing master-file record or correct the line reference.",
     fixLt: "Papildykite pagrindinę bylą trūkstamu įrašu arba pataisykite eilutės nuorodą.",
-    evaluate: (d, ctx) => { const pairs = new Set(); const ids = new Set(); (d.analysisTable || []).forEach((e) => { if (e.analysisID) { ids.add(e.analysisID); pairs.add((e.analysisType || "") + "|" + e.analysisID); } }); const out = []; if (!ids.size) return out; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => ((l.analysis) || []).forEach((an) => { const ai = (an.analysisID || "").trim(); if (!ai) return; const ok = pairs.has((an.analysisType || "") + "|" + ai) || ids.has(ai); if (!ok) out.push({ txn: t.transactionID || "—", value: (an.analysisType ? an.analysisType + ":" : "") + ai }); }))); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const pairs = new Set(); const ids = new Set(); (d.analysisTable || []).forEach((e) => { if (e.analysisID) { ids.add(e.analysisID); pairs.add((e.analysisType || "") + "|" + e.analysisID); } }); const out = []; if (!ids.size) return out; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => ((l.analysis) || []).forEach((an) => { const ai = (an.analysisID || "").trim(); if (!ai) return; const ok = pairs.has((an.analysisType || "") + "|" + ai) || ids.has(ai); if (!ok) out.push({ txn: t.transactionID || "—", value: (an.analysisType ? an.analysisType + ":" : "") + ai }); }))); return out; } },
   { id: "SAFT_SID_005", family: "SCHEMA", category: "Duplicates", severity: "High", dataTypes: "F-Full; GL", refType: "SystemID", requires: "transactions",
     title: "DK įrašų SystemID unikalumas",
     titleEn: "GL transaction SystemID uniqueness",
@@ -4414,7 +4457,7 @@ const STRUCTURAL_RULES = [
     failTpl: "SystemID = @systemID | Count = @count | Refs = @refs",
     fixEn: "Deduplicate the GL transactions sharing this SystemID or correct the export.",
     fixLt: "Pašalinkite DK įrašų dubliavimą su šiuo SystemID arba pataisykite eksportą.",
-    evaluate: (d) => { const m = new Map(); (d.transactions || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.transactionID || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const m = new Map(); (d.transactions || []).forEach((r) => { const s = String(r.systemID || "").trim(); if (!s) return; if (!m.has(s)) m.set(s, []); m.get(s).push(r.transactionID || "—"); }); const out = []; m.forEach((refs, s) => { if (refs.length > 1) out.push({ systemID: s, count: refs.length, refs: refs.slice(0, 4).join(", ") }); }); return out; } },
   { id: "SAFT_VDT_050", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "sales",
     title: "\u201e\u2013\u201c tarifo PVM kod\u0173 eilut\u0117se negali b\u016bti PVM sumos",
     titleEn: "Lines with \u2013-rate PVM codes must not carry a VAT amount",
@@ -4423,7 +4466,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | STITaxCode = @sti | TaxAmount = @amt",
     fixEn: "Exempt / out-of-scope codes carry no VAT amount; correct the line or the chosen code.",
     fixLt: "Neapmokestinam\u0173 / ne PVM objekto kod\u0173 eilut\u0117se PVM suma nerodoma; pataisykite eilut\u0119 arba kod\u0105.",
-    evaluate: (d) => { const DASH = ["PVM5","PVM15","PVM19","PVM29","PVM34","PVM36","PVM39","PVM42","PVM47","PVM48","PVM56"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && DASH.indexOf(s) >= 0 && l.tax && l.tax.taxAmount != null && l.tax.taxAmount > 0.005) out.push({ no: inv.invoiceNo || "\u2014", sti: s, amt: l.tax.taxAmount.toFixed(2) }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+    evaluate: (d) => { const DASH = ["PVM5","PVM15","PVM19","PVM29","PVM34","PVM36","PVM39","PVM42","PVM47","PVM48","PVM56"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (s && DASH.indexOf(s) >= 0 && l.tax && l.tax.taxAmount != null && l.tax.taxAmount > 0.005) out.push({ no: inv.invoiceNo || "\u2014", sti: s, amt: l.tax.taxAmount.toFixed(2) }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out; } },
   { id: "SAFT_VDT_031", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI", refType: "Invoice", requires: "purchases",
     title: "ES \u012fsigijimo kodai naudojami, bet tiek\u0117jo kortel\u0117je n\u0117ra PVM mok\u0117tojo kodo",
     titleEn: "EU acquisition codes used but supplier master has no VAT registration number",
@@ -4432,7 +4475,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Supplier = @sup | STITaxCode = @sti",
     fixEn: "Fill the supplier's VAT registration number in the master data or review the chosen code.",
     fixLt: "U\u017epildykite tiek\u0117jo PVM mok\u0117tojo kod\u0105 kortel\u0117je arba per\u017ei\u016br\u0117kite parinkt\u0105 kod\u0105.",
-    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM21","PVM40","PVM41","PVM42","PVM57","PVM19"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; if (!rec) return; const vat = String(rec.taxRegistrationNumber || "").trim(); if (vat) return; let hit = null; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!hit && s && C.indexOf(s) >= 0) hit = s; }); if (hit) out.push({ no: inv.invoiceNo || "\u2014", sup: inv.supplierID || "\u2014", sti: hit }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM21","PVM40","PVM41","PVM42","PVM57","PVM19"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.purchases?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(inv.supplierID) : null; if (!rec) return; const vat = String(rec.taxRegistrationNumber || "").trim(); if (vat) return; let hit = null; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!hit && s && C.indexOf(s) >= 0) hit = s; }); if (hit) out.push({ no: inv.invoiceNo || "\u2014", sup: inv.supplierID || "\u2014", sti: hit }); }); return out; } },
   { id: "SAFT_VDT_036", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI", refType: "Invoice", requires: "sales",
     title: "PVM13/50 tiekimai ES PVM mok\u0117tojui, bet pirk\u0117jo kortel\u0117je n\u0117ra PVM mok\u0117tojo kodo",
     titleEn: "PVM13/50 supplies to an EU VAT payer but customer master has no VAT registration number",
@@ -4441,7 +4484,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Customer = @cust | STITaxCode = @sti",
     fixEn: "Fill the customer's VAT registration number; 0% under Art. 49 presumes an EU VAT payer.",
     fixLt: "U\u017epildykite pirk\u0117jo PVM mok\u0117tojo kod\u0105; 0 proc. pagal 49 str. suponuoja ES PVM mok\u0117toj\u0105.",
-    evaluate: (d, ctx) => { const C = ["PVM13","PVM50"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const rec = ctx && ctx.customerMap ? ctx.customerMap.get(inv.customerID) : null; if (!rec) return; const vat = String(rec.taxRegistrationNumber || "").trim(); if (vat) return; let hit = null; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!hit && s && C.indexOf(s) >= 0) hit = s; }); if (hit) out.push({ no: inv.invoiceNo || "\u2014", cust: inv.customerID || "\u2014", sti: hit }); }); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM13","PVM50"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const rec = ctx && ctx.customerMap ? ctx.customerMap.get(inv.customerID) : null; if (!rec) return; const vat = String(rec.taxRegistrationNumber || "").trim(); if (vat) return; let hit = null; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!hit && s && C.indexOf(s) >= 0) hit = s; }); if (hit) out.push({ no: inv.invoiceNo || "\u2014", cust: inv.customerID || "\u2014", sti: hit }); }); return out; } },
   { id: "SAFT_PDT_020", family: "SCHEMA", category: "Corporate Tax", severity: "Low", dataTypes: "F-Full; GL", refType: "Account", requires: "accounts",
     title: "Baud\u0173 ir delspinigi\u0173 s\u0105naudos \u2014 pelno mokes\u010dio koregavimo priminimas",
     titleEn: "Fines and late-interest expenses \u2014 corporate tax add-back reminder",
@@ -4460,7 +4503,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | STITaxCode = @sti | TaxAmount = @amount | Expected = 0",
     fixEn: "Remove the VAT amount from this exempt/zero-rated line or correct the tax code.",
     fixLt: "Pa\u0161alinkite PVM sum\u0105 i\u0161 0 proc. eilut\u0117s arba pataisykite mokes\u010dio kod\u0105.",
-    evaluate: (d) => { const Z = ["PVM12","PVM13","PVM14","PVM28","PVM33","PVM35","PVM38","PVM41","PVM46","PVM50","PVM51","PVM55","PVM5","PVM15","PVM19","PVM29","PVM34","PVM36","PVM39","PVM42","PVM47","PVM48","PVM56"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || Z.indexOf(s) < 0) return; const a = l.tax ? l.tax.taxAmount : null; if (a != null && a > 0.005) out.push({ no: inv.invoiceNo || "\u2014", sti: s, amount: Math.round(a * 100) / 100 }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+    evaluate: (d) => { const Z = ["PVM12","PVM13","PVM14","PVM28","PVM33","PVM35","PVM38","PVM41","PVM46","PVM50","PVM51","PVM55","PVM5","PVM15","PVM19","PVM29","PVM34","PVM36","PVM39","PVM42","PVM47","PVM48","PVM56"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || Z.indexOf(s) < 0) return; const a = l.tax ? l.tax.taxAmount : null; if (a != null && a > 0.005) out.push({ no: inv.invoiceNo || "\u2014", sti: s, amount: Math.round(a * 100) / 100 }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out; } },
   { id: "SAFT_VDT_008", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI; MF", refType: "Customer", requires: "sales",
     title: "ES tiekim\u0173 kodai (PVM13/50/19): pirk\u0117jo PVM mok\u0117tojo kodas (per\u017ei\u016bra)",
     titleEn: "EU-supply codes (PVM13/50/19): customer VAT number expected (review)",
@@ -4469,7 +4512,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Customer = @cust (@name) | STITaxCodes = @codes | Lines = @lines | VAT no. missing",
     fixEn: "Add the EU customer's VAT payer number to the master record.",
     fixLt: "\u012era\u0161ykite ES pirk\u0117jo PVM mok\u0117tojo kod\u0105 kortel\u0117je.",
-    evaluate: (d, ctx) => { const C = ["PVM13","PVM50","PVM19"]; const tracked = (d.customers || []).some((c) => String(c.taxRegistrationNumber || "").trim()); if (!tracked) return []; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const agg = new Map(); (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const cid = String(inv.customerID || "").trim(); const rec = ctx && ctx.customerMap ? ctx.customerMap.get(cid) : null; const has = rec && String(rec.taxRegistrationNumber || "").trim(); if (has) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || C.indexOf(s) < 0) return; const cur = agg.get(cid) || { name: (rec && rec.name) || "\u2014", codes: new Set(), lines: 0 }; cur.codes.add(s); cur.lines++; agg.set(cid, cur); }); }); const out = []; agg.forEach((v, cid) => out.push({ cust: cid || "\u2014", name: v.name, codes: Array.from(v.codes).join("+"), lines: v.lines })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM13","PVM50","PVM19"]; const tracked = (d.customers || []).some((c) => String(c.taxRegistrationNumber || "").trim()); if (!tracked) return []; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const agg = new Map(); (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const cid = String(inv.customerID || "").trim(); const rec = ctx && ctx.customerMap ? ctx.customerMap.get(cid) : null; const has = rec && String(rec.taxRegistrationNumber || "").trim(); if (has) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || C.indexOf(s) < 0) return; const cur = agg.get(cid) || { name: (rec && rec.name) || "\u2014", codes: new Set(), lines: 0 }; cur.codes.add(s); cur.lines++; agg.set(cid, cur); }); }); const out = []; agg.forEach((v, cid) => out.push({ cust: cid || "\u2014", name: v.name, codes: Array.from(v.codes).join("+"), lines: v.lines })); return out; } },
   { id: "SAFT_VDT_009", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; PI; MF", refType: "Supplier", requires: "purchases",
     title: "ES \u012fsigijim\u0173 kodai (PVM16-18/21/40/57): tiek\u0117jo PVM mok\u0117tojo kodas (per\u017ei\u016bra)",
     titleEn: "EU-acquisition codes (PVM16-18/21/40/57): supplier VAT number expected (review)",
@@ -4478,7 +4521,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Supplier = @sup (@name) | STITaxCodes = @codes | Lines = @lines | VAT no. missing",
     fixEn: "Add the EU supplier's VAT payer number to the master record.",
     fixLt: "\u012era\u0161ykite ES tiek\u0117jo PVM mok\u0117tojo kod\u0105 kortel\u0117je.",
-    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM21","PVM40","PVM57"]; const tracked = (d.suppliers || []).some((s) => String(s.taxRegistrationNumber || "").trim()); if (!tracked) return []; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const agg = new Map(); (d.purchases?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const sid = String(inv.supplierID || "").trim(); const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(sid) : null; const has = rec && String(rec.taxRegistrationNumber || "").trim(); if (has) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || C.indexOf(s) < 0) return; const cur = agg.get(sid) || { name: (rec && rec.name) || "\u2014", codes: new Set(), lines: 0 }; cur.codes.add(s); cur.lines++; agg.set(sid, cur); }); }); const out = []; agg.forEach((v, sid) => out.push({ sup: sid || "\u2014", name: v.name, codes: Array.from(v.codes).join("+"), lines: v.lines })); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM16","PVM17","PVM18","PVM21","PVM40","PVM57"]; const tracked = (d.suppliers || []).some((s) => String(s.taxRegistrationNumber || "").trim()); if (!tracked) return []; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const agg = new Map(); (d.purchases?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const sid = String(inv.supplierID || "").trim(); const rec = ctx && ctx.supplierMap ? ctx.supplierMap.get(sid) : null; const has = rec && String(rec.taxRegistrationNumber || "").trim(); if (has) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || C.indexOf(s) < 0) return; const cur = agg.get(sid) || { name: (rec && rec.name) || "\u2014", codes: new Set(), lines: 0 }; cur.codes.add(s); cur.lines++; agg.set(sid, cur); }); }); const out = []; agg.forEach((v, sid) => out.push({ sup: sid || "\u2014", name: v.name, codes: Array.from(v.codes).join("+"), lines: v.lines })); return out; } },
   { id: "SAFT_PDT_FINES", family: "SCHEMA", category: "Tax / CIT", severity: "Low", dataTypes: "F-Full; MF; GL", refType: "Account", requires: "transactions",
     title: "Baud\u0173 ir delspinigi\u0173 s\u0105naudos \u2014 neleid\u017eiami atskaitymai (per\u017ei\u016bra)",
     titleEn: "Fines and late-payment penalty expenses \u2014 non-deductible (review)",
@@ -4487,7 +4530,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Account = @acct (@name) | Net expense = @net EUR | Lines = @lines | PM\u012e 31 str. add-back",
     fixEn: "Verify these expenses are added back in PLN204; they are not deductible.",
     fixLt: "\u012esitikinkite, kad \u0161ios s\u0105naudos pridedamos PLN204.",
-    evaluate: (d) => { const rx = /baud|delspinig/i; const targets = {}; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); const nm = String(a.accountDescription || ""); if (id.charAt(0) === "6" && rx.test(nm)) targets[id] = nm; }); if (!Object.keys(targets).length) return []; const net = {}, cnt = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!(id in targets)) return; const dv = l.debitAmount; const cv = l.creditAmount; if (dv == null && cv == null) return; net[id] = (net[id] || 0) + (dv || 0) - (cv || 0); cnt[id] = (cnt[id] || 0) + 1; })); const out = []; Object.keys(net).forEach((id) => { if (net[id] > 0.005) out.push({ acct: id, name: targets[id], net: Math.round(net[id] * 100) / 100, lines: cnt[id] }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const rx = /baud|delspinig/i; const targets = {}; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); const nm = String(a.accountDescription || ""); if (id.charAt(0) === "6" && rx.test(nm)) targets[id] = nm; }); if (!Object.keys(targets).length) return []; const net = {}, cnt = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!(id in targets)) return; const dv = l.debitAmount; const cv = l.creditAmount; if (dv == null && cv == null) return; net[id] = (net[id] || 0) + (dv || 0) - (cv || 0); cnt[id] = (cnt[id] || 0) + 1; })); const out = []; Object.keys(net).forEach((id) => { if (net[id] > 0.005) out.push({ acct: id, name: targets[id], net: Math.round(net[id] * 100) / 100, lines: cnt[id] }); }); return out; } },
   { id: "SAFT_HFA_001", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; MF; GL", refType: "Account", requires: "transactions",
     title: "DK s\u0105skait\u0173 likučiai: pradžia + apyvarta = pabaiga",
     titleEn: "GL account balances: opening + period movements must equal closing",
@@ -4496,7 +4539,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Account = @acct (@name) | Opening+Mov = @calc | Closing = @cl | Diff = @diff",
     fixEn: "Investigate missing or duplicated GL entries for this account; the file must reconcile.",
     fixLt: "I\u0161tirkite tr\u016bkstamus ar dubliuotus DK \u012fra\u0161us \u0161iai s\u0105skaitai.",
-    evaluate: (d) => { const mov = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!id) return; mov[id] = (mov[id] || 0) + ((l.debitAmount || 0) - (l.creditAmount || 0)); })); const out = []; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); const o = (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0); const c = (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0); const calc = o + (mov[id] || 0); const diff = calc - c; if (Math.abs(diff) > 0.01) out.push({ acct: id, name: (a.accountDescription || "").slice(0, 40), calc: Math.round(calc * 100) / 100, cl: Math.round(c * 100) / 100, diff: Math.round(diff * 100) / 100 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const mov = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!id) return; mov[id] = (mov[id] || 0) + ((l.debitAmount || 0) - (l.creditAmount || 0)); })); const out = []; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); const o = (a.openingDebitBalance || 0) - (a.openingCreditBalance || 0); const c = (a.closingDebitBalance || 0) - (a.closingCreditBalance || 0); const calc = o + (mov[id] || 0); const diff = calc - c; if (Math.abs(diff) > 0.01) out.push({ acct: id, name: (a.accountDescription || "").slice(0, 40), calc: Math.round(calc * 100) / 100, cl: Math.round(c * 100) / 100, diff: Math.round(diff * 100) / 100 }); }); return out; } },
   { id: "SAFT_PET_DATES", family: "SCHEMA", category: "Accounting", severity: "Low", dataTypes: "F-Full; GL; PA; MG; AS", refType: "Record", requires: "any",
     title: "\u012era\u0161\u0173 datos turi patekti \u012f rinkmenos laikotarp\u012f (DK, mok\u0117jimai, jud\u0117jimai, turtas)",
     titleEn: "Record dates must fall within the file period (GL, payments, movements, assets)",
@@ -4505,7 +4548,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Section = @sec | Ref = @ref | Field = @field | Date = @date | Period = @period",
     fixEn: "Correct the record date or the header fiscal period.",
     fixLt: "Pataisykite \u012fra\u0161o dat\u0105 arba antra\u0161t\u0117s laikotarp\u012f.",
-    evaluate: (d) => { const from = (d.header && (d.header.fiscalYearFrom || d.header.selectionStart)) || ""; const to = (d.header && (d.header.fiscalYearTo || d.header.selectionEnd)) || ""; if (!from || !to) return []; const per = from + ".." + to; const bad = (x) => x && (x.slice(0,10) < from || x.slice(0,10) > to); const out = []; (d.transactions || []).forEach((t) => { if (bad(t.transactionDate)) out.push({ sec: "GL", ref: t.transactionID || "\u2014", field: "TransactionDate", date: t.transactionDate, period: per }); if (bad(t.glPostingDate)) out.push({ sec: "GL", ref: t.transactionID || "\u2014", field: "GLPostingDate", date: t.glPostingDate, period: per }); }); (d.payments || []).forEach((p) => { if (bad(p.transactionDate)) out.push({ sec: "Payments", ref: p.paymentRefNo || "\u2014", field: "TransactionDate", date: p.transactionDate, period: per }); }); (d.stockMovements || []).forEach((m) => { if (bad(m.movementDate)) out.push({ sec: "Stock", ref: m.movementReference || "\u2014", field: "MovementDate", date: m.movementDate, period: per }); if (bad(m.movementPostingDate)) out.push({ sec: "Stock", ref: m.movementReference || "\u2014", field: "MovementPostingDate", date: m.movementPostingDate, period: per }); }); (d.assetTransactions || []).forEach((a) => { if (bad(a.assetTransactionDate)) out.push({ sec: "Assets", ref: a.assetTransactionID || "\u2014", field: "AssetTransactionDate", date: a.assetTransactionDate, period: per }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const from = (d.header && (d.header.fiscalYearFrom || d.header.selectionStart)) || ""; const to = (d.header && (d.header.fiscalYearTo || d.header.selectionEnd)) || ""; if (!from || !to) return []; const per = from + ".." + to; const bad = (x) => x && (x.slice(0,10) < from || x.slice(0,10) > to); const out = []; (d.transactions || []).forEach((t) => { if (bad(t.transactionDate)) out.push({ sec: "GL", ref: t.transactionID || "\u2014", field: "TransactionDate", date: t.transactionDate, period: per }); if (bad(t.glPostingDate)) out.push({ sec: "GL", ref: t.transactionID || "\u2014", field: "GLPostingDate", date: t.glPostingDate, period: per }); }); (d.payments || []).forEach((p) => { if (bad(p.transactionDate)) out.push({ sec: "Payments", ref: p.paymentRefNo || "\u2014", field: "TransactionDate", date: p.transactionDate, period: per }); }); (d.stockMovements || []).forEach((m) => { if (bad(m.movementDate)) out.push({ sec: "Stock", ref: m.movementReference || "\u2014", field: "MovementDate", date: m.movementDate, period: per }); if (bad(m.movementPostingDate)) out.push({ sec: "Stock", ref: m.movementReference || "\u2014", field: "MovementPostingDate", date: m.movementPostingDate, period: per }); }); (d.assetTransactions || []).forEach((a) => { if (bad(a.assetTransactionDate)) out.push({ sec: "Assets", ref: a.assetTransactionID || "\u2014", field: "AssetTransactionDate", date: a.assetTransactionDate, period: per }); }); return out; } },
   { id: "SAFT_APT_001", family: "SCHEMA", category: "Accounting", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "Invoice", requires: "any",
     title: "Kaupimo principas: s\u0105skaita u\u017eregistruota kit\u0173 finansini\u0173 met\u0173 DK",
     titleEn: "Accrual principle: invoice posted to the GL of a different financial year",
@@ -4514,7 +4557,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Register = @reg | InvoiceNo = @no | InvoiceDate = @idate | GLPostingDate = @gdate",
     fixEn: "Confirm the income/expense is recognized in the correct financial year.",
     fixLt: "\u012esitikinkite, kad pripa\u017einta teisingais finansiniais metais.",
-    evaluate: (d) => { const out = []; const scan = (items, reg) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const idt = String(inv.invoiceDate || ""); const gdt = String(inv.glPostingDate || ""); if (idt.length >= 4 && gdt.length >= 4 && idt.slice(0, 4) !== gdt.slice(0, 4)) out.push({ reg, no: inv.invoiceNo || "\u2014", idate: idt.slice(0,10), gdate: gdt.slice(0,10) }); }); scan(d.sales?.items, "Sales"); scan(d.purchases?.items, "Purchases"); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; const scan = (items, reg) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const idt = String(inv.invoiceDate || ""); const gdt = String(inv.glPostingDate || ""); if (idt.length >= 4 && gdt.length >= 4 && idt.slice(0, 4) !== gdt.slice(0, 4)) out.push({ reg, no: inv.invoiceNo || "\u2014", idate: idt.slice(0,10), gdate: gdt.slice(0,10) }); }); scan(d.sales?.items, "Sales"); scan(d.purchases?.items, "Purchases"); return out; } },
   { id: "SAFT_CFA_001", family: "SCHEMA", category: "Financial", severity: "Low", dataTypes: "F-Full; MF", refType: "Account", requires: "accounts",
     title: "Finansin\u0117s skolos vir\u0161ija vis\u0105 turt\u0105 (nemokumo indikatorius)",
     titleEn: "Financial debt exceeds total assets (insolvency indicator)",
@@ -4587,7 +4630,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Side = @side | Party = @party | VAT no. = @vat | STITaxCode = @sti",
     fixEn: "Verify the counterparty is a Lithuanian VAT payer; Art. 96 reverse charge requires it.",
     fixLt: "Patikrinkite, ar kontrahentas \u2014 Lietuvos PVM mok\u0117tojas (96 str. s\u0105lyga).",
-    evaluate: (d, ctx) => { const C = ["PVM25","PVM26","PVM27"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items, side, map, master) => { const tracked = (master || []).some((x) => String(x.taxRegistrationNumber || "").trim()); if (!tracked) return; (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const pid = String((side === "S" ? inv.customerID : inv.supplierID) || "").trim(); const rec = map ? map.get(pid) : null; const vat = String((rec && rec.taxRegistrationNumber) || "").trim().toUpperCase(); (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (C.indexOf(s) < 0) return; if (vat && vat.indexOf("LT") === 0) return; out.push({ side, party: pid || "\u2014", vat: vat || "\u2014", sti: s }); }); }); }; scan(d.sales?.items, "S", ctx && ctx.customerMap, d.customers); scan(d.purchases?.items, "P", ctx && ctx.supplierMap, d.suppliers); return out.slice(0, 200); } },
+    evaluate: (d, ctx) => { const C = ["PVM25","PVM26","PVM27"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items, side, map, master) => { const tracked = (master || []).some((x) => String(x.taxRegistrationNumber || "").trim()); if (!tracked) return; (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const pid = String((side === "S" ? inv.customerID : inv.supplierID) || "").trim(); const rec = map ? map.get(pid) : null; const vat = String((rec && rec.taxRegistrationNumber) || "").trim().toUpperCase(); (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (C.indexOf(s) < 0) return; if (vat && vat.indexOf("LT") === 0) return; out.push({ side, party: pid || "\u2014", vat: vat || "\u2014", sti: s }); }); }); }; scan(d.sales?.items, "S", ctx && ctx.customerMap, d.customers); scan(d.purchases?.items, "P", ctx && ctx.supplierMap, d.suppliers); return out; } },
   { id: "SAFT_VDT_015", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
     title: "PVM kodo ir preki\u0173/paslaug\u0173 tipo (GoodsServicesID) suderinamumas",
     titleEn: "PVM code vs GoodsServicesID type consistency",
@@ -4596,7 +4639,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | STITaxCode = @sti | GoodsServicesID = @g | Expected = @exp",
     fixEn: "Correct the line type or the PVM code; a goods code with a services type (or vice versa) is contradictory.",
     fixLt: "Pataisykite eilut\u0117s tip\u0105 arba PVM kod\u0105.",
-    evaluate: (d) => { const GDS = ["PVM12","PVM13","PVM16","PVM17","PVM18","PVM35","PVM36"]; const SVC = ["PVM20","PVM21","PVM37","PVM38","PVM39","PVM40","PVM41","PVM42"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); const g = String(l.goodsServicesID || "").toUpperCase(); if (!s || !g) return; if (GDS.indexOf(s) >= 0 && g === "PS") out.push({ no: inv.invoiceNo || "\u2014", sti: s, g, exp: "PR" }); if (SVC.indexOf(s) >= 0 && g === "PR") out.push({ no: inv.invoiceNo || "\u2014", sti: s, g, exp: "PS" }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+    evaluate: (d) => { const GDS = ["PVM12","PVM13","PVM16","PVM17","PVM18","PVM35","PVM36"]; const SVC = ["PVM20","PVM21","PVM37","PVM38","PVM39","PVM40","PVM41","PVM42"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); const g = String(l.goodsServicesID || "").toUpperCase(); if (!s || !g) return; if (GDS.indexOf(s) >= 0 && g === "PS") out.push({ no: inv.invoiceNo || "\u2014", sti: s, g, exp: "PR" }); if (SVC.indexOf(s) >= 0 && g === "PR") out.push({ no: inv.invoiceNo || "\u2014", sti: s, g, exp: "PS" }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out; } },
 
   { id: "SAFT_VDT_016", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI; PI; MF", refType: "Invoice", requires: "any",
     title: "S\u0105skaitoje nurodyta kontrahento valstyb\u0117 nesutampa su kortele",
@@ -4615,7 +4658,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | TaxPoint = @tp | InvoiceDate = @idate | Deadline = @dl",
     fixEn: "Issue intra-EU supply invoices by the 15th of the month following the chargeable event.",
     fixLt: "ES tiekim\u0173 SF i\u0161ra\u0161ykite iki kito m\u0117nesio 15 d.",
-    evaluate: (d) => { const C = ["PVM13","PVM14","PVM19","PVM50"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const idate = String(inv.invoiceDate || "").slice(0, 10); if (!idate) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || C.indexOf(s) < 0) return; const tp = String(l.taxPointDate || "").slice(0, 10); if (tp.length < 10) return; const y = parseInt(tp.slice(0, 4), 10); const m = parseInt(tp.slice(5, 7), 10); const m2 = m === 12 ? 1 : m + 1; const y2 = m === 12 ? y + 1 : y; const dl = String(y2).padStart(4, "0") + "-" + String(m2).padStart(2, "0") + "-15"; if (idate > dl) out.push({ no: inv.invoiceNo || "\u2014", tp, idate, dl }); }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const C = ["PVM13","PVM14","PVM19","PVM50"]; const idx = {}; (d.taxCodes || []).forEach((tc) => { if (tc.taxCode) idx[tc.taxCode] = tc.stiTaxCode || tc.taxCode; }); const out = []; (d.sales?.items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const idate = String(inv.invoiceDate || "").slice(0, 10); if (!idate) return; (inv.lines || []).forEach((l) => { const s = stiOf(l, idx); if (!s || C.indexOf(s) < 0) return; const tp = String(l.taxPointDate || "").slice(0, 10); if (tp.length < 10) return; const y = parseInt(tp.slice(0, 4), 10); const m = parseInt(tp.slice(5, 7), 10); const m2 = m === 12 ? 1 : m + 1; const y2 = m === 12 ? y + 1 : y; const dl = String(y2).padStart(4, "0") + "-" + String(m2).padStart(2, "0") + "-15"; if (idate > dl) out.push({ no: inv.invoiceNo || "\u2014", tp, idate, dl }); }); }); return out; } },
   { id: "SAFT_VDT_018", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "InvoiceLine", requires: "any",
     title: "Neapmokestinam\u0173 (PVM5) eilu\u010di\u0173 atleidimo pagrindas (TaxExemptionReason)",
     titleEn: "Exempt (PVM5) lines should state the exemption basis (TaxExemptionReason)",
@@ -4633,7 +4676,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Side = @side | InvoiceNo = @no | TaxPoint = @tp | Period = @period",
     fixEn: "Correct the tax point date or split the document into the right period.",
     fixLt: "Pataisykite apmokestinimo momento dat\u0105.",
-    evaluate: (d) => { const from = (d.header && (d.header.fiscalYearFrom || d.header.selectionStart)) || ""; const to = (d.header && (d.header.fiscalYearTo || d.header.selectionEnd)) || ""; if (!from || !to) return []; const per = from + ".." + to; const out = []; const scan = (items, side) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const tp = String(l.taxPointDate || "").slice(0, 10); if (tp && (tp < from || tp > to)) out.push({ side, no: inv.invoiceNo || "\u2014", tp, period: per }); }); }); scan(d.sales?.items, "S"); scan(d.purchases?.items, "P"); return out.slice(0, 200); } },
+    evaluate: (d) => { const from = (d.header && (d.header.fiscalYearFrom || d.header.selectionStart)) || ""; const to = (d.header && (d.header.fiscalYearTo || d.header.selectionEnd)) || ""; if (!from || !to) return []; const per = from + ".." + to; const out = []; const scan = (items, side) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const tp = String(l.taxPointDate || "").slice(0, 10); if (tp && (tp < from || tp > to)) out.push({ side, no: inv.invoiceNo || "\u2014", tp, period: per }); }); }); scan(d.sales?.items, "S"); scan(d.purchases?.items, "P"); return out; } },
   { id: "SAFT_VDT_020", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI; PI", refType: "Invoice", requires: "any",
     title: "Didel\u0117s nuolaidos s\u0105skaitose (\u2265 30 proc. bendros sumos \u2014 metodin\u0117 riba)",
     titleEn: "Large invoice discounts (\u2265 30% of gross \u2014 methodological threshold)",
@@ -4642,7 +4685,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Side = @side | InvoiceNo = @no | Discounts = @disc | Gross = @gross | Share = @pct%",
     fixEn: "Review the pricing/discount basis; the taxable value must reflect the consideration.",
     fixLt: "Per\u017ei\u016br\u0117kite nuolaid\u0173 pagrind\u0105.",
-    evaluate: (d) => { const hasAny = (items) => (items || []).some((inv) => (inv.settlements || []).some((s) => s.amount != null || String(s.discount || "").trim())); if (!hasAny(d.sales?.items) && !hasAny(d.purchases?.items)) return []; const out = []; const scan = (items, side) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const g = inv.documentTotals && inv.documentTotals.grossTotal; if (!(g > 0)) return; let disc = 0; (inv.settlements || []).forEach((s) => { if (s.amount != null) disc += Math.abs(s.amount); }); if (disc / g >= 0.3) out.push({ side, no: inv.invoiceNo || "\u2014", disc: Math.round(disc * 100) / 100, gross: Math.round(g * 100) / 100, pct: Math.round((disc / g) * 1000) / 10 }); }); scan(d.sales?.items, "S"); scan(d.purchases?.items, "P"); return out.slice(0, 200); } },
+    evaluate: (d) => { const hasAny = (items) => (items || []).some((inv) => (inv.settlements || []).some((s) => s.amount != null || String(s.discount || "").trim())); if (!hasAny(d.sales?.items) && !hasAny(d.purchases?.items)) return []; const out = []; const scan = (items, side) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; const g = inv.documentTotals && inv.documentTotals.grossTotal; if (!(g > 0)) return; let disc = 0; (inv.settlements || []).forEach((s) => { if (s.amount != null) disc += Math.abs(s.amount); }); if (disc / g >= 0.3) out.push({ side, no: inv.invoiceNo || "\u2014", disc: Math.round(disc * 100) / 100, gross: Math.round(g * 100) / 100, pct: Math.round((disc / g) * 1000) / 10 }); }); scan(d.sales?.items, "S"); scan(d.purchases?.items, "P"); return out; } },
   { id: "SAFT_VDT_021", family: "SCHEMA", category: "Tax / Classifiers", severity: "Low", dataTypes: "F-Full; SI", refType: "AuditFile", requires: "sales",
     title: "Mi\u0161rios veiklos po\u017eymiai \u2014 PVM atskaitos proporcija (per\u017ei\u016bra)",
     titleEn: "Mixed-activity signs \u2014 VAT deduction proportion review",
@@ -4670,7 +4713,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @tx | Debits = @d | Credits = @c | Diff = @diff",
     fixEn: "Fix the unbalanced journal entry; debits must equal credits.",
     fixLt: "Pataisykite nesubalansuot\u0105 \u012fra\u0161\u0105.",
-    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => { let D = 0, C = 0; (t.lines || []).forEach((l) => { D += l.debitAmount || 0; C += l.creditAmount || 0; }); if (Math.abs(D - C) > 0.01) out.push({ tx: t.transactionID || "\u2014", d: Math.round(D * 100) / 100, c: Math.round(C * 100) / 100, diff: Math.round((D - C) * 100) / 100 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => { let D = 0, C = 0; (t.lines || []).forEach((l) => { D += l.debitAmount || 0; C += l.creditAmount || 0; }); if (Math.abs(D - C) > 0.01) out.push({ tx: t.transactionID || "\u2014", d: Math.round(D * 100) / 100, c: Math.round(C * 100) / 100, diff: Math.round((D - C) * 100) / 100 }); }); return out; } },
   { id: "SAFT_DET_005", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; PA", refType: "Payments", requires: "payments",
     title: "Mok\u0117jim\u0173 byla: antra\u0161t\u0117s kontroliniai skai\u010diai atitinka eilutes",
     titleEn: "Payments file: header control totals must match the lines",
@@ -4697,7 +4740,7 @@ const STRUCTURAL_RULES = [
     failTpl: "InvoiceNo = @no | Base = @base | Rate = @rate% | Stated = @amt | Expected = @exp",
     fixEn: "Correct the VAT amount or the rate/base on this line.",
     fixLt: "Pataisykite PVM sum\u0105 arba tarif\u0105/baz\u0119.",
-    evaluate: (d) => { const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const t = l.tax; if (!t) return; const b = t.taxableAmount, r = t.taxPercentage, a = t.taxAmount; if (b == null || r == null || a == null || !(r > 0)) return; const exp = b * r / 100; if (Math.abs(exp - a) > 0.02) out.push({ no: inv.invoiceNo || "\u2014", base: b, rate: r, amt: a, exp: Math.round(exp * 100) / 100 }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; const scan = (items) => (items || []).forEach((inv) => { if (String(inv.invoiceType || "").toUpperCase() === "AN") return; (inv.lines || []).forEach((l) => { const t = l.tax; if (!t) return; const b = t.taxableAmount, r = t.taxPercentage, a = t.taxAmount; if (b == null || r == null || a == null || !(r > 0)) return; const exp = b * r / 100; if (Math.abs(exp - a) > 0.02) out.push({ no: inv.invoiceNo || "\u2014", base: b, rate: r, amt: a, exp: Math.round(exp * 100) / 100 }); }); }); scan(d.sales?.items); scan(d.purchases?.items); return out; } },
   { id: "SAFT_DVT_023", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; GL", refType: "TransactionLine", requires: "transactions",
     title: "EUR valiutos \u012fra\u0161ai: CurrencyAmount turi sutapti su Amount",
     titleEn: "EUR-currency entries: CurrencyAmount must equal Amount",
@@ -4706,7 +4749,7 @@ const STRUCTURAL_RULES = [
     failTpl: "TransactionID = @tx | Side = @side | Amount = @a | CurrencyAmount = @ca",
     fixEn: "Fix the currency fields; EUR entries cannot differ from the base amount.",
     fixLt: "Pataisykite valiutos laukus.",
-    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.debitCurrencyCode === "EUR" && l.debitAmount != null && l.debitCurrencyAmount != null && Math.abs(l.debitCurrencyAmount - l.debitAmount) > 0.005) out.push({ tx: t.transactionID || "\u2014", side: "D", a: l.debitAmount, ca: l.debitCurrencyAmount }); if (l.creditCurrencyCode === "EUR" && l.creditAmount != null && l.creditCurrencyAmount != null && Math.abs(l.creditCurrencyAmount - l.creditAmount) > 0.005) out.push({ tx: t.transactionID || "\u2014", side: "C", a: l.creditAmount, ca: l.creditCurrencyAmount }); })); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { if (l.debitCurrencyCode === "EUR" && l.debitAmount != null && l.debitCurrencyAmount != null && Math.abs(l.debitCurrencyAmount - l.debitAmount) > 0.005) out.push({ tx: t.transactionID || "\u2014", side: "D", a: l.debitAmount, ca: l.debitCurrencyAmount }); if (l.creditCurrencyCode === "EUR" && l.creditAmount != null && l.creditCurrencyAmount != null && Math.abs(l.creditCurrencyAmount - l.creditAmount) > 0.005) out.push({ tx: t.transactionID || "\u2014", side: "C", a: l.creditAmount, ca: l.creditCurrencyAmount }); })); return out; } },
   { id: "SAFT_DVT_024", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; MF", refType: "OpenInvoice", requires: "any",
     title: "Atvir\u0173 s\u0105skait\u0173 neapmok\u0117ta suma negali vir\u0161yti dokumento sumos",
     titleEn: "Open-invoice unpaid amount cannot exceed the document amount",
@@ -4715,7 +4758,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Side = @side | Party = @party | InvoiceNo = @no | Amount = @a | Unpaid = @u",
     fixEn: "Correct the open-items export; unpaid cannot exceed the invoice amount.",
     fixLt: "Pataisykite atvir\u0173 s\u0105skait\u0173 eksport\u0105.",
-    evaluate: (d) => { const out = []; const scan = (arr, side, idk) => (arr || []).forEach((m) => { const inv = m.openInvoices || m.openSalesInvoices || m.openPurchaseInvoices || m.openInv || []; (inv || []).forEach((o) => { const a = o.amount, u = o.unpaidAmount; if (a == null || u == null) return; if (Math.abs(u) - Math.abs(a) > 0.011) out.push({ side, party: m[idk] || "\u2014", no: o.invoiceNo || "\u2014", a, u }); }); }); scan(d.customers, "S", "customerID"); scan(d.suppliers, "P", "supplierID"); return out.slice(0, 200); } },
+    evaluate: (d) => { const out = []; const scan = (arr, side, idk) => (arr || []).forEach((m) => { const inv = m.openInvoices || m.openSalesInvoices || m.openPurchaseInvoices || m.openInv || []; (inv || []).forEach((o) => { const a = o.amount, u = o.unpaidAmount; if (a == null || u == null) return; if (Math.abs(u) - Math.abs(a) > 0.011) out.push({ side, party: m[idk] || "\u2014", no: o.invoiceNo || "\u2014", a, u }); }); }); scan(d.customers, "S", "customerID"); scan(d.suppliers, "P", "supplierID"); return out; } },
   { id: "SAFT_AET_002", family: "SCHEMA", category: "GL Accounts", severity: "Low", dataTypes: "F-Full; MF", refType: "Account", requires: "accounts",
     title: "Pilnoji fundamentin\u0117 lygyb\u0117 su pelno (nuostoli\u0173) klas\u0117mis (5-6 kl.)",
     titleEn: "Full fundamental identity including P&L classes (5-6)",
@@ -4751,7 +4794,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Account = @acct (@name) | Category = @cat | Net expense = @net EUR | Review PLN204",
     fixEn: "Verify the PLN204 treatment of these expense categories (add-back or limited deduction).",
     fixLt: "Patikrinkite \u0161i\u0173 kategorij\u0173 traktavim\u0105 PLN204.",
-    evaluate: (d) => { const cats = [ { rx: /atid\u0117jin/i, cat: "Atid\u0117jiniai (PM\u012e 17 str.)" }, { rx: /nuvert\u0117j|vert\u0117s suma\u017e\u0117jim/i, cat: "Vert\u0117s suma\u017e\u0117jimas (PM\u012e 31 str.)" }, { rx: /bevilti\u0161k/i, cat: "Bevilti\u0161kos skolos (PM\u012e 25 str.)" }, { rx: /neatskaitom/i, cat: "Neatskaitomas PVM (PM\u012e 24 str.)" }, { rx: /nari\u0173 mokes\u010d|\u012fna\u0161/i, cat: "Nari\u0173 mokes\u010diai/\u012fna\u0161ai" }, { rx: /darbuotoj[\s\S]{0,12}naud/i, cat: "I\u0161laidos darbuotoj\u0173 naudai (PM\u012e 26 str.)" }, { rx: /gamybos nuostol/i, cat: "Gamybos nuostoliai (PM\u012e 17 str.)" }, { rx: /pelno mokes\u010d/i, cat: "Pelno mokes\u010dio s\u0105naudos (PM\u012e 31 str.)" } ]; const targets = {}; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); if (id.charAt(0) !== "6") return; const nm = String(a.accountDescription || ""); if (/baud|delspinig/i.test(nm)) return; for (const cdef of cats) { if (cdef.rx.test(nm)) { targets[id] = { name: nm, cat: cdef.cat }; break; } } }); if (!Object.keys(targets).length) return []; const net = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!(id in targets)) return; net[id] = (net[id] || 0) + ((l.debitAmount || 0) - (l.creditAmount || 0)); })); const out = []; Object.keys(net).forEach((id) => { if (net[id] > 0.005) out.push({ acct: id, name: targets[id].name.slice(0, 40), cat: targets[id].cat, net: Math.round(net[id] * 100) / 100 }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const cats = [ { rx: /atid\u0117jin/i, cat: "Atid\u0117jiniai (PM\u012e 17 str.)" }, { rx: /nuvert\u0117j|vert\u0117s suma\u017e\u0117jim/i, cat: "Vert\u0117s suma\u017e\u0117jimas (PM\u012e 31 str.)" }, { rx: /bevilti\u0161k/i, cat: "Bevilti\u0161kos skolos (PM\u012e 25 str.)" }, { rx: /neatskaitom/i, cat: "Neatskaitomas PVM (PM\u012e 24 str.)" }, { rx: /nari\u0173 mokes\u010d|\u012fna\u0161/i, cat: "Nari\u0173 mokes\u010diai/\u012fna\u0161ai" }, { rx: /darbuotoj[\s\S]{0,12}naud/i, cat: "I\u0161laidos darbuotoj\u0173 naudai (PM\u012e 26 str.)" }, { rx: /gamybos nuostol/i, cat: "Gamybos nuostoliai (PM\u012e 17 str.)" }, { rx: /pelno mokes\u010d/i, cat: "Pelno mokes\u010dio s\u0105naudos (PM\u012e 31 str.)" } ]; const targets = {}; (d.accounts || []).forEach((a) => { const id = String(a.accountID || ""); if (id.charAt(0) !== "6") return; const nm = String(a.accountDescription || ""); if (/baud|delspinig/i.test(nm)) return; for (const cdef of cats) { if (cdef.rx.test(nm)) { targets[id] = { name: nm, cat: cdef.cat }; break; } } }); if (!Object.keys(targets).length) return []; const net = {}; (d.transactions || []).forEach((t) => (t.lines || []).forEach((l) => { const id = String(l.accountID || ""); if (!(id in targets)) return; net[id] = (net[id] || 0) + ((l.debitAmount || 0) - (l.creditAmount || 0)); })); const out = []; Object.keys(net).forEach((id) => { if (net[id] > 0.005) out.push({ acct: id, name: targets[id].name.slice(0, 40), cat: targets[id].cat, net: Math.round(net[id] * 100) / 100 }); }); return out; } },
 
   { id: "SAFT_INT_044", family: "SCHEMA", category: "Integrity", severity: "Low", dataTypes: "F-Full; MF", refType: "AssetTransaction", requires: "any",
     title: "Turto operacij\u0173 AssetID turi b\u016bti pagrindin\u0117je turto byloje",
@@ -4761,7 +4804,7 @@ const STRUCTURAL_RULES = [
     failTpl: "AssetTransactionID = @tx | AssetID = @aid | Not found in master",
     fixEn: "Export the referenced assets in MasterFiles or fix the AssetID.",
     fixLt: "Pateikite turt\u0105 pagrindin\u0117je byloje arba pataisykite AssetID.",
-    evaluate: (d) => { const assets = d.assets || []; const txs = d.assetTransactions || []; if (!assets.length || !txs.length) return []; const m = new Set(assets.map((a) => String(a.assetID || "").trim()).filter(Boolean)); const out = []; txs.forEach((t) => { const aid = String(t.assetID || "").trim(); if (aid && !m.has(aid)) out.push({ tx: t.assetTransactionID || t.transactionID || "\u2014", aid }); }); return out.slice(0, 200); } },
+    evaluate: (d) => { const assets = d.assets || []; const txs = d.assetTransactions || []; if (!assets.length || !txs.length) return []; const m = new Set(assets.map((a) => String(a.assetID || "").trim()).filter(Boolean)); const out = []; txs.forEach((t) => { const aid = String(t.assetID || "").trim(); if (aid && !m.has(aid)) out.push({ tx: t.assetTransactionID || t.transactionID || "\u2014", aid }); }); return out; } },
 
   { id: "SAFT_VAT_001", family: "SCHEMA", category: "Tax / Classifiers", severity: "High", dataTypes: "F-Full; MF", refType: "Customer/Supplier", requires: "any",
     title: "PVM mok\u0117tojo kodo (LT) formato ir kontrolin\u0117s sumos patikra",
@@ -4771,7 +4814,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Party = @side @id (@name) | VAT = @vat | Problema = @why",
     fixEn: "Correct the counterparty's Lithuanian VAT payer code in the master record (verify via VIES).",
     fixLt: "Pataisykite kontrahento PVM mok\u0117tojo kod\u0105 kortel\u0117je (patikrinkite per VIES).",
-    evaluate: (d) => { const ok = (digits) => { if (!/^\d{9}$/.test(digits) && !/^\d{12}$/.test(digits)) return false; if (digits.length === 9 && digits.charAt(7) !== "1") return false; if (digits.length === 12 && digits.charAt(10) !== "1") return false; const body = digits.slice(0, -1); const chk = +digits.charAt(digits.length - 1); let s = 0; for (let i = 0; i < body.length; i++) s += ((i % 9) + 1) * (+body.charAt(i)); let c = s % 11; if (c === 10) { s = 0; for (let i = 0; i < body.length; i++) s += (((i + 2) % 9) + 1) * (+body.charAt(i)); c = s % 11; } return (c % 10) === chk; }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); if (!/^LT/.test(v)) return; const digits = v.slice(2); let why = ""; if (!/^\d{9}$/.test(digits) && !/^\d{12}$/.test(digits)) why = "formatas (LT + 9 arba 12 skaitmen\u0173)"; else if (!ok(digits)) why = "kontrolin\u0117 suma (mod 11)"; if (why) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, why }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out.slice(0, 200); } },
+    evaluate: (d) => { const ok = (digits) => { if (!/^\d{9}$/.test(digits) && !/^\d{12}$/.test(digits)) return false; if (digits.length === 9 && digits.charAt(7) !== "1") return false; if (digits.length === 12 && digits.charAt(10) !== "1") return false; const body = digits.slice(0, -1); const chk = +digits.charAt(digits.length - 1); let s = 0; for (let i = 0; i < body.length; i++) s += ((i % 9) + 1) * (+body.charAt(i)); let c = s % 11; if (c === 10) { s = 0; for (let i = 0; i < body.length; i++) s += (((i + 2) % 9) + 1) * (+body.charAt(i)); c = s % 11; } return (c % 10) === chk; }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); if (!/^LT/.test(v)) return; const digits = v.slice(2); let why = ""; if (!/^\d{9}$/.test(digits) && !/^\d{12}$/.test(digits)) why = "formatas (LT + 9 arba 12 skaitmen\u0173)"; else if (!ok(digits)) why = "kontrolin\u0117 suma (mod 11)"; if (why) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, why }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out; } },
   { id: "SAFT_VAT_002", family: "SCHEMA", category: "Tax / Classifiers", severity: "Medium", dataTypes: "F-Full; MF", refType: "Customer/Supplier", requires: "any",
     title: "ES PVM kod\u0173 strukt\u016bra (ne LT): \u0161alies formato patikra",
     titleEn: "EU VAT number structure (non-LT): per-country format validation",
@@ -4780,7 +4823,7 @@ const STRUCTURAL_RULES = [
     failTpl: "Party = @side @id (@name) | VAT = @vat | Laukiama = @pattern",
     fixEn: "Correct the EU counterparty's VAT number to the country's official structure (verify via VIES).",
     fixLt: "Pataisykite ES kontrahento PVM kod\u0105 pagal \u0161alies strukt\u016br\u0105 (patikrinkite per VIES).",
-    evaluate: (d) => { const RX = { AT: ["^ATU\\d{8}$", "ATU+8 sk."], BE: ["^BE[01]\\d{9}$", "BE+10 sk."], BG: ["^BG\\d{9,10}$", "BG+9-10 sk."], CY: ["^CY\\d{8}[A-Z]$", "CY+8 sk.+raid\u0117"], CZ: ["^CZ\\d{8,10}$", "CZ+8-10 sk."], DE: ["^DE\\d{9}$", "DE+9 sk."], DK: ["^DK\\d{8}$", "DK+8 sk."], EE: ["^EE\\d{9}$", "EE+9 sk."], EL: ["^EL\\d{9}$", "EL+9 sk."], ES: ["^ES[A-Z0-9]\\d{7}[A-Z0-9]$", "ES+9 \u017eenkl."], FI: ["^FI\\d{8}$", "FI+8 sk."], FR: ["^FR[A-Z0-9]{2}\\d{9}$", "FR+2 \u017eenkl.+9 sk."], HR: ["^HR\\d{11}$", "HR+11 sk."], HU: ["^HU\\d{8}$", "HU+8 sk."], IE: ["^IE(\\d{7}[A-Z]{1,2}|\\d[A-Z+*]\\d{5}[A-Z])$", "IE formatas"], IT: ["^IT\\d{11}$", "IT+11 sk."], LU: ["^LU\\d{8}$", "LU+8 sk."], LV: ["^LV\\d{11}$", "LV+11 sk."], MT: ["^MT\\d{8}$", "MT+8 sk."], NL: ["^NL\\d{9}B\\d{2}$", "NL+9 sk.+B+2 sk."], PL: ["^PL\\d{10}$", "PL+10 sk."], PT: ["^PT\\d{9}$", "PT+9 sk."], RO: ["^RO\\d{2,10}$", "RO+2-10 sk."], SE: ["^SE\\d{12}$", "SE+12 sk."], SI: ["^SI\\d{8}$", "SI+8 sk."], SK: ["^SK\\d{10}$", "SK+10 sk."], XI: ["^XI(\\d{9}|\\d{12}|(GD|HA)\\d{3})$", "XI formatas"] }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); const m = v.match(/^([A-Z]{2})/); if (!m || m[1] === "LT") return; const e = RX[m[1]]; if (!e) return; if (!new RegExp(e[0]).test(v)) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, pattern: e[1] }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out.slice(0, 200); } },
+    evaluate: (d) => { const RX = { AT: ["^ATU\\d{8}$", "ATU+8 sk."], BE: ["^BE[01]\\d{9}$", "BE+10 sk."], BG: ["^BG\\d{9,10}$", "BG+9-10 sk."], CY: ["^CY\\d{8}[A-Z]$", "CY+8 sk.+raid\u0117"], CZ: ["^CZ\\d{8,10}$", "CZ+8-10 sk."], DE: ["^DE\\d{9}$", "DE+9 sk."], DK: ["^DK\\d{8}$", "DK+8 sk."], EE: ["^EE\\d{9}$", "EE+9 sk."], EL: ["^EL\\d{9}$", "EL+9 sk."], ES: ["^ES[A-Z0-9]\\d{7}[A-Z0-9]$", "ES+9 \u017eenkl."], FI: ["^FI\\d{8}$", "FI+8 sk."], FR: ["^FR[A-Z0-9]{2}\\d{9}$", "FR+2 \u017eenkl.+9 sk."], HR: ["^HR\\d{11}$", "HR+11 sk."], HU: ["^HU\\d{8}$", "HU+8 sk."], IE: ["^IE(\\d{7}[A-Z]{1,2}|\\d[A-Z+*]\\d{5}[A-Z])$", "IE formatas"], IT: ["^IT\\d{11}$", "IT+11 sk."], LU: ["^LU\\d{8}$", "LU+8 sk."], LV: ["^LV\\d{11}$", "LV+11 sk."], MT: ["^MT\\d{8}$", "MT+8 sk."], NL: ["^NL\\d{9}B\\d{2}$", "NL+9 sk.+B+2 sk."], PL: ["^PL\\d{10}$", "PL+10 sk."], PT: ["^PT\\d{9}$", "PT+9 sk."], RO: ["^RO\\d{2,10}$", "RO+2-10 sk."], SE: ["^SE\\d{12}$", "SE+12 sk."], SI: ["^SI\\d{8}$", "SI+8 sk."], SK: ["^SK\\d{10}$", "SK+10 sk."], XI: ["^XI(\\d{9}|\\d{12}|(GD|HA)\\d{3})$", "XI formatas"] }; const out = []; const scan = (arr, side, idk) => (arr || []).forEach((p) => { const raw = String(p.taxRegistrationNumber || "").trim(); if (!raw) return; const v = raw.toUpperCase().replace(/\s/g, ""); const m = v.match(/^([A-Z]{2})/); if (!m || m[1] === "LT") return; const e = RX[m[1]]; if (!e) return; if (!new RegExp(e[0]).test(v)) out.push({ side, id: String(p[idk] || "\u2014"), name: String(p.name || "").slice(0, 30), vat: v, pattern: e[1] }); }); scan(d.customers, "Customer", "customerID"); scan(d.suppliers, "Supplier", "supplierID"); return out; } },
 
   // ═══ Generalized referential-integrity rules (VMI SCHEMA_INT family) ═══
   { id: "SAFT_INT_SD_ACCT", family: "SCHEMA", category: "Integrity", severity: "High", dataTypes: "F-Full; SI; PI; PA; MG", refType: "SourceDocument", requires: "accounts",
@@ -5216,24 +5259,25 @@ function runAllRules(data, opts = {}) {
     if (r.status !== "flagged") return;
     const severity = sevMap[r.severity] || "Warn";
     const meta = ruleById[r.id] || {};
-    r.hits.forEach((h) => {
-      findings.push({
-        rule_id: r.id,
-        category: r.scope === "sales" ? "Sales VAT" : r.scope === "both" ? "VAT (Sales + Purchases)" : "Purchase VAT",
-        severity, severityUi: uiMap[severity] || "Medium",
-        type: "B", typeName: "Audit",
-        title: r.title,
-        detail: h.msg + "  —  " + (r.legal || ""),
-        evidence: [h.msg],
-        // rich metadata for the finding-detail page:
-        ruleMeta: {
-          titleLt: meta.title || r.title, titleEn: meta.titleEn || r.title,
-          descriptionLt: meta.description || "", descriptionEn: meta.descriptionEn || "", legal: meta.legal || r.legal || "",
-          fixEn: meta.fixEn || "", fixLt: meta.fixLt || "",
-          dataTypes: meta.dataTypes || "", refType: meta.refType || "", scope: r.scope,
-        },
-        evidenceRow: h.row || null,   // structured @field values
-      });
+    const h = r.hits[0]; const n = r.count || r.hits.length;
+    findings.push({
+      rule_id: r.id,
+      category: r.scope === "sales" ? "Sales VAT" : r.scope === "both" ? "VAT (Sales + Purchases)" : "Purchase VAT",
+      severity, severityUi: uiMap[severity] || "Medium",
+      type: "B", typeName: "Audit",
+      title: r.title,
+      count: n,
+      detail: h.msg + (n > 1 ? " | Total = " + n : "") + "  —  " + (r.legal || ""),
+      evidence: r.hits.slice(0, 10).map((x) => x.msg),
+      // rich metadata for the finding-detail page:
+      ruleMeta: {
+        titleLt: meta.title || r.title, titleEn: meta.titleEn || r.title,
+        descriptionLt: meta.description || "", descriptionEn: meta.descriptionEn || "", legal: meta.legal || r.legal || "",
+        fixEn: meta.fixEn || "", fixLt: meta.fixLt || "",
+        dataTypes: meta.dataTypes || "", refType: meta.refType || "", scope: r.scope,
+      },
+      evidenceRow: h.row || null,   // structured @field values
+      evidenceRows: r.hits.slice(0, 10).map((x) => x.row || null),
     });
   });
   // ── Structural / schema rules (SCHEMA family) — whole-file integrity ──
@@ -5242,7 +5286,8 @@ function runAllRules(data, opts = {}) {
   structural.forEach((r) => {
     if (r.status !== "flagged") return;
     const severity = sevMap[r.severity] || "Warn";
-    r.hits.forEach((row) => {
+    const row = r.hits[0]; const n = r.hits.length;
+    {
       const msg = renderFailMsg(r.failTpl, row);
       findings.push({
         rule_id: r.id,
@@ -5250,8 +5295,9 @@ function runAllRules(data, opts = {}) {
         severity, severityUi: uiMap[severity] || "Medium",
         type: "S", typeName: "Schema",
         title: r.titleEn || r.title,
-        detail: msg + "  —  " + (r.legalReq || ""),
-        evidence: [msg],
+        count: n,
+        detail: msg + (n > 1 ? " | Total = " + n : "") + "  —  " + (r.legalReq || ""),
+        evidence: r.hits.slice(0, 10).map((rw) => renderFailMsg(r.failTpl, rw)),
         ruleMeta: {
           titleLt: r.title, titleEn: r.titleEn || r.title,
           descriptionLt: r.description || "", legal: r.legalReq || "",
@@ -5259,24 +5305,27 @@ function runAllRules(data, opts = {}) {
           dataTypes: r.dataTypes || "", refType: r.refType || "", scope: "schema",
         },
         evidenceRow: row || null,
+        evidenceRows: r.hits.slice(0, 10),
       });
-    });
+    }
   });
   // ── XSD-conformance rules (SCHEMA-level, from VMI's official XSD v2.01) ──
   const xsd = data.xsdResults || [];
   xsd.forEach((r) => {
     if (r.status !== "flagged") return;
     const severity = sevMap[r.severity] || "Reject";
-    r.hits.forEach((row) => {
-      const msg = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+    const fmtX = (rw) => Object.entries(rw).map(([k, v]) => `${k} = ${v}`).join(" | ");
+    const row = r.hits[0]; const n = r.hits.length; const msg = fmtX(row);
+    {
       findings.push({
         rule_id: r.id,
         category: r.category,
         severity, severityUi: uiMap[severity] || "High",
         type: "X", typeName: "XSD",
         title: r.titleEn,
-        detail: msg + "  —  SAF-T XSD v2.01",
-        evidence: [msg],
+        count: n,
+        detail: msg + (n > 1 ? " | Total = " + n : "") + "  —  SAF-T XSD v2.01",
+        evidence: r.hits.slice(0, 10).map(fmtX),
         ruleMeta: {
           titleLt: r.titleLt, titleEn: r.titleEn,
           descriptionLt: r.descLt, descriptionEn: r.descEn || "", legal: "SAF-T XSD v2.01 (VMI, įsakymas VA-49)",
@@ -5284,24 +5333,27 @@ function runAllRules(data, opts = {}) {
           dataTypes: "F-Full", refType: r.el, scope: "xsd",
         },
         evidenceRow: row || null,
+        evidenceRows: r.hits.slice(0, 10),
       });
-    });
+    }
   });
   // ── Duplicate-record rules (Table 6 / DUBL — informational) ──
   const dub = data.dubResults || [];
   dub.forEach((r) => {
     if (r.status !== "flagged") return;
     const severity = sevMap[r.severity] || "Warn";
-    r.hits.forEach((row) => {
-      const msg = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+    const fmtD = (rw) => Object.entries(rw).map(([k, v]) => `${k} = ${v}`).join(" | ");
+    const row = r.hits[0]; const n = r.hits.length; const msg = fmtD(row);
+    {
       findings.push({
         rule_id: r.id,
         category: r.category,
         severity, severityUi: uiMap[severity] || "Medium",
         type: "D", typeName: "Duplicate",
         title: r.titleEn,
-        detail: msg + "  —  SAF-T spec Table 6",
-        evidence: [msg],
+        count: n,
+        detail: msg + (n > 1 ? " | Total = " + n : "") + "  —  SAF-T spec Table 6",
+        evidence: r.hits.slice(0, 10).map(fmtD),
         ruleMeta: {
           titleLt: r.titleLt, titleEn: r.titleEn,
           descriptionLt: r.descLt, descriptionEn: r.descEn || "", legal: "SAF-T techninė specifikacija, 6 lentelė (DUBL)",
@@ -5309,24 +5361,27 @@ function runAllRules(data, opts = {}) {
           dataTypes: "F-Full", refType: r.record, scope: "duplicate",
         },
         evidenceRow: row || null,
+        evidenceRows: r.hits.slice(0, 10),
       });
-    });
+    }
   });
   // ── Classifier-validation rules (VMI VA-49 Annex 2 code lists) ──
   const cls = data.clsResults || [];
   cls.forEach((r) => {
     if (r.status !== "flagged") return;
     const severity = sevMap[r.severity] || "Warn";
-    r.hits.forEach((row) => {
-      const msg = Object.entries(row).map(([k, v]) => `${k} = ${v}`).join(" | ");
+    const fmtK = (rw) => Object.entries(rw).map(([k, v]) => `${k} = ${v}`).join(" | ");
+    const row = r.hits[0]; const n = r.hits.length; const msg = fmtK(row);
+    {
       findings.push({
         rule_id: r.id,
         category: r.category,
         severity, severityUi: uiMap[severity] || "Medium",
         type: "K", typeName: "Classifier",
         title: r.titleEn,
-        detail: msg + "  —  VMI klasifikatorius (VA-49 2 priedas)",
-        evidence: [msg],
+        count: n,
+        detail: msg + (n > 1 ? " | Total = " + n : "") + "  —  VMI klasifikatorius (VA-49 2 priedas)",
+        evidence: r.hits.slice(0, 10).map(fmtK),
         ruleMeta: {
           titleLt: r.titleLt, titleEn: r.titleEn,
           descriptionLt: r.descLt, descriptionEn: r.descEn || "", legal: "VMI klasifikatoriai Nr.1–3 (VA-49 2 priedas)",
@@ -5334,8 +5389,9 @@ function runAllRules(data, opts = {}) {
           dataTypes: "F-Full", refType: r.el, scope: "classifier",
         },
         evidenceRow: row || null,
+        evidenceRows: r.hits.slice(0, 10),
       });
-    });
+    }
   });
   // ── Full XSD schema validation (entire document vs. official XSD) ──
   // Complementary to the itemized XSD rules: catches undeclared elements,
@@ -5359,43 +5415,49 @@ function runAllRules(data, opts = {}) {
       for (const seg of parts) if (m[seg]) return m[seg];
       return "Schema";
     };
-    let added = 0;
+    const grouped = new Map();
     for (const v of sv.findings) {
       const leaf = v.path.split("/").pop();
       if (facetKinds.has(v.kind) && coveredEls.has(leaf)) continue; // itemized rule already flagged this element
-      if (added >= 150) break;
-      added++;
+      const g = grouped.get(v.kind) || { kind: v.kind, items: [] };
+      g.items.push(v); grouped.set(v.kind, g);
+    }
+    for (const g of grouped.values()) {
+      const v = g.items[0]; const n = g.items.length; const leaf = v.path.split("/").pop();
       findings.push({
-        rule_id: "SAFT_XSDV_" + v.kind,
+        rule_id: "SAFT_XSDV_" + g.kind,
         category: secOf(v.path),
         severity: "Reject", severityUi: "High",
         type: "V", typeName: "XSD Schema",
-        title: kindTitle[v.kind] || ("XSD schema violation (" + v.kind + ")"),
-        detail: v.path + (v.detail ? "  —  " + v.detail : "") + "  ·  full XSD v2.01 validation",
-        evidence: [v.path + (v.detail ? " (" + v.detail + ")" : "")],
+        title: kindTitle[g.kind] || ("XSD schema violation (" + g.kind + ")"),
+        count: n,
+        detail: v.path + (v.detail ? "  —  " + v.detail : "") + (n > 1 ? " | Total = " + n : "") + "  ·  full XSD v2.01 validation",
+        evidence: g.items.slice(0, 10).map((x) => x.path + (x.detail ? " (" + x.detail + ")" : "")),
         ruleMeta: {
-          titleLt: "Pilna XSD validacija: " + (kindTitle[v.kind] || v.kind),
-          titleEn: kindTitle[v.kind] || ("XSD schema violation (" + v.kind + ")"),
+          titleLt: "Pilna XSD validacija: " + (kindTitle[g.kind] || g.kind),
+          titleEn: kindTitle[g.kind] || ("XSD schema violation (" + g.kind + ")"),
           descriptionLt: "Visa SAF-T rinkmena tikrinama pagal oficialų VMI XSD v2.01. Pažeidimas: " + v.path,
           descriptionEn: "The entire SAF-T file is validated against the official VMI XSD v2.01. Violation at: " + v.path,
           legal: "VMI SAF-T XSD v2.01 (VA-49)", fixEn: "Correct the element to conform to the SAF-T XSD.",
           fixLt: "Pataisykite elementą pagal SAF-T XSD reikalavimus.",
           dataTypes: "F-Full", refType: leaf, scope: "xsd-schema",
         },
-        evidenceRow: { Path: v.path, Issue: v.kind, Detail: v.detail || "" },
+        evidenceRow: { Path: v.path, Issue: g.kind, Detail: v.detail || "" },
+        evidenceRows: g.items.slice(0, 10).map((x) => ({ Path: x.path, Issue: g.kind, Detail: x.detail || "" })),
       });
     }
   }
   const byRule = {}, byCategory = {}, bySeverity = { Block: 0, Reject: 0, Warn: 0 };
   for (const f of findings) {
-    byRule[f.rule_id] = (byRule[f.rule_id] || 0) + 1;
-    byCategory[f.category] = (byCategory[f.category] || 0) + 1;
-    bySeverity[f.severity] = (bySeverity[f.severity] || 0) + 1;
+    const w = f.count || 1;
+    byRule[f.rule_id] = (byRule[f.rule_id] || 0) + w;
+    byCategory[f.category] = (byCategory[f.category] || 0) + w;
+    bySeverity[f.severity] = (bySeverity[f.severity] || 0) + w;
   }
   const TOTAL_RULES = AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length;
   return {
     findings,
-    summary: { total: findings.length, rulesExecuted: TOTAL_RULES, ...bySeverity },
+    summary: { total: findings.length, occurrences: findings.reduce((s, f) => s + (f.count || 1), 0), rulesExecuted: TOTAL_RULES, ...bySeverity },
     byRule, byCategory, bySeverity,
     coverage: { rulesTotal: TOTAL_RULES, rulesRegistered: TOTAL_RULES, rulesTriggered: Object.keys(byRule).length, rulesVat: AUDIT_RULES.length, rulesSchema: STRUCTURAL_RULES.length, rulesXsd: XSD_RULES.length, rulesDup: DUPLICATE_RULES.length, rulesCls: CLASSIFIER_RULES.length, schemaValidation: { active: true, types: Object.keys((typeof XSD_SCHEMA_MODEL !== "undefined" && XSD_SCHEMA_MODEL.types) || {}).length, violations: (data.schemaValidation && data.schemaValidation.total) || 0 } },
     audit, structural, xsd, dub, cls, // structured results for all families
@@ -10116,6 +10178,10 @@ const EINV_CUSTOMIZATION = "urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:
 const EINV_PROFILE = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0";
 const EINV_STATES = ["DRAFT", "VALIDATED", "ISSUED", "TRANSMITTED", "DELIVERED", "ACCEPTED", "REJECTED", "PAID", "ARCHIVED"];
 const EINV_FLOW = { DRAFT: ["VALIDATED"], VALIDATED: ["ISSUED", "DRAFT"], ISSUED: ["TRANSMITTED"], TRANSMITTED: ["DELIVERED", "REJECTED"], DELIVERED: ["ACCEPTED", "REJECTED", "PAID"], ACCEPTED: ["PAID"], REJECTED: ["DRAFT"], PAID: ["ARCHIVED"], ARCHIVED: [] };
+// ── VMI/i.SAF-T rule-catalogue coverage manifest (audited 2026-06-08) ──
+// status: covered-direct | covered-cited | covered-consolidated | covered-new | N/A
+const BENCHMARK_COVERAGE = {"LT_RULES_2020_09": {"SCHEMA_INT_001": ["covered-cited", "direct-cite"], "SCHEMA_DUP_001": ["covered-cited", "direct-cite"], "SCHEMA_INT_002": ["covered-cited", "direct-cite"], "SCHEMA_DVT_001": ["covered-cited", "direct-cite"], "SCHEMA_INT_003": ["covered-cited", "direct-cite"], "SCHEMA_INT_004": ["covered-consolidated", "SAFT_SUP_002"], "SCHEMA_DVT_002": ["covered-cited", "cite"], "SCHEMA_DVT_003": ["covered-cited", "cite-paren"], "SCHEMA_INT_005": ["covered-cited", "direct-cite"], "SCHEMA_DVT_004": ["covered-cited", "cite-paren"], "SCHEMA_DVT_005": ["covered-cited", "cite"], "SCHEMA_DVT_006": ["covered-cited", "cite-paren"], "SCHEMA_DVT_007": ["covered-cited", "cite"], "SCHEMA_INT_006": ["covered-cited", "cite"], "SCHEMA_INT_007": ["covered-cited", "direct-cite"], "SCHEMA_DUP_002": ["covered-cited", "direct-cite"], "SCHEMA_DVT_008": ["covered-cited", "cite-paren"], "SCHEMA_INT_008": ["covered-consolidated", "SAFT_PUR_002"], "SCHEMA_INT_009": ["covered-cited", "direct-cite"], "SCHEMA_INT_010": ["covered-consolidated", "SAFT_INT_034"], "SCHEMA_INT_011": ["covered-cited", "cite"], "SCHEMA_INT_012": ["covered-consolidated", "SAFT_INT_034"], "SCHEMA_DVT_009": ["covered-cited", "direct-cite"], "SCHEMA_DVT_010": ["covered-consolidated", "SAFT_HDR_003"], "SCHEMA_DVT_011": ["covered-cited", "cite-paren"], "SCHEMA_DVT_012": ["covered-cited", "direct-cite"], "SCHEMA_DUP_003": ["covered-cited", "direct-cite"], "SCHEMA_INT_013": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_INT_014": ["covered-cited", "cite"], "SCHEMA_DUP_004": ["covered-cited", "direct-cite"], "SCHEMA_DVT_013": ["covered-cited", "cite-paren"], "SCHEMA_INT_015": ["covered-cited", "cite"], "SCHEMA_INT_016": ["covered-consolidated", "SAFT_SAL_003"], "SCHEMA_INT_017": ["covered-direct", "SAFT_INT_017"], "SCHEMA_INT_018": ["covered-cited", "cite"], "SCHEMA_DVT_014": ["covered-cited", "cite"], "SCHEMA_INT_019": ["covered-cited", "cite"], "SCHEMA_DVT_015": ["covered-cited", "cite-range"], "SCHEMA_DVT_016": ["covered-cited", "cite-range"], "SCHEMA_INT_020": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_INT_021": ["covered-consolidated", "SAFT_INT_SD_PARTY"], "SCHEMA_INT_022": ["covered-direct", "SAFT_INT_022"], "SCHEMA_DVT_017": ["covered-cited", "cite-range"], "SCHEMA_INT_023": ["covered-cited", "direct-cite"], "SCHEMA_DVT_018": ["covered-consolidated", "SAFT_ISO_001"], "SCHEMA_DVT_019": ["covered-cited", "direct-cite"], "SCHEMA_DVT_020": ["covered-cited", "cite-paren"], "SCHEMA_INT_024": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_INT_025": ["covered-direct", "SAFT_INT_025"], "SCHEMA_INT_026": ["covered-cited", "cite"], "SCHEMA_INT_027": ["covered-cited", "direct-cite"], "SCHEMA_INT_028": ["covered-consolidated", "SAFT_INT_SD_TAX"], "SCHEMA_DVT_021": ["covered-cited", "direct-cite"], "SCHEMA_DVT_022": ["covered-direct", "SAFT_DVT_022"], "SCHEMA_DVT_023": ["covered-direct", "SAFT_DVT_023"], "SCHEMA_DVT_024": ["covered-direct", "SAFT_DVT_024"], "SCHEMA_INT_029": ["covered-consolidated", "SAFT_INT_034"], "SCHEMA_INT_030": ["covered-consolidated", "SAFT_INT_022"], "SCHEMA_INT_031": ["covered-cited", "cite"], "SCHEMA_INT_032": ["covered-consolidated", "SAFT_INT_SD_PARTY"], "SCHEMA_DVT_025": ["covered-cited", "cite"], "SCHEMA_INT_033": ["covered-cited", "cite"], "SCHEMA_DVT_026": ["covered-cited", "cite"], "SCHEMA_DVT_027": ["covered-consolidated", "SAFT_OST_004"], "SCHEMA_INT_034": ["covered-direct", "SAFT_INT_034"], "SCHEMA_INT_035": ["covered-cited", "cite"], "SCHEMA_DVT_028": ["covered-cited", "cite"], "SCHEMA_DVT_029": ["covered-consolidated", "SAFT_CLS_TaxCode"], "SCHEMA_INT_036": ["covered-cited", "cite"], "SCHEMA_INT_037": ["covered-consolidated", "SAFT_INT_SD_PROD"], "SCHEMA_INT_038": ["covered-cited", "cite"], "SCHEMA_INT_039": ["covered-consolidated", "SAFT_INT_SD_TAX"], "SCHEMA_DVT_030": ["covered-cited", "cite-range"], "SCHEMA_DUP_005": ["covered-cited", "direct-cite"], "SCHEMA_INT_040": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_DVT_031": ["covered-cited", "cite-range"], "SCHEMA_DVT_032": ["covered-cited", "cite-range"], "SCHEMA_DVT_033": ["covered-cited", "cite-range"], "SCHEMA_INT_041": ["covered-cited", "cite"], "SCHEMA_INT_042": ["covered-cited", "cite"], "SCHEMA_INT_043": ["covered-direct", "SAFT_INT_043"], "SCHEMA_DVT_034": ["covered-cited", "cite-range"], "SCHEMA_DVT_035": ["covered-cited", "cite-range"], "SCHEMA_INT_044": ["covered-direct", "SAFT_INT_044"], "SCHEMA_INT_045": ["covered-cited", "cite"], "SCHEMA_DVT_036": ["covered-cited", "cite-range"], "SCHEMA_INT_046": ["covered-cited", "cite"], "SCHEMA_DVT_037": ["covered-cited", "cite-range"], "SCHEMA_INT_047": ["covered-cited", "cite"], "SCHEMA_DVT_038": ["covered-cited", "cite-range"], "SCHEMA_DVT_039": ["covered-cited", "cite-range"], "SCHEMA_DUP_006": ["covered-cited", "direct-cite"], "SCHEMA_INT_048": ["covered-cited", "cite"], "SCHEMA_INT_049": ["covered-cited", "cite"], "SCHEMA_DVT_040": ["UNRESOLVED", ""], "SCHEMA_DVT_041": ["UNRESOLVED", ""], "TAX_PDT_001": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_002": ["covered-direct", "SAFT_PDT_002"], "TAX_VDT_001": ["covered-direct", "SAFT_VDT_001"], "TAX_TRT_001": ["covered-direct", "SAFT_TRT_001"], "TAX_PDT_003": ["covered-cited", "direct-cite"], "TAX_TRT_002": ["covered-direct", "SAFT_TRT_002"], "TAX_PDT_004": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_TRT_003": ["covered-direct", "SAFT_TRT_003"], "TAX_PDT_005": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_006": ["covered-cited", "cite"], "TAX_TRT_004": ["covered-direct", "SAFT_TRT_004"], "TAX_PDT_007": ["covered-cited", "cite"], "TAX_TRT_005": ["covered-direct", "SAFT_TRT_005"], "TAX_PDT_008": ["covered-cited", "cite"], "TAX_PDT_010": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_TRT_006": ["covered-direct", "SAFT_TRT_006"], "TAX_PDT_011": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_012": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_013": ["covered-cited", "direct-cite"], "TAX_PDT_014": ["covered-cited", "direct-cite"], "TAX_PDT_015": ["covered-cited", "cite"], "TAX_PDT_016": ["covered-cited", "cite"], "TAX_PDT_017": ["covered-cited", "cite"], "TAX_PDT_018": ["covered-cited", "cite"], "TAX_PDT_019": ["covered-cited", "cite"], "TAX_PDT_020": ["covered-direct", "SAFT_PDT_020"], "TAX_TRT_007": ["covered-direct", "SAFT_TRT_007"], "TAX_PDT_021": ["covered-cited", "direct-cite"], "TAX_PDT_022": ["covered-cited", "cite"], "TAX_PDT_023": ["covered-cited", "cite"], "TAX_TRT_010": ["covered-consolidated", "PP_LT private-consumption rules"], "TAX_PDT_024": ["covered-cited", "direct-cite"], "TAX_PDT_026": ["covered-cited", "direct-cite"], "TAX_PDT_027": ["covered-cited", "direct-cite"], "TAX_TRT_011": ["covered-direct", "SAFT_TRT_011"], "TAX_PDT_030": ["covered-cited", "cite"], "TAX_PDT_031": ["covered-cited", "cite"], "TAX_PDT_032": ["covered-cited", "cite"], "TAX_PDT_033": ["covered-cited", "cite"], "TAX_PDT_034": ["covered-cited", "direct-cite"], "TAX_TRT_012": ["covered-direct", "SAFT_TRT_012"], "TAX_PDT_035": ["covered-cited", "cite-range"], "TAX_PDT_036": ["covered-cited", "cite-range"], "TAX_PDT_037": ["covered-cited", "cite-range"], "TAX_TRT_013": ["covered-direct", "SAFT_TRT_013"], "TAX_PDT_038": ["covered-cited", "cite-range"], "TAX_PDT_039": ["covered-cited", "cite-range"], "TAX_PDT_040": ["covered-cited", "cite-range"], "TAX_VDT_002": ["covered-direct", "SAFT_VDT_002"], "TAX_PDT_041": ["covered-cited", "cite-range"], "TAX_PDT_042": ["covered-cited", "cite"], "TAX_PDT_043": ["covered-cited", "cite"], "TAX_VDT_005": ["covered-direct", "SAFT_VDT_005"], "TAX_VDT_006": ["covered-direct", "SAFT_VDT_006"], "TAX_VDT_007": ["covered-direct", "SAFT_VDT_007"], "TAX_VDT_008": ["covered-direct", "SAFT_VDT_008"], "TAX_VDT_009": ["covered-direct", "SAFT_VDT_009"], "TAX_VDT_010": ["covered-direct", "SAFT_VDT_010"], "TAX_VDT_011": ["covered-direct", "SAFT_VDT_011"], "TAX_VDT_012": ["covered-direct", "SAFT_VDT_012"], "TAX_VDT_013": ["covered-direct", "SAFT_VDT_013"], "TAX_VDT_014": ["covered-direct", "SAFT_VDT_014"], "TAX_VDT_015": ["covered-direct", "SAFT_VDT_015"], "TAX_VDT_016": ["covered-direct", "SAFT_VDT_016"], "TAX_VDT_017": ["covered-direct", "SAFT_VDT_017"], "TAX_VDT_018": ["covered-direct", "SAFT_VDT_018"], "TAX_VDT_019": ["covered-direct", "SAFT_VDT_019"], "TAX_VDT_020": ["covered-direct", "SAFT_VDT_020"], "TAX_VDT_021": ["covered-direct", "SAFT_VDT_021"], "TAX_VDT_022": ["covered-cited", "cite"], "TAX_VDT_023": ["covered-cited", "cite"], "TAX_VDT_024": ["covered-cited", "direct-cite"], "TAX_VDT_025": ["covered-cited", "cite"], "TAX_VDT_026": ["covered-cited", "cite"], "TAX_VDT_028": ["covered-cited", "cite"], "TAX_VDT_030": ["covered-cited", "cite"], "TAX_VDT_031": ["covered-direct", "SAFT_VDT_031"], "TAX_VDT_032": ["covered-cited", "cite"], "TAX_VDT_033": ["covered-new", "SAFT_VDT_033 (implemented this audit)"], "TAX_VDT_036": ["covered-direct", "SAFT_VDT_036"], "TAX_VDT_037": ["covered-cited", "cite"], "TAX_VDT_038": ["covered-new", "SAFT_VDT_038 (implemented this audit)"], "TAX_VDT_039": ["covered-cited", "cite"], "TAX_VDT_042": ["covered-cited", "cite"], "TAX_VDT_044": ["covered-cited", "cite"], "TAX_VDT_045": ["covered-cited", "direct-cite"], "TAX_VDT_046": ["covered-cited", "cite"], "TAX_VDT_048": ["covered-cited", "direct-cite"], "TAX_VDT_049": ["covered-cited", "cite"], "TAX_VDT_050": ["covered-direct", "SAFT_VDT_050"], "TAX_VDT_051": ["covered-cited", "cite"], "ACCOUNTING_AET_001": ["covered-direct", "SAFT_AET_001"], "ACCOUNTING_AET_002": ["covered-direct", "SAFT_AET_002"], "ACCOUNTING_AET_003": ["covered-direct", "SAFT_AET_003"], "ACCOUNTING_AET_004": ["covered-consolidated", "SAFT_AET_001"], "ACCOUNTING_AET_005": ["covered-cited", "direct-cite"], "ACCOUNTING_AET_006": ["covered-cited", "cite"], "ACCOUNTING_DET_001": ["covered-direct", "SAFT_DET_001"], "ACCOUNTING_BAT_011": ["covered-direct", "SAFT_BAT_011"], "ACCOUNTING_DET_002": ["covered-direct", "SAFT_DET_002"], "ACCOUNTING_DET_003": ["covered-direct", "SAFT_DET_003"], "ACCOUNTING_BAT_012": ["covered-direct", "SAFT_BAT_012"], "ACCOUNTING_DET_004": ["covered-direct", "SAFT_DET_004"], "ACCOUNTING_BAT_013": ["covered-direct", "SAFT_BAT_013"], "ACCOUNTING_DET_005": ["covered-direct", "SAFT_DET_005"], "ACCOUNTING_DET_006": ["covered-direct", "SAFT_DET_006"], "ACCOUNTING_BAT_014": ["covered-cited", "cite"], "ACCOUNTING_BAT_015": ["covered-direct", "SAFT_BAT_015"], "ACCOUNTING_PET_001": ["covered-cited", "direct-cite"], "ACCOUNTING_BAT_016": ["covered-cited", "cite"], "ACCOUNTING_PET_002": ["covered-cited", "cite-range"], "ACCOUNTING_PET_003": ["covered-cited", "cite-range"], "ACCOUNTING_BAT_019": ["covered-direct", "SAFT_BAT_019"], "ACCOUNTING_PET_004": ["covered-cited", "cite-range"], "ACCOUNTING_BAT_020": ["covered-direct", "SAFT_BAT_020"], "ACCOUNTING_PET_005": ["covered-cited", "cite-range"], "ACCOUNTING_BAT_021": ["covered-direct", "SAFT_BAT_021"], "ACCOUNTING_PET_006": ["covered-cited", "cite-range"], "ACCOUNTING_PET_007": ["covered-cited", "cite-range"], "ACCOUNTING_PET_008": ["covered-cited", "cite-range"], "ACCOUNTING_PET_009": ["covered-cited", "cite-range"], "ACCOUNTING_PET_010": ["covered-cited", "cite-range"], "ACCOUNTING_PET_011": ["covered-cited", "cite-range"], "ACCOUNTING_PET_012": ["covered-cited", "cite-range"], "ACCOUNTING_APT_001": ["covered-direct", "SAFT_APT_001"], "ACCOUNTING_APT_002": ["covered-cited", "cite"], "ACCOUNTING_BAT_024": ["covered-consolidated", "SAFT_PDT_FINES"], "ACCOUNTING_BAT_025": ["covered-cited", "direct-cite"], "ACCOUNTING_BAT_026": ["covered-cited", "cite"], "ACCOUNTING_AAT_001": ["covered-direct", "SAFT_AAT_001"], "ACCOUNTING_AAT_002": ["covered-direct", "SAFT_AAT_002"], "ACCOUNTING_AAT_003": ["covered-direct", "SAFT_AAT_003"], "ACCOUNTING_AAT_004": ["covered-cited", "cite"], "ACCOUNTING_AAT_005": ["covered-direct", "SAFT_AAT_005"], "ACCOUNTING_AAT_006": ["covered-cited", "cite"], "FINANCIAL_CFA_004": ["covered-cited", "direct-cite"], "FINANCIAL_CFA_005": ["covered-cited", "cite"], "FINANCIAL_FAO_001": ["covered-direct", "SAFT_FAO_001"], "FINANCIAL_FAO_002": ["covered-direct", "SAFT_FAO_002"], "FINANCIAL_FAO_003": ["covered-cited", "direct-cite"], "FINANCIAL_FAO_004": ["covered-cited", "cite"], "OTHER_OST_001": ["covered-direct", "SAFT_OST_001"], "OTHER_OST_004": ["covered-direct", "SAFT_OST_004"], "OTHER_OST_005": ["covered-direct", "SAFT_OST_005"], "OTHER_OST_006": ["covered-cited", "cite"], "FINANCIAL_HFA_001": ["covered-direct", "SAFT_HFA_001"], "TAX_VDT_052": ["covered-cited", "direct-cite"], "SCHEMA_DVT_044": ["covered-consolidated", "SAFT_CTL_001"], "SCHEMA_DVT_045": ["covered-consolidated", "SAFT_CTL_002"], "SCHEMA_DVT_046": ["covered-consolidated", "SAFT_CTL_003"], "SCHEMA_DVT_047": ["covered-consolidated", "SAFT_CTL_005"], "SCHEMA_DVT_048": ["covered-cited", "direct-cite"], "SCHEMA_DVT_049": ["covered-cited", "direct-cite"], "SCHEMA_DVT_050": ["covered-cited", "direct-cite"], "SCHEMA_DVT_051": ["covered-cited", "cite-range"], "SCHEMA_DVT_052": ["covered-cited", "cite-range"], "SCHEMA_DVT_053": ["covered-cited", "cite-range"], "SCHEMA_DVT_054": ["covered-cited", "cite-range"], "SCHEMA_DVT_055": ["covered-cited", "cite-range"], "SCHEMA_DVT_056": ["covered-cited", "cite-range"], "SCHEMA_DVT_057": ["covered-cited", "cite-range"], "SCHEMA_DVT_058": ["covered-consolidated", "SAFT_CTL_001"], "SCHEMA_DVT_059": ["covered-cited", "direct-cite"], "SCHEMA_DVT_060": ["covered-cited", "cite"], "SCHEMA_INT_050": ["covered-cited", "cite"], "SCHEMA_INT_051": ["covered-cited", "cite"], "SCHEMA_INT_052": ["covered-cited", "cite"], "SCHEMA_INT_053": ["covered-cited", "cite"], "SCHEMA_DVT_061": ["covered-cited", "direct-cite"], "SCHEMA_DVT_062": ["covered-consolidated", "SAFT_SAL_007"], "SCHEMA_DVT_063": ["covered-consolidated", "SAFT_PUR_003"], "SCHEMA_DVT_064": ["covered-cited", "cite"], "SCHEMA_DVT_065": ["covered-cited", "cite"], "SCHEMA_DVT_066": ["covered-cited", "cite"], "SCHEMA_DVT_067": ["covered-cited", "cite"], "SCHEMA_DVT_068": ["covered-cited", "direct-cite"], "SCHEMA_DVT_069": ["covered-cited", "cite-paren"], "SCHEMA_DVT_070": ["covered-cited", "cite-paren"], "SCHEMA_INT_054": ["covered-cited", "direct-cite"], "SCHEMA_INT_055": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_DUP_007": ["covered-consolidated", "SAFT_DUBL_Asset"], "SCHEMA_DUP_008": ["covered-consolidated", "SAFT_DUBL_TaxCodeDetail"], "SCHEMA_DUP_009": ["covered-consolidated", "SAFT_DUBL_UOMTableEntry"], "SCHEMA_DUP_010": ["covered-consolidated", "SAFT_DUBL_AnalysisTypeTableEntry"], "SCHEMA_DUP_011": ["covered-consolidated", "SAFT_DUBL_Customer"], "SCHEMA_DUP_012": ["covered-consolidated", "SAFT_DUBL_Supplier"], "SCHEMA_DUP_013": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_014": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_015": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_016": ["covered-consolidated", "SAFT_DUBL_Owner"], "SCHEMA_DUP_017": ["covered-consolidated", "SAFT_DUBL_MovementTypeTableEntry"], "SCHEMA_DUP_018": ["covered-consolidated", "SAFT_DUBL_OpenSalesInvoice"], "SCHEMA_DUP_019": ["covered-consolidated", "SAFT_DUBL_OpenPurchaseInvoice"], "SCHEMA_DUP_020": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_021": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_022": ["covered-consolidated", "SAFT_DUBL_SalesInvoice"], "SCHEMA_DUP_023": ["covered-consolidated", "SAFT_DUBL_PurchaseInvoice"], "SCHEMA_DUP_024": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_025": ["covered-consolidated", "SAFT_DUBL_StockMovement"], "SCHEMA_DUP_026": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_027": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_028": ["covered-consolidated", "SAFT_DUBL_StockMovement"], "SCHEMA_DUP_029": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_030": ["covered-consolidated", "SAFT_DUBL_PurchaseInvoice"], "SCHEMA_DUP_031": ["covered-consolidated", "SAFT_DUBL_SalesInvoice"], "SCHEMA_DUP_032": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_033": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_034": ["covered-consolidated", "SAFT_DUBL_OpenPurchaseInvoice"], "SCHEMA_DUP_035": ["covered-consolidated", "SAFT_DUBL_OpenSalesInvoice"], "SCHEMA_DUP_036": ["covered-consolidated", "SAFT_DUBL_MovementTypeTableEntry"], "SCHEMA_DUP_037": ["covered-consolidated", "SAFT_DUBL_Owner"], "SCHEMA_DUP_038": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_039": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_040": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_041": ["covered-consolidated", "SAFT_DUBL_Supplier"], "SCHEMA_DUP_042": ["covered-consolidated", "SAFT_DUBL_Customer"], "SCHEMA_DUP_043": ["covered-consolidated", "SAFT_DUBL_AnalysisTypeTableEntry"], "SCHEMA_DUP_044": ["covered-consolidated", "SAFT_DUBL_UOMTableEntry"], "SCHEMA_DUP_045": ["covered-consolidated", "SAFT_DUBL_TaxCodeDetail"], "SCHEMA_DUP_046": ["covered-consolidated", "SAFT_DUBL_Asset"], "SCHEMA_SEQ_001": ["covered-direct", "SAFT_SEQ_001"], "SCHEMA_SEQ_002": ["N/A", "workbook defect: NULL title/description"], "SCHEMA_DVT_071": ["covered-consolidated", "SAFT_CLS_TaxCode"], "SCHEMA_DVT_072": ["covered-consolidated", "SAFT_CLS_STITaxCode"], "SCHEMA_DVT_073": ["covered-cited", "cite"], "SCHEMA_DVT_074": ["covered-cited", "cite"], "SCHEMA_DVT_075": ["covered-cited", "cite"], "SCHEMA_DVT_076": ["covered-cited", "cite"], "SCHEMA_DVT_077": ["covered-cited", "direct-cite"], "SCHEMA_DVT_078": ["covered-consolidated", "SAFT_DVT_OPENDATES"], "SCHEMA_DVT_079": ["covered-cited", "cite"], "SCHEMA_DVT_080": ["covered-cited", "cite"], "SCHEMA_DVT_081": ["covered-cited", "cite"], "SCHEMA_DVT_082": ["covered-cited", "cite-paren"], "SCHEMA_DVT_083": ["covered-cited", "cite"], "SCHEMA_DVT_084": ["covered-cited", "cite"], "SCHEMA_DVT_085": ["covered-cited", "cite-paren"], "SCHEMA_INT_056": ["covered-cited", "cite"], "SCHEMA_INT_057": ["covered-cited", "cite"], "SCHEMA_SEQ_003": ["covered-consolidated", "SAFT_SEQ_001"], "TMP008": ["N/A", "platform temp rule (NULL, risk 0)"]}, "PVM_120_2021_02": {"PP_LT_PVM_106": "covered-direct", "PP_LT_PVM_103": "covered-direct", "PP_LT_PVM_102": "covered-direct", "PP_LT_PVM_101": "covered-direct", "PP_LT_PVM_100": "covered-direct", "PP_LT_PVM_097": "covered-direct", "PP_LT_PVM_094": "covered-direct", "PP_LT_PVM_093": "covered-direct", "PP_LT_PVM_092": "covered-direct", "PP_LT_PVM_091": "covered-direct", "PP_LT_PVM_090": "covered-direct", "PP_LT_PVM_089": "covered-direct", "PP_LT_PVM_081": "covered-direct", "PP_LT_PVM_079": "covered-direct", "PP_LT_PVM_078": "covered-direct", "PP_LT_PVM_076": "covered-direct", "PP_LT_PVM_072": "covered-direct", "PP_LT_PVM_071": "covered-direct", "PP_LT_PVM_070": "covered-direct", "PP_LT_PVM_069": "covered-direct", "PP_LT_PVM_068": "covered-direct", "PP_LT_PVM_054": "covered-direct", "PP_LT_PVM_053": "covered-direct", "PP_LT_PVM_052": "covered-direct", "PP_LT_PVM_051": "covered-direct", "PP_LT_PVM_025": "covered-direct", "PP_LT_PVM_024": "covered-direct", "PP_LT_PVM_017": "covered-direct", "PP_LT_PVM_013": "covered-direct", "PP_LT_PVM_012": "covered-direct", "PP_LT_PVM_011": "covered-direct", "PP_LT_PVM_010": "covered-direct", "PP_LT_PVM_007": "covered-direct", "PP_LT_PVM_002": "covered-direct", "PP_LT_PVM_001": "covered-direct", "PP_LT_PVM_111": "covered-direct", "PP_LT_PVM_105": "covered-direct", "PP_LT_PVM_095": "covered-direct", "PP_LT_PVM_087": "covered-direct", "PP_LT_PVM_082": "covered-direct", "PP_LT_PVM_080": "covered-direct", "PP_LT_PVM_075": "covered-direct", "PP_LT_PVM_067": "covered-direct", "PP_LT_PVM_065": "covered-direct", "PP_LT_PVM_064": "covered-direct", "PP_LT_PVM_063": "covered-direct", "PP_LT_PVM_060": "covered-direct", "PP_LT_PVM_050": "covered-direct", "PP_LT_PVM_049": "covered-direct", "PP_LT_PVM_048": "covered-direct", "PP_LT_PVM_047": "covered-direct", "PP_LT_PVM_046": "covered-direct", "PP_LT_PVM_045": "covered-direct", "PP_LT_PVM_037": "covered-direct", "PP_LT_PVM_036": "covered-direct", "PP_LT_PVM_035": "covered-direct", "PP_LT_PVM_034": "covered-direct", "PP_LT_PVM_033": "covered-direct", "PP_LT_PVM_032": "covered-direct", "PP_LT_PVM_029": "covered-direct", "PP_LT_PVM_028": "covered-direct", "PP_LT_PVM_027": "covered-direct", "PP_LT_PVM_026": "covered-direct", "PP_LT_PVM_016": "covered-direct", "PP_LT_PVM_015": "covered-direct", "PP_LT_PVM_006": "covered-direct", "PP_LT_PVM_005": "covered-direct", "PP_LT_PVM_004": "covered-direct", "PP_LT_PVM_003": "covered-direct", "PP_LT_PVM_119": "covered-direct", "PP_LT_PVM_118": "covered-direct", "PP_LT_PVM_117": "covered-direct", "PP_LT_PVM_116": "covered-direct", "PP_LT_PVM_115": "covered-direct", "PP_LT_PVM_114": "covered-direct", "PP_LT_PVM_113": "covered-direct", "PP_LT_PVM_112": "covered-direct", "PP_LT_PVM_110": "covered-direct", "PP_LT_PVM_109": "covered-direct", "PP_LT_PVM_108": "covered-direct", "PP_LT_PVM_107": "covered-direct", "PP_LT_PVM_104": "covered-direct", "PP_LT_PVM_099": "covered-direct", "PP_LT_PVM_098": "covered-direct", "PP_LT_PVM_088": "covered-direct", "PP_LT_PVM_086": "covered-direct", "PP_LT_PVM_085": "covered-direct", "PP_LT_PVM_084": "covered-direct", "PP_LT_PVM_083": "covered-direct", "PP_LT_PVM_077": "covered-direct", "PP_LT_PVM_074": "covered-direct", "PP_LT_PVM_073": "covered-direct", "PP_LT_PVM_066": "covered-direct", "PP_LT_PVM_062": "covered-direct", "PP_LT_PVM_061": "covered-direct", "PP_LT_PVM_059": "covered-direct", "PP_LT_PVM_058": "covered-direct", "PP_LT_PVM_057": "covered-direct", "PP_LT_PVM_056": "covered-direct", "PP_LT_PVM_044": "covered-direct", "PP_LT_PVM_043": "covered-direct", "PP_LT_PVM_041": "covered-direct", "PP_LT_PVM_040": "covered-direct", "PP_LT_PVM_039": "covered-direct", "PP_LT_PVM_038": "covered-direct", "PP_LT_PVM_031": "covered-direct", "PP_LT_PVM_030": "covered-direct", "PP_LT_PVM_021": "covered-direct", "PP_LT_PVM_020": "covered-direct", "PP_LT_PVM_019": "covered-direct", "PP_LT_PVM_018": "covered-direct", "PP_LT_PVM_014": "covered-direct", "PP_LT_PVM_009": "covered-direct", "PP_LT_PVM_008": "covered-direct", "Visiškai visos": "N/A"}};
+
 const APP_BUILD = "v9.2 · SOTA compliance build (SAF-T LT 2.01 full catalogue · EN 16931 · Peppol BIS 3.0 · SABIS · ViDA)";
 
 const xmlEsc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -14579,7 +14645,7 @@ function TAXAI({ onExit, initialView } = {}) {
                         <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "VMI rizikos balas" : "VMI risk score"}</div>
                         <div style={{ fontSize: 44, fontWeight: 300, color: BC, fontFamily: "var(--f)", lineHeight: 1 }}>{risk.score}</div>
                         <div style={{ marginTop: 8, display: "inline-block", padding: "3px 10px", border: `1px solid ${BC}`, color: BC, fontFamily: "var(--m)", fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? risk.bandLabel[1] : risk.bandLabel[0]}</div>
-                        <div style={{ marginTop: 10, fontSize: 9.5, color: "#666", fontFamily: "var(--m)", lineHeight: 1.5 }}>{lang === "lt" ? "Svoriai: VMI risk_value (0–5) per patikrintą ColBi atitikmenų žemėlapį; balas auga 1×→2× pagal atvejų skaičių (log)." : "Weights: VMI risk_value (0–5) via the verified ColBi mapping; volume scales 1×→2× (log-damped)."}</div>
+                        <div style={{ marginTop: 10, fontSize: 9.5, color: "#666", fontFamily: "var(--m)", lineHeight: 1.5 }}>{lang === "lt" ? "Svoriai: VMI risk_value (0–5) per patikrintą taisyklių katalogo atitikmenų žemėlapį; balas auga 1×→2× pagal atvejų skaičių (log)." : "Weights: VMI risk_value (0–5) via the verified rule-catalogue mapping; volume scales 1×→2× (log-damped)."}</div>
                       </div>
                       <div>
                         <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "Didžiausi rizikos šaltiniai — ką taisyti pirmiausia" : "Top risk contributors — what to fix first"}</div>
