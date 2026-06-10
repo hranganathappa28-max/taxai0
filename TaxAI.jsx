@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, ComposedChart, Legend, ReferenceLine } from "recharts";
 
 /*
 ══════════════════════════════════════════════════════════
@@ -1903,7 +1903,7 @@ function vatClassMatch(spec, line) {
 // Phase 1 analytics engine — risk score, acceptance gate, multi-part merge,
 // audit report, versioned rule packs.  (TaxAI engine v10.1.0)
 // ═════════════════════════════════════════════════════════════════════════
-const ENGINE_VERSION = "10.8.0";
+const ENGINE_VERSION = "11.0.0";
 
 // Rule-pack provenance — shown in the Rules tab and stamped into every export.
 const RULE_PACKS = [
@@ -2151,6 +2151,81 @@ const AUTO_FIXERS = [
 ];
 const AUTO_FIXABLE_RULE_IDS = new Set(AUTO_FIXERS.flatMap((f) => f.ruleIds).concat(["SAFT_DUBL_"]));
 function isAutoFixableRule(ruleId) { return AUTO_FIXABLE_RULE_IDS.has(ruleId) || String(ruleId || "").indexOf("SAFT_DUBL_") === 0; }
+
+// ═══ AUTO-FIX LEGAL BOUNDARY LAYER ════════════════════════════════════════
+// Every fixer is classified and legally annotated. The engine enforces, at
+// apply time, that fixes stay within lawful "form-only" boundaries:
+//   form    — technical normalization of codes/formats required by the VMI
+//             SAF-T LT v2.01 technical specification (no economic content);
+//   derived — recomputation of values that are mathematically DERIVED from
+//             other declared values (control totals, EUR mirrors, base×rate);
+//   removal — removal of byte-identical duplicate records only.
+// What is NEVER auto-fixed (hard boundary): economic dates, document numbers,
+// party identities, tax registration data, quantities/prices as declared,
+// or any value that is a primary business fact. Those findings keep guided
+// "how to fix at source" steps instead. Legal frame: corrections of the
+// underlying accounting data must be made in the source accounting records
+// (LR finansinės apskaitos įstatymas Nr. XIV-680, 12 str. — apskaitos
+// registrų taisymas; MAĮ 134 str. — teisingų duomenų pateikimas); this
+// module only normalizes the SUBMISSION FILE to the declared facts, with a
+// full provenance manifest, so the XML faithfully represents the books.
+const AUTOFIX_LEGAL = {
+  FX_HDR_VERSION:    { boundary: "form",    basisLt: "VMI SAF-T LT v2.01 techninė specifikacija (privaloma versijos žymė)", basisEn: "VMI SAF-T LT v2.01 technical specification (mandatory version tag)" },
+  FX_HDR_COUNTRY:    { boundary: "form",    basisLt: "SAF-T LT XSD: AuditFileCountry = LT (rinkmenos jurisdikcija)", basisEn: "SAF-T LT XSD: AuditFileCountry = LT (file jurisdiction)" },
+  FX_HDR_CURRENCY:   { boundary: "form",    basisLt: "Apskaitos valiuta EUR (Euro įvedimo LR įstatymas; SAF-T DefaultCurrencyCode)", basisEn: "Functional currency EUR (LT euro adoption law; SAF-T DefaultCurrencyCode)" },
+  FX_EUR_AMOUNT:     { boundary: "derived", basisLt: "EUR įrašuose CurrencyAmount privalo sutapti su Amount — atvaizdis, ne naujas faktas", basisEn: "For EUR records CurrencyAmount must equal Amount — a mirror, not a new fact" },
+  FX_TAX_CALC:       { boundary: "derived", basisLt: "PVM suma = bazė × tarifas (PVMĮ 18 str. apskaičiavimas iš deklaruotų dydžių)", basisEn: "Tax = base × declared rate (PVMĮ art. 18 arithmetic from declared values)" },
+  FX_LINE_AMT:       { boundary: "derived", basisLt: "Eilutės suma = kiekis × vieneto kaina (iš deklaruotų laukų)", basisEn: "Line amount = quantity × unit price (from declared fields)" },
+  FX_GL_TOTALS:      { boundary: "derived", basisLt: "DK kontrolinės sumos = Σ eilučių (SAF-T spec. kontroliniai laukai)", basisEn: "GL control totals = Σ of lines (SAF-T spec control fields)" },
+  FX_SECTION_COUNTS: { boundary: "derived", basisLt: "Skyrių NumberOfEntries = faktinis įrašų skaičius rinkmenoje", basisEn: "Section NumberOfEntries = actual record count in the file" },
+  FX_DOC_TOTALS:     { boundary: "derived", basisLt: "DocumentTotals perskaičiavimas iš tų pačių eilučių (Net=Σ; Gross=Net+PVM)", basisEn: "DocumentTotals recomputed from the same lines (Net=Σ; Gross=Net+VAT)" },
+  FX_ISO_COUNTRY:    { boundary: "form",    basisLt: "ISO 3166-1 alpha-2 normalizavimas (UK→GB, EL→GR; didžiosios raidės)", basisEn: "ISO 3166-1 alpha-2 normalization (UK→GB, EL→GR; uppercase)" },
+  FX_DEDUP:          { boundary: "removal", basisLt: "Šalinami tik baitiškai identiški dublikatai (pirmas paliekamas) — turinys nekinta", basisEn: "Only byte-identical duplicates removed (first kept) — content unchanged" },
+};
+// Hard boundary: node paths an auto-fix may NEVER write to (defense in depth —
+// fixers don't target these by construction; the guard verifies it anyway).
+const AUTOFIX_PROTECTED = /\b(InvoiceNo|InvoiceDate|TransactionDate|TaxPointDate|GLPostingDate|SystemEntryDate|CustomerID|SupplierID|RegistrationNumber|TaxRegistrationNumber|IBANNumber|BankAccountNumber|Quantity|UnitPrice|PaymentRefNo|AssetID|OwnerID|MovementReference)\b/;
+// Review thresholds for value-recomputation deltas: anything beyond these is
+// not blocked outright (the math is still deterministic) but demands an
+// explicit human confirmation before apply.
+const AUTOFIX_REVIEW_ABS = 100;     // € per single change
+const AUTOFIX_REVIEW_PCT = 0.5;     // % of the document-set value affected
+
+function autoFixGuardrails(plans) {
+  const perPlan = {};
+  let totalDelta = 0, totalChanges = 0, blockedAny = false;
+  (plans || []).forEach((p) => {
+    const meta = AUTOFIX_LEGAL[p.id] || { boundary: "form", basisLt: "", basisEn: "" };
+    let delta = 0, maxAbs = 0, blocked = [], numeric = 0;
+    (p.changes || []).forEach((ch) => {
+      if (AUTOFIX_PROTECTED.test(String(ch.label || ""))) { blocked.push(ch.label); return; }
+      if (ch.kind !== "remove") {
+        const b = parseFloat(String(ch.before).replace(",", ".")), a = parseFloat(String(ch.value).replace(",", "."));
+        if (isFinite(b) && isFinite(a)) { const dd = Math.abs(a - b); delta += dd; if (dd > maxAbs) maxAbs = dd; numeric++; }
+      }
+    });
+    const needsReview = meta.boundary === "removal" || maxAbs > AUTOFIX_REVIEW_ABS || p.safety === "suggest";
+    perPlan[p.id] = { boundary: meta.boundary, basisLt: meta.basisLt, basisEn: meta.basisEn, delta: Math.round(delta * 100) / 100, maxAbs: Math.round(maxAbs * 100) / 100, numericChanges: numeric, blocked, needsReview, verdict: blocked.length ? "blocked" : needsReview ? "review" : "pass" };
+    totalDelta += delta; totalChanges += (p.changes || []).length; if (blocked.length) blockedAny = true;
+  });
+  return { perPlan, totalDelta: Math.round(totalDelta * 100) / 100, totalChanges, blockedAny,
+    policy: { reviewAbs: AUTOFIX_REVIEW_ABS, reviewPct: AUTOFIX_REVIEW_PCT },
+    legalNote: {
+      lt: "Auto-taisymas normalizuoja tik pateikimo rinkmenos FORMĄ ir perskaičiuoja išvestines sumas pagal jau deklaruotus dydžius. Ūkinės operacijos turinys nekeičiamas. Esminės klaidos privalo būti ištaisytos pirminėje apskaitos sistemoje (Finansinės apskaitos įst. Nr. XIV-680 12 str.; MAĮ 134 str.), o pataisytas SAF-T teikiamas tik tada, kai jis atitinka apskaitos registrus. Kiekvienas pakeitimas fiksuojamas kilmės manifeste.",
+      en: "Auto-Fix normalizes only the FORM of the submission file and recomputes derived values from figures already declared. The substance of transactions is never altered. Material errors must be corrected in the source accounting system (LT Financial Accounting Law No. XIV-680 art. 12; MAĮ art. 134); the fixed SAF-T is submitted only once it matches the books. Every change is recorded in a provenance manifest.",
+    } };
+}
+
+// Post-apply invariant: the fix set must not change the GL debit/credit
+// EQUALITY status it found (it may repair totals to match the lines, but the
+// lines themselves — the books — are untouched). Returns a verifiable proof
+// object for the manifest.
+function autoFixInvariantProof(beforeParsed, afterParsed) {
+  const sum = (p) => { let dr = 0, cr = 0; ((p && p.transactions) || []).forEach((t) => (t.lines || []).forEach((l) => { dr += l.debitAmount || 0; cr += l.creditAmount || 0; })); return { dr: Math.round(dr * 100) / 100, cr: Math.round(cr * 100) / 100 }; };
+  const b = sum(beforeParsed), a = sum(afterParsed);
+  return { glLinesDebitBefore: b.dr, glLinesDebitAfter: a.dr, glLinesCreditBefore: b.cr, glLinesCreditAfter: a.cr,
+    linesUntouched: Math.abs(b.dr - a.dr) < 0.005 && Math.abs(b.cr - a.cr) < 0.005 };
+}
 
 // Dry-run: which fixers apply (gated by flagged rule ids; null = all) and what
 // exactly each would change. Nothing is mutated here.
@@ -5909,6 +5984,29 @@ function eaJournalTests(d, mat) {
   const seldom = []; txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (use[l.accountID || "?"] <= 2 && v >= mat.trivial) seldom.push(row(t, l, { panaudota: use[l.accountID || "?"] })); }));
   T("JE_SELDOM", "TAS 240", "Retai naudojamos sąskaitos su reikšmingomis sumomis", "Seldom-used accounts with material amounts", seldom, "Medium");
 
+  // ── SOTA battery extensions (all deterministic, file-derived) ──
+  // After-hours posting: SystemEntryDate timestamp outside 06:00–22:00
+  const night = []; txs.forEach((t) => { const ts = String(t.systemEntryDate || ""); const hh = ts.length >= 13 ? parseInt(ts.slice(11, 13), 10) : NaN; if (!isNaN(hh) && (hh >= 22 || hh < 6)) night.push(row(t, (t.lines || [])[0], { laikas: ts.slice(11, 16) })); });
+  T("JE_NIGHT", "TAS 240", "Registracija ne darbo valandomis (22:00–06:00)", "Posted outside business hours (22:00–06:00)", night, night.length / Math.max(1, total) > 0.05 ? "High" : "Medium");
+
+  // Backdating: GL posting / system entry ≥ 30 d. after the economic date
+  const back = []; txs.forEach((t) => { const td = t.transactionDate, gd = (t.glPostingDate || String(t.systemEntryDate || "").slice(0, 10)); if (!td || !gd) return; const gap = (new Date(gd) - new Date(td)) / 86400000; if (isFinite(gap) && gap >= 30) { const l = (t.lines || [])[0]; const v = l ? Math.max(l.debitAmount || 0, l.creditAmount || 0) : 0; if (v >= mat.trivial) back.push(row(t, l, { registruota: gd, velavimas_d: Math.round(gap) })); } });
+  T("JE_BACKDATED", "TAS 240/315", "Vėluojanti registracija (≥30 d. po op. datos)", "Late posting (≥30 days after transaction date)", back, back.length ? "High" : "Low");
+
+  // Same-day equal-and-opposite reversal pairs on one account (above trivial)
+  const revKey = new Map(); const samerev = [];
+  txs.forEach((t) => (t.lines || []).forEach((l) => { const dv = l.debitAmount || 0, cv = l.creditAmount || 0; const v = Math.max(dv, cv); if (v < Math.max(100, mat.trivial)) return; const side = dv > cv ? "D" : "K"; const opp = `${t.transactionDate}|${l.accountID}|${side === "D" ? "K" : "D"}|${ea2(v)}`; if (revKey.has(opp)) { samerev.push(row(t, l, { pora: revKey.get(opp) })); revKey.delete(opp); } else revKey.set(`${t.transactionDate}|${l.accountID}|${side}|${ea2(v)}`, t.transactionID || "—"); }));
+  T("JE_SAME_REV", "TAS 240", "Tos pačios dienos storno poros (D↔K)", "Same-day equal-and-opposite reversals", samerev, "Medium");
+
+  // Manual postings into revenue (class 5) from non-sales journals
+  const revman = []; txs.forEach((t) => { const j = String(t._journalType || t.journalType || t.journalID || "").toUpperCase(); const isSalesJournal = /SAL|PARD|SF|AR/.test(j); if (isSalesJournal) return; (t.lines || []).forEach((l) => { const a = String(l.accountID || ""); const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (a[0] === "5" && v >= mat.trivial) revman.push(row(t, l, { zurnalas: j || "—" })); }); });
+  T("JE_REV_MANUAL", "TAS 240 (pajamų pripažinimas)", "Rankiniai įrašai į pajamų (5) sąskaitas ne pardavimo žurnale", "Manual postings to revenue (class 5) outside sales journals", revman, revman.length ? "High" : "Low");
+
+  // Trailing-zeros test: share of amounts ending “…00.00” among lines ≥ €100
+  let z00 = 0, zN = 0; txs.forEach((t) => (t.lines || []).forEach((l) => { const v = Math.max(l.debitAmount || 0, l.creditAmount || 0); if (v >= 100) { zN++; if (Math.round(v * 100) % 10000 === 0) z00++; } }));
+  const zShare = zN ? ea2(100 * z00 / zN) : 0;
+  T("JE_TRAIL00", "TAS 240 (Benford-2)", "„…00,00“ galūnių dažnis (lyginama su ~1 %)", "Trailing “…00.00” frequency (vs ~1% expected)", [], zN >= 50 && zShare > 8 ? "High" : zN >= 50 && zShare > 4 ? "Medium" : "Low", { n: zN, hits: z00, sharePct: zShare, expectedPct: 1 });
+
   return tests;
 }
 
@@ -5940,21 +6038,31 @@ function eaRiskMap(d, mat, je, vmi) {
   return areas;
 }
 
-// ── TAS 520 / V2-10: monthly analytics with z-scores ──
+// ── TAS 520 / V2-10: monthly analytics with z-scores + full matrix ──
 function eaAnalytics(d, mat) {
   const out = [];
-  const series = (items, label) => {
+  const matrix = {}; // ym → { revenue, purchases }
+  const series = (items, label, key) => {
     const byM = {};
     (items || []).forEach((i) => { const m = String(i.invoiceDate || "").slice(0, 7); if (!m) return; const v = (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0; byM[m] = (byM[m] || 0) + v; });
+    Object.keys(byM).forEach((m) => { matrix[m] = matrix[m] || { m, revenue: 0, purchases: 0 }; matrix[m][key] = ea2(byM[m]); });
     const months = Object.keys(byM).sort(); if (months.length < 3) return;
     const vals = months.map((m) => byM[m]);
     const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
     const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / vals.length) || 1;
     months.forEach((m, i) => { const z = (vals[i] - mean) / sd; if (Math.abs(z) > 2 && Math.abs(vals[i] - mean) > mat.performance) out.push({ sritis: label, men: m, suma: ea2(vals[i]), vidurkis: ea2(mean), z: ea2(z) }); });
   };
-  series(d.sales && d.sales.items, "Pajamos / Revenue");
-  series(d.purchases && d.purchases.items, "Pirkimai / Purchases");
-  return { flags: out, ref: "TAS 520 · Vadovas V2-10" };
+  series(d.sales && d.sales.items, "Pajamos / Revenue", "revenue");
+  series(d.purchases && d.purchases.items, "Pirkimai / Purchases", "purchases");
+  // Gross-margin volatility (TAS 520 plausibility): flag months whose margin
+  // deviates from the period mean by >15 p.p. while revenue is material.
+  const monthly = Object.values(matrix).sort((a, b) => a.m < b.m ? -1 : 1).map((r) => ({ ...r, margin: r.revenue > 0 ? ea2(100 * (r.revenue - r.purchases) / r.revenue) : null }));
+  const margins = monthly.filter((r) => r.margin != null && r.revenue >= mat.trivial).map((r) => r.margin);
+  if (margins.length >= 3) {
+    const mMean = margins.reduce((a, b) => a + b, 0) / margins.length;
+    monthly.forEach((r) => { if (r.margin != null && r.revenue >= mat.performance && Math.abs(r.margin - mMean) > 15) out.push({ sritis: "Bendroji marža / Gross margin", men: r.m, suma: r.margin, vidurkis: ea2(mMean), z: ea2((r.margin - mMean) / 15) }); });
+  }
+  return { flags: out, monthly, ref: "TAS 520 · Vadovas V2-10" };
 }
 
 // ── TAS 530 / Vadovas V2: monetary-unit sampling ──
@@ -6091,8 +6199,49 @@ function eaRunAll(d, opts) {
     let hits = []; try { hits = runner(r, d); } catch (e) { hits = []; }
     return { id: r.id, title: r.title, severity: r.severity, scope: r.scope, count: hits.length, sample: hits.slice(0, 3) };
   });
-  return { tb, materiality: mat, jeTests: je, riskMap: risk, vmi, industry, companyRules,
+  const ea = { tb, materiality: mat, jeTests: je, riskMap: risk, vmi, industry, companyRules,
     analytics: eaAnalytics(d, mat), goingConcern: eaGoingConcern(mat, tb), plan: eaBuildPlan(risk, mat), generatedAt: new Date().toISOString().slice(0, 10) };
+  ea.coverage = eaCoverage(d, je, mat);
+  ea.opinion = eaOpinion(ea);
+  return ea;
+}
+
+// ── Test coverage statistics: what share of the population the battery saw ──
+function eaCoverage(d, je, mat) {
+  const txs = (d && d.transactions) || [];
+  let lines = 0, value = 0, flaggedTx = new Set();
+  txs.forEach((t) => (t.lines || []).forEach((l) => { lines++; value += Math.max(l.debitAmount || 0, l.creditAmount || 0); }));
+  je.forEach((t) => (t.hits || []).forEach((h) => { if (h.tx) flaggedTx.add(h.tx); }));
+  const above = je.find((t) => t.id === "JE_ABOVE_PM");
+  return { glTransactions: txs.length, glLines: lines, glValue: ea2(value), testsRun: je.length, txFlagged: flaggedTx.size, fullTestedAbovePM: above ? above.count : 0 };
+}
+
+// ── Deterministic indicative assessment (NOT an audit opinion under ISA 700;
+//    a rules-based synthesis the auditor reviews). Bands and triggers are
+//    fully disclosed so the conclusion is reproducible.
+function eaOpinion(ea) {
+  const reasons = [];
+  const je = (id) => ea.jeTests.find((t) => t.id === id) || { count: 0, stats: {} };
+  const unb = je("JE_UNBALANCED").count;
+  const gc = ea.goingConcern.flags.length;
+  const benford = (je("JE_BENFORD").stats || {}).verdict;
+  const highJe = ea.jeTests.filter((t) => t.count > 0 && (t.severity === "High" || t.severity === "Critical")).length;
+  const vmiBlock = ea.vmi && ea.vmi.gate ? ea.vmi.gate.blockingTotal : 0;
+  const vmiCrit = ea.vmi && ea.vmi.sev ? ea.vmi.sev.Critical : 0;
+  let band = "clean";
+  if (unb > 0) { band = "adverse"; reasons.push({ lt: `${unb} nesubalansuoti DK įrašai (D≠K) — pažeistas dvejybinis įrašas`, en: `${unb} unbalanced GL entries (D≠C) — double-entry broken` }); }
+  if (vmiBlock > 0) { if (band === "clean") band = "qualified"; reasons.push({ lt: `${vmiBlock} blokuojančios SAF-T klaidos (i.SAF-T vartai: atmesta)`, en: `${vmiBlock} blocking SAF-T errors (i.SAF-T gate: rejected)` }); }
+  if (gc > 0) { if (band === "clean") band = "emphasis"; reasons.push({ lt: `${gc} veiklos tęstinumo indikatoriai (TAS 570)`, en: `${gc} going-concern indicators (ISA 570)` }); }
+  if (benford === "nonconformity") { if (band === "clean") band = "emphasis"; reasons.push({ lt: "Benfordo pasiskirstymo neatitiktis (MAD > 0,015)", en: "Benford distribution nonconformity (MAD > 0.015)" }); }
+  if (highJe >= 3 && band === "clean") { band = "emphasis"; reasons.push({ lt: `${highJe} aukšto reikšmingumo ŽĮ testai suveikė`, en: `${highJe} high-severity JE tests fired` }); }
+  if (vmiCrit > 0 && band === "clean") { band = "emphasis"; reasons.push({ lt: `${vmiCrit} kritiniai VMI taisyklių radiniai`, en: `${vmiCrit} critical VMI rule findings` }); }
+  const BANDS = {
+    clean:     { c: "#69db7c", lt: "Be pastabų (indikatyviai)", en: "Unmodified (indicative)", noteLt: "Deterministiniai testai esminių iškraipymų požymių nenustatė.", noteEn: "Deterministic tests found no indicators of material misstatement." },
+    emphasis:  { c: "#ffd43b", lt: "Be pastabų, su dalyko pabrėžimu (indikatyviai)", en: "Unmodified with emphasis of matter (indicative)", noteLt: "Yra sričių, kurias auditorius turi įvertinti papildomai.", noteEn: "There are matters the auditor must evaluate further." },
+    qualified: { c: "#ffa94d", lt: "Sąlyginės išvados rizika (indikatyviai)", en: "Qualified-opinion risk (indicative)", noteLt: "Nustatyti reikšmingi, bet lokalizuoti neatitikimai.", noteEn: "Material but contained noncompliance identified." },
+    adverse:   { c: "#ff6b6b", lt: "Neigiamos išvados rizika (indikatyviai)", en: "Adverse-opinion risk (indicative)", noteLt: "Pažeisti fundamentalūs apskaitos vientisumo principai.", noteEn: "Fundamental accounting-integrity principles are violated." },
+  };
+  return { band, ...BANDS[band], reasons, disclaimer: { lt: "Tai NĖRA audito išvada pagal TAS 700 — tai taisyklėmis pagrįsta indikacija atestuoto auditoriaus peržiūrai.", en: "This is NOT an ISA 700 audit opinion — it is a rules-based indication for review by a certified auditor." } };
 }
 
 function eaFacts(ea) {
@@ -6104,6 +6253,8 @@ function eaFacts(ea) {
   push(ea.analytics.flags.length, "Analytics deviations");
   if (ea.vmi) { push(ea.vmi.total, "VMI findings total"); push(ea.vmi.gate && ea.vmi.gate.blockingTotal, "VMI blocking errors"); push(ea.vmi.gate && ea.vmi.gate.warningCount, "VMI warnings"); push(ea.vmi.risk && ea.vmi.risk.score, "VMI risk score (audit)"); }
   if (ea.industry) push(ea.industry.checks.filter((c) => c.flag).length, "Industry flags");
+  if (ea.coverage) { push(ea.coverage.glTransactions, "GL transactions tested"); push(ea.coverage.glLines, "GL lines tested"); push(ea.coverage.txFlagged, "Transactions flagged by JE battery"); }
+  if (ea.opinion) push(ea.opinion.reasons.length, "Indicative-assessment trigger count");
   (ea.companyRules || []).forEach((r) => push(r.count, "Company rule " + r.id));
   return f;
 }
@@ -6117,6 +6268,12 @@ function buildEAuditReportHTML(ea, lang, brandName, meta) {
   let h = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + esc(brandName) + " — E-Audit</title><style>@page{size:A4;margin:16mm}body{font:12px/1.55 'Segoe UI',Arial,sans-serif;color:#1a1a1a;padding:28px;max-width:880px;margin:0 auto}h1{font-weight:300;font-size:22px;margin:0}h2{font-size:14px;margin:20px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}table{border-collapse:collapse;width:100%;margin:6px 0}td,th{border:1px solid #e3e3e3;padding:5px 8px;text-align:left;font-size:11px}.n{text-align:right}.sub{color:#666;font-size:11px}.ref{color:#888;font-size:10px}</style></head><body>";
   h += "<h1>" + esc(brandName) + " · " + T("E-Audit workpaper (ISA/TAS + VMI)", "E. audito darbo dokumentas (TAS + VMI)") + "</h1>";
   h += "<div class='sub'>" + esc((meta && meta.company) || "—") + " · " + esc((meta && meta.period) || "") + " · " + ea.generatedAt + " · engine v" + esc(ENGINE_VERSION) + (ea.industry ? " · " + T("industry", "šaka") + ": " + esc(lt ? ea.industry.lt : ea.industry.en) : "") + "</div>";
+  if (ea.opinion) {
+    h += "<div style='border:2px solid " + ea.opinion.c + ";padding:10px 14px;margin:14px 0'><b style='color:" + ea.opinion.c + "'>" + T("Indicative assessment", "Indikatyvus vertinimas") + ": " + esc(lt ? ea.opinion.lt : ea.opinion.en) + "</b>" +
+      (ea.opinion.reasons.length ? "<ul style='margin:6px 0 0'>" + ea.opinion.reasons.map((r) => "<li>" + esc(lt ? r.lt : r.en) + "</li>").join("") + "</ul>" : "<div class='sub'>" + esc(lt ? ea.opinion.noteLt : ea.opinion.noteEn) + "</div>") +
+      "<div class='ref' style='margin-top:6px'>" + esc(lt ? ea.opinion.disclaimer.lt : ea.opinion.disclaimer.en) + "</div></div>";
+  }
+  if (ea.coverage) h += "<div class='sub'>" + T("Coverage", "Aprėptis") + ": " + ea.coverage.glTransactions + " " + T("GL transactions", "DK operacijos") + " · " + ea.coverage.glLines + " " + T("lines", "eilutės") + " · Σ " + ea.coverage.glValue.toLocaleString() + " · " + ea.coverage.testsRun + " " + T("automated tests", "automatiniai testai") + " · " + ea.coverage.txFlagged + " " + T("flagged", "pažymėta") + "</div>";
   // executive summary — every number is engine-computed
   const jeCrit = ea.jeTests.filter((x) => x.count > 0 && (x.severity === "Critical" || x.severity === "High")).length;
   h += "<div style='border:1px solid #ccc;background:#f7f7f5;padding:10px 14px;margin:14px 0;font-size:12px'>" +
@@ -6141,7 +6298,7 @@ function buildEAuditReportHTML(ea, lang, brandName, meta) {
   h += "<h2>" + (ea.vmi ? 3 : 2) + ". " + T("Risk map (TAS 315/240 · V1-8)", "Rizikos žemėlapis (TAS 315/240 · V1-8)") + "</h2><table><tr><th>" + T("Area", "Sritis") + "</th><th>" + T("Level", "Lygis") + "</th><th>" + T("Factors", "Veiksniai") + "</th></tr>";
   ea.riskMap.forEach((a) => { h += "<tr><td>" + esc(lt ? a.lt : a.en) + "</td><td style='color:" + sevC[a.level] + ";font-weight:700'>" + a.level + "</td><td>" + esc(a.factors.join("; ") || "—") + "</td></tr>"; });
   h += "</table><h2>" + (ea.vmi ? 4 : 3) + ". " + T("Journal-entry testing (TAS 240 · V2-10)", "Žurnalo įrašų testai (TAS 240 · V2-10)") + "</h2><table><tr><th>" + T("Test", "Testas") + "</th><th>TAS</th><th class='n'>" + T("Hits", "Radiniai") + "</th><th>" + T("Note", "Pastaba") + "</th></tr>";
-  ea.jeTests.forEach((t) => { const note = t.id === "JE_BENFORD" ? ("MAD " + (t.stats && t.stats.mad) + " → " + (t.stats && t.stats.verdict) + " (n=" + (t.stats && t.stats.n) + ")") : (t.id === "JE_PERIOD_END" && t.stats ? t.stats.sharePct + "% " + T("of all entries", "visų įrašų") : ""); h += "<tr><td>" + esc(lt ? t.lt : t.en) + "</td><td class='ref'>" + t.tas + "</td><td class='n' style='color:" + (t.count ? sevC[t.severity] : "#2b8a3e") + ";font-weight:700'>" + t.count + "</td><td class='sub'>" + esc(note) + "</td></tr>";
+  ea.jeTests.forEach((t) => { const note = t.id === "JE_BENFORD" ? ("MAD " + (t.stats && t.stats.mad) + " → " + (t.stats && t.stats.verdict) + " (n=" + (t.stats && t.stats.n) + ")") : (t.id === "JE_PERIOD_END" && t.stats ? t.stats.sharePct + "% " + T("of all entries", "visų įrašų") : (t.id === "JE_TRAIL00" && t.stats ? t.stats.sharePct + "% (n=" + t.stats.n + ", exp ~" + t.stats.expectedPct + "%)" : "")); h += "<tr><td>" + esc(lt ? t.lt : t.en) + "</td><td class='ref'>" + t.tas + "</td><td class='n' style='color:" + (t.count ? sevC[t.severity] : "#2b8a3e") + ";font-weight:700'>" + t.count + "</td><td class='sub'>" + esc(note) + "</td></tr>";
     if (t.count > 0) t.hits.slice(0, 6).forEach((hh) => { h += "<tr><td colspan='4' style='border-top:none;font-family:Consolas,monospace;font-size:10px;color:#555;padding:2px 8px 2px 22px'>· " + esc(Object.entries(hh).map(([k, v]) => k + " = " + v).join(" | ")) + "</td></tr>"; });
   });
   h += "</table>";
@@ -7001,8 +7158,9 @@ function computeKPIs(data, ctx) {
     if (d > 0 && d <= 366) periodDays = d;
   }
 
-  // Estimated CIT (LT 2026: 17% standard; 7% small if revenue <= 300k)
-  const citRate = revenue <= 300000 ? 0.07 : 0.17;
+  // Estimated CIT — period-aware via RATE_TABLES (15% ≤2024 · 16% 2025 · 17% 2026+; small-company 5/6/7% if revenue ≤ €300k)
+  const citRatePct = (typeof citRateAsOf === "function" ? citRateAsOf(t || f || undefined, { revenue }) : null) ?? (revenue <= 300000 ? 7 : 17);
+  const citRate = citRatePct / 100;
   const estimatedCit = round2(Math.max(0, grossResult) * citRate);
   const effectiveTaxRate = round2(safeDiv(estimatedCit, Math.max(1, grossResult)) * 100);
 
@@ -7060,13 +7218,77 @@ function computeKPIs(data, ctx) {
     payables: "Σ supplier closing (credit−debit) balances",
     dso: "receivables / revenue × periodDays",
     dpo: "payables / costs × periodDays",
-    estimatedCit: `max(0, grossResult) × ${(citRate * 100)}% (LT 2026: 7% if revenue≤€300k else 17%)`,
+    estimatedCit: `max(0, grossResult) × ${(citRate * 100)}% (LT PMĮ rate in force for the period end: 15%→16% (2025)→17% (2026); small-company 5/6/7% if revenue≤€300k)`,
     effectiveTaxRatePct: "estimatedCit / grossResult × 100",
     netVatPosition: "Σ sales VAT − Σ input VAT (payable to VMI if positive)",
     note: "SAF-T account types are coarse; figures are accounting approximations for analytical use, NOT a substitute for the filed financial statements (verify against PLN204/balansas).",
   };
 
   return { kpis, derivation, supplierBalances: supplierBalances.slice(0, 10) };
+}
+
+// ─── 12-MONTH ANALYTICS SERIES ───────────────────────────────────────
+// Deterministically derives a full monthly timeline from the parsed SAF-T.
+// Months are real calendar months of the fiscal year (header.fiscalYearFrom/
+// To, falling back to observed document dates), always padded to 12 buckets
+// with correct YYYY-MM keys so every chart shows the true calendar —
+// no invented dates, every figure is a Σ over actual records.
+const MONTHS_LT = ["Sau", "Vas", "Kov", "Bal", "Geg", "Bir", "Lie", "Rgp", "Rgs", "Spa", "Lap", "Gru"];
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthLabel = (ym, lang) => { const m = parseInt(String(ym).slice(5, 7), 10); const arr = lang === "lt" ? MONTHS_LT : MONTHS_EN; return (arr[m - 1] || ym) + " ’" + String(ym).slice(2, 4); };
+const eurShort = (v) => { const n = Number(v) || 0; const a = Math.abs(n); if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M"; if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e5 ? 0 : 1) + "k"; return String(Math.round(n)); };
+
+function computeMonthlySeries(data) {
+  const d = data || {};
+  const ymOf = (s) => { const m = String(s || "").match(/^(\d{4})-(\d{2})/); return m ? m[1] + "-" + m[2] : null; };
+  const addMonths = (ym, k) => { const y = +ym.slice(0, 4), m = +ym.slice(5, 7) - 1 + k; const yy = y + Math.floor(m / 12), mm = ((m % 12) + 12) % 12; return yy + "-" + String(mm + 1).padStart(2, "0"); };
+
+  // 1) Establish the 12-month window: fiscal year if declared, else observed span.
+  let start = ymOf(d.header?.fiscalYearFrom), end = ymOf(d.header?.fiscalYearTo);
+  if (!start || !end || end < start) {
+    let lo = null, hi = null;
+    const see = (s) => { const ym = ymOf(s); if (!ym) return; if (!lo || ym < lo) lo = ym; if (!hi || ym > hi) hi = ym; };
+    (d.sales?.items || []).forEach((i) => see(i.invoiceDate));
+    (d.purchases?.items || []).forEach((i) => see(i.invoiceDate));
+    (d.transactions || []).forEach((t) => see(t.transactionDate));
+    (d.payments || []).forEach((p) => see(p.transactionDate));
+    start = lo; end = hi;
+  }
+  if (!start) { const now = new Date().toISOString().slice(0, 7); start = addMonths(now, -11); end = now; }
+  if (!end || end < start) end = start;
+  // Clamp/pad to exactly 12 buckets ending at `end` (or starting at fiscal start when the span is ≤12).
+  const spanLen = (a, b) => (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7)) + 1;
+  let months = [];
+  if (spanLen(start, end) <= 12) { const first = start; const n = 12; for (let i = 0; i < n; i++) months.push(addMonths(first, i)); if (months[11] < end) { months = []; for (let i = 11; i >= 0; i--) months.push(addMonths(end, -i)); } }
+  else { for (let i = 11; i >= 0; i--) months.push(addMonths(end, -i)); }
+  const idx = new Map(months.map((m, i) => [m, i]));
+  const mk = () => months.map((m) => ({ ym: m, revenue: 0, revenueCredit: 0, purchases: 0, outputVat: 0, inputVat: 0, salesCount: 0, purchaseCount: 0, glDebit: 0, glCredit: 0, glCount: 0, payIn: 0, payOut: 0, payCount: 0, newCustomers: 0, newSuppliers: 0 }));
+  const rows = mk();
+  const at = (s) => { const ym = ymOf(s); return ym != null && idx.has(ym) ? rows[idx.get(ym)] : null; };
+  const docNet = (i) => (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0;
+  const docVat = (i) => (i.documentTotals && i.documentTotals.taxPayable) || 0;
+  const isCredit = (i) => /^(K|KS|VK|D|DS|VD)$/.test(String(i.invoiceType || ""));
+
+  const seenC = new Set(), seenS = new Set();
+  (d.sales?.items || []).forEach((i) => { const r = at(i.invoiceDate); if (!r) return; const sgn = isCredit(i) ? -1 : 1; const v = docNet(i); r.revenue += sgn * v; if (sgn < 0) r.revenueCredit += v; r.outputVat += sgn * docVat(i); r.salesCount++; const c = i.customerID; if (c && !seenC.has(c)) { seenC.add(c); r.newCustomers++; } });
+  (d.purchases?.items || []).forEach((i) => { const r = at(i.invoiceDate); if (!r) return; const sgn = isCredit(i) ? -1 : 1; r.purchases += sgn * docNet(i); r.inputVat += sgn * docVat(i); r.purchaseCount++; const s = i.supplierID; if (s && !seenS.has(s)) { seenS.add(s); r.newSuppliers++; } });
+  (d.transactions || []).forEach((t) => { const r = at(t.transactionDate); if (!r) return; r.glCount++; (t.lines || []).forEach((l) => { r.glDebit += l.debitAmount || 0; r.glCredit += l.creditAmount || 0; }); });
+  (d.payments || []).forEach((p) => { const r = at(p.transactionDate); if (!r) return; r.payCount++; (p.lines || []).forEach((l) => { const v = (l.paymentLineAmount && l.paymentLineAmount.amount) || l.amount || 0; if ((l.debitCreditIndicator || "") === "D") r.payIn += v; else r.payOut += v; }); });
+
+  let cum = 0;
+  const out = rows.map((r) => {
+    const gross = r.revenue - r.purchases; cum += gross;
+    return { ...r, m: r.ym, label: r.ym, revenue: round2(r.revenue), purchases: round2(r.purchases), grossResult: round2(gross), cumResult: round2(cum), outputVat: round2(r.outputVat), inputVat: round2(r.inputVat), netVat: round2(r.outputVat - r.inputVat), glDebit: round2(r.glDebit), glCredit: round2(r.glCredit), payIn: round2(r.payIn), payOut: round2(r.payOut), avgSale: r.salesCount ? round2(r.revenue / r.salesCount) : 0 };
+  });
+  const tot = (k) => round2(out.reduce((s, r) => s + (r[k] || 0), 0));
+  const activeMonths = out.filter((r) => r.salesCount + r.purchaseCount + r.glCount + r.payCount > 0).length;
+  const peak = out.reduce((b, r) => (r.revenue > (b?.revenue ?? -Infinity) ? r : b), null);
+  return {
+    months: out, window: { from: months[0], to: months[11] }, activeMonths,
+    totals: { revenue: tot("revenue"), purchases: tot("purchases"), grossResult: tot("grossResult"), outputVat: tot("outputVat"), inputVat: tot("inputVat"), netVat: tot("netVat"), salesCount: out.reduce((s, r) => s + r.salesCount, 0), purchaseCount: out.reduce((s, r) => s + r.purchaseCount, 0), payIn: tot("payIn"), payOut: tot("payOut") },
+    peakMonth: peak && peak.revenue > 0 ? peak.ym : null,
+    derivation: "Monthly buckets keyed by real document dates (InvoiceDate / TransactionDate); credit notes (K/KS/VK · D/DS/VD) subtract; window = fiscal year padded to 12 calendar months.",
+  };
 }
 
 // ─── ENTERPRISE AUDIT SYSTEM PROMPT ──────────────────────────────────
@@ -10182,7 +10404,7 @@ const EINV_FLOW = { DRAFT: ["VALIDATED"], VALIDATED: ["ISSUED", "DRAFT"], ISSUED
 // status: covered-direct | covered-cited | covered-consolidated | covered-new | N/A
 const BENCHMARK_COVERAGE = {"LT_RULES_2020_09": {"SCHEMA_INT_001": ["covered-cited", "direct-cite"], "SCHEMA_DUP_001": ["covered-cited", "direct-cite"], "SCHEMA_INT_002": ["covered-cited", "direct-cite"], "SCHEMA_DVT_001": ["covered-cited", "direct-cite"], "SCHEMA_INT_003": ["covered-cited", "direct-cite"], "SCHEMA_INT_004": ["covered-consolidated", "SAFT_SUP_002"], "SCHEMA_DVT_002": ["covered-cited", "cite"], "SCHEMA_DVT_003": ["covered-cited", "cite-paren"], "SCHEMA_INT_005": ["covered-cited", "direct-cite"], "SCHEMA_DVT_004": ["covered-cited", "cite-paren"], "SCHEMA_DVT_005": ["covered-cited", "cite"], "SCHEMA_DVT_006": ["covered-cited", "cite-paren"], "SCHEMA_DVT_007": ["covered-cited", "cite"], "SCHEMA_INT_006": ["covered-cited", "cite"], "SCHEMA_INT_007": ["covered-cited", "direct-cite"], "SCHEMA_DUP_002": ["covered-cited", "direct-cite"], "SCHEMA_DVT_008": ["covered-cited", "cite-paren"], "SCHEMA_INT_008": ["covered-consolidated", "SAFT_PUR_002"], "SCHEMA_INT_009": ["covered-cited", "direct-cite"], "SCHEMA_INT_010": ["covered-consolidated", "SAFT_INT_034"], "SCHEMA_INT_011": ["covered-cited", "cite"], "SCHEMA_INT_012": ["covered-consolidated", "SAFT_INT_034"], "SCHEMA_DVT_009": ["covered-cited", "direct-cite"], "SCHEMA_DVT_010": ["covered-consolidated", "SAFT_HDR_003"], "SCHEMA_DVT_011": ["covered-cited", "cite-paren"], "SCHEMA_DVT_012": ["covered-cited", "direct-cite"], "SCHEMA_DUP_003": ["covered-cited", "direct-cite"], "SCHEMA_INT_013": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_INT_014": ["covered-cited", "cite"], "SCHEMA_DUP_004": ["covered-cited", "direct-cite"], "SCHEMA_DVT_013": ["covered-cited", "cite-paren"], "SCHEMA_INT_015": ["covered-cited", "cite"], "SCHEMA_INT_016": ["covered-consolidated", "SAFT_SAL_003"], "SCHEMA_INT_017": ["covered-direct", "SAFT_INT_017"], "SCHEMA_INT_018": ["covered-cited", "cite"], "SCHEMA_DVT_014": ["covered-cited", "cite"], "SCHEMA_INT_019": ["covered-cited", "cite"], "SCHEMA_DVT_015": ["covered-cited", "cite-range"], "SCHEMA_DVT_016": ["covered-cited", "cite-range"], "SCHEMA_INT_020": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_INT_021": ["covered-consolidated", "SAFT_INT_SD_PARTY"], "SCHEMA_INT_022": ["covered-direct", "SAFT_INT_022"], "SCHEMA_DVT_017": ["covered-cited", "cite-range"], "SCHEMA_INT_023": ["covered-cited", "direct-cite"], "SCHEMA_DVT_018": ["covered-consolidated", "SAFT_ISO_001"], "SCHEMA_DVT_019": ["covered-cited", "direct-cite"], "SCHEMA_DVT_020": ["covered-cited", "cite-paren"], "SCHEMA_INT_024": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_INT_025": ["covered-direct", "SAFT_INT_025"], "SCHEMA_INT_026": ["covered-cited", "cite"], "SCHEMA_INT_027": ["covered-cited", "direct-cite"], "SCHEMA_INT_028": ["covered-consolidated", "SAFT_INT_SD_TAX"], "SCHEMA_DVT_021": ["covered-cited", "direct-cite"], "SCHEMA_DVT_022": ["covered-direct", "SAFT_DVT_022"], "SCHEMA_DVT_023": ["covered-direct", "SAFT_DVT_023"], "SCHEMA_DVT_024": ["covered-direct", "SAFT_DVT_024"], "SCHEMA_INT_029": ["covered-consolidated", "SAFT_INT_034"], "SCHEMA_INT_030": ["covered-consolidated", "SAFT_INT_022"], "SCHEMA_INT_031": ["covered-cited", "cite"], "SCHEMA_INT_032": ["covered-consolidated", "SAFT_INT_SD_PARTY"], "SCHEMA_DVT_025": ["covered-cited", "cite"], "SCHEMA_INT_033": ["covered-cited", "cite"], "SCHEMA_DVT_026": ["covered-cited", "cite"], "SCHEMA_DVT_027": ["covered-consolidated", "SAFT_OST_004"], "SCHEMA_INT_034": ["covered-direct", "SAFT_INT_034"], "SCHEMA_INT_035": ["covered-cited", "cite"], "SCHEMA_DVT_028": ["covered-cited", "cite"], "SCHEMA_DVT_029": ["covered-consolidated", "SAFT_CLS_TaxCode"], "SCHEMA_INT_036": ["covered-cited", "cite"], "SCHEMA_INT_037": ["covered-consolidated", "SAFT_INT_SD_PROD"], "SCHEMA_INT_038": ["covered-cited", "cite"], "SCHEMA_INT_039": ["covered-consolidated", "SAFT_INT_SD_TAX"], "SCHEMA_DVT_030": ["covered-cited", "cite-range"], "SCHEMA_DUP_005": ["covered-cited", "direct-cite"], "SCHEMA_INT_040": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_DVT_031": ["covered-cited", "cite-range"], "SCHEMA_DVT_032": ["covered-cited", "cite-range"], "SCHEMA_DVT_033": ["covered-cited", "cite-range"], "SCHEMA_INT_041": ["covered-cited", "cite"], "SCHEMA_INT_042": ["covered-cited", "cite"], "SCHEMA_INT_043": ["covered-direct", "SAFT_INT_043"], "SCHEMA_DVT_034": ["covered-cited", "cite-range"], "SCHEMA_DVT_035": ["covered-cited", "cite-range"], "SCHEMA_INT_044": ["covered-direct", "SAFT_INT_044"], "SCHEMA_INT_045": ["covered-cited", "cite"], "SCHEMA_DVT_036": ["covered-cited", "cite-range"], "SCHEMA_INT_046": ["covered-cited", "cite"], "SCHEMA_DVT_037": ["covered-cited", "cite-range"], "SCHEMA_INT_047": ["covered-cited", "cite"], "SCHEMA_DVT_038": ["covered-cited", "cite-range"], "SCHEMA_DVT_039": ["covered-cited", "cite-range"], "SCHEMA_DUP_006": ["covered-cited", "direct-cite"], "SCHEMA_INT_048": ["covered-cited", "cite"], "SCHEMA_INT_049": ["covered-cited", "cite"], "SCHEMA_DVT_040": ["UNRESOLVED", ""], "SCHEMA_DVT_041": ["UNRESOLVED", ""], "TAX_PDT_001": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_002": ["covered-direct", "SAFT_PDT_002"], "TAX_VDT_001": ["covered-direct", "SAFT_VDT_001"], "TAX_TRT_001": ["covered-direct", "SAFT_TRT_001"], "TAX_PDT_003": ["covered-cited", "direct-cite"], "TAX_TRT_002": ["covered-direct", "SAFT_TRT_002"], "TAX_PDT_004": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_TRT_003": ["covered-direct", "SAFT_TRT_003"], "TAX_PDT_005": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_006": ["covered-cited", "cite"], "TAX_TRT_004": ["covered-direct", "SAFT_TRT_004"], "TAX_PDT_007": ["covered-cited", "cite"], "TAX_TRT_005": ["covered-direct", "SAFT_TRT_005"], "TAX_PDT_008": ["covered-cited", "cite"], "TAX_PDT_010": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_TRT_006": ["covered-direct", "SAFT_TRT_006"], "TAX_PDT_011": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_012": ["covered-consolidated", "SAFT_RATE_PM0"], "TAX_PDT_013": ["covered-cited", "direct-cite"], "TAX_PDT_014": ["covered-cited", "direct-cite"], "TAX_PDT_015": ["covered-cited", "cite"], "TAX_PDT_016": ["covered-cited", "cite"], "TAX_PDT_017": ["covered-cited", "cite"], "TAX_PDT_018": ["covered-cited", "cite"], "TAX_PDT_019": ["covered-cited", "cite"], "TAX_PDT_020": ["covered-direct", "SAFT_PDT_020"], "TAX_TRT_007": ["covered-direct", "SAFT_TRT_007"], "TAX_PDT_021": ["covered-cited", "direct-cite"], "TAX_PDT_022": ["covered-cited", "cite"], "TAX_PDT_023": ["covered-cited", "cite"], "TAX_TRT_010": ["covered-consolidated", "PP_LT private-consumption rules"], "TAX_PDT_024": ["covered-cited", "direct-cite"], "TAX_PDT_026": ["covered-cited", "direct-cite"], "TAX_PDT_027": ["covered-cited", "direct-cite"], "TAX_TRT_011": ["covered-direct", "SAFT_TRT_011"], "TAX_PDT_030": ["covered-cited", "cite"], "TAX_PDT_031": ["covered-cited", "cite"], "TAX_PDT_032": ["covered-cited", "cite"], "TAX_PDT_033": ["covered-cited", "cite"], "TAX_PDT_034": ["covered-cited", "direct-cite"], "TAX_TRT_012": ["covered-direct", "SAFT_TRT_012"], "TAX_PDT_035": ["covered-cited", "cite-range"], "TAX_PDT_036": ["covered-cited", "cite-range"], "TAX_PDT_037": ["covered-cited", "cite-range"], "TAX_TRT_013": ["covered-direct", "SAFT_TRT_013"], "TAX_PDT_038": ["covered-cited", "cite-range"], "TAX_PDT_039": ["covered-cited", "cite-range"], "TAX_PDT_040": ["covered-cited", "cite-range"], "TAX_VDT_002": ["covered-direct", "SAFT_VDT_002"], "TAX_PDT_041": ["covered-cited", "cite-range"], "TAX_PDT_042": ["covered-cited", "cite"], "TAX_PDT_043": ["covered-cited", "cite"], "TAX_VDT_005": ["covered-direct", "SAFT_VDT_005"], "TAX_VDT_006": ["covered-direct", "SAFT_VDT_006"], "TAX_VDT_007": ["covered-direct", "SAFT_VDT_007"], "TAX_VDT_008": ["covered-direct", "SAFT_VDT_008"], "TAX_VDT_009": ["covered-direct", "SAFT_VDT_009"], "TAX_VDT_010": ["covered-direct", "SAFT_VDT_010"], "TAX_VDT_011": ["covered-direct", "SAFT_VDT_011"], "TAX_VDT_012": ["covered-direct", "SAFT_VDT_012"], "TAX_VDT_013": ["covered-direct", "SAFT_VDT_013"], "TAX_VDT_014": ["covered-direct", "SAFT_VDT_014"], "TAX_VDT_015": ["covered-direct", "SAFT_VDT_015"], "TAX_VDT_016": ["covered-direct", "SAFT_VDT_016"], "TAX_VDT_017": ["covered-direct", "SAFT_VDT_017"], "TAX_VDT_018": ["covered-direct", "SAFT_VDT_018"], "TAX_VDT_019": ["covered-direct", "SAFT_VDT_019"], "TAX_VDT_020": ["covered-direct", "SAFT_VDT_020"], "TAX_VDT_021": ["covered-direct", "SAFT_VDT_021"], "TAX_VDT_022": ["covered-cited", "cite"], "TAX_VDT_023": ["covered-cited", "cite"], "TAX_VDT_024": ["covered-cited", "direct-cite"], "TAX_VDT_025": ["covered-cited", "cite"], "TAX_VDT_026": ["covered-cited", "cite"], "TAX_VDT_028": ["covered-cited", "cite"], "TAX_VDT_030": ["covered-cited", "cite"], "TAX_VDT_031": ["covered-direct", "SAFT_VDT_031"], "TAX_VDT_032": ["covered-cited", "cite"], "TAX_VDT_033": ["covered-new", "SAFT_VDT_033 (implemented this audit)"], "TAX_VDT_036": ["covered-direct", "SAFT_VDT_036"], "TAX_VDT_037": ["covered-cited", "cite"], "TAX_VDT_038": ["covered-new", "SAFT_VDT_038 (implemented this audit)"], "TAX_VDT_039": ["covered-cited", "cite"], "TAX_VDT_042": ["covered-cited", "cite"], "TAX_VDT_044": ["covered-cited", "cite"], "TAX_VDT_045": ["covered-cited", "direct-cite"], "TAX_VDT_046": ["covered-cited", "cite"], "TAX_VDT_048": ["covered-cited", "direct-cite"], "TAX_VDT_049": ["covered-cited", "cite"], "TAX_VDT_050": ["covered-direct", "SAFT_VDT_050"], "TAX_VDT_051": ["covered-cited", "cite"], "ACCOUNTING_AET_001": ["covered-direct", "SAFT_AET_001"], "ACCOUNTING_AET_002": ["covered-direct", "SAFT_AET_002"], "ACCOUNTING_AET_003": ["covered-direct", "SAFT_AET_003"], "ACCOUNTING_AET_004": ["covered-consolidated", "SAFT_AET_001"], "ACCOUNTING_AET_005": ["covered-cited", "direct-cite"], "ACCOUNTING_AET_006": ["covered-cited", "cite"], "ACCOUNTING_DET_001": ["covered-direct", "SAFT_DET_001"], "ACCOUNTING_BAT_011": ["covered-direct", "SAFT_BAT_011"], "ACCOUNTING_DET_002": ["covered-direct", "SAFT_DET_002"], "ACCOUNTING_DET_003": ["covered-direct", "SAFT_DET_003"], "ACCOUNTING_BAT_012": ["covered-direct", "SAFT_BAT_012"], "ACCOUNTING_DET_004": ["covered-direct", "SAFT_DET_004"], "ACCOUNTING_BAT_013": ["covered-direct", "SAFT_BAT_013"], "ACCOUNTING_DET_005": ["covered-direct", "SAFT_DET_005"], "ACCOUNTING_DET_006": ["covered-direct", "SAFT_DET_006"], "ACCOUNTING_BAT_014": ["covered-cited", "cite"], "ACCOUNTING_BAT_015": ["covered-direct", "SAFT_BAT_015"], "ACCOUNTING_PET_001": ["covered-cited", "direct-cite"], "ACCOUNTING_BAT_016": ["covered-cited", "cite"], "ACCOUNTING_PET_002": ["covered-cited", "cite-range"], "ACCOUNTING_PET_003": ["covered-cited", "cite-range"], "ACCOUNTING_BAT_019": ["covered-direct", "SAFT_BAT_019"], "ACCOUNTING_PET_004": ["covered-cited", "cite-range"], "ACCOUNTING_BAT_020": ["covered-direct", "SAFT_BAT_020"], "ACCOUNTING_PET_005": ["covered-cited", "cite-range"], "ACCOUNTING_BAT_021": ["covered-direct", "SAFT_BAT_021"], "ACCOUNTING_PET_006": ["covered-cited", "cite-range"], "ACCOUNTING_PET_007": ["covered-cited", "cite-range"], "ACCOUNTING_PET_008": ["covered-cited", "cite-range"], "ACCOUNTING_PET_009": ["covered-cited", "cite-range"], "ACCOUNTING_PET_010": ["covered-cited", "cite-range"], "ACCOUNTING_PET_011": ["covered-cited", "cite-range"], "ACCOUNTING_PET_012": ["covered-cited", "cite-range"], "ACCOUNTING_APT_001": ["covered-direct", "SAFT_APT_001"], "ACCOUNTING_APT_002": ["covered-cited", "cite"], "ACCOUNTING_BAT_024": ["covered-consolidated", "SAFT_PDT_FINES"], "ACCOUNTING_BAT_025": ["covered-cited", "direct-cite"], "ACCOUNTING_BAT_026": ["covered-cited", "cite"], "ACCOUNTING_AAT_001": ["covered-direct", "SAFT_AAT_001"], "ACCOUNTING_AAT_002": ["covered-direct", "SAFT_AAT_002"], "ACCOUNTING_AAT_003": ["covered-direct", "SAFT_AAT_003"], "ACCOUNTING_AAT_004": ["covered-cited", "cite"], "ACCOUNTING_AAT_005": ["covered-direct", "SAFT_AAT_005"], "ACCOUNTING_AAT_006": ["covered-cited", "cite"], "FINANCIAL_CFA_004": ["covered-cited", "direct-cite"], "FINANCIAL_CFA_005": ["covered-cited", "cite"], "FINANCIAL_FAO_001": ["covered-direct", "SAFT_FAO_001"], "FINANCIAL_FAO_002": ["covered-direct", "SAFT_FAO_002"], "FINANCIAL_FAO_003": ["covered-cited", "direct-cite"], "FINANCIAL_FAO_004": ["covered-cited", "cite"], "OTHER_OST_001": ["covered-direct", "SAFT_OST_001"], "OTHER_OST_004": ["covered-direct", "SAFT_OST_004"], "OTHER_OST_005": ["covered-direct", "SAFT_OST_005"], "OTHER_OST_006": ["covered-cited", "cite"], "FINANCIAL_HFA_001": ["covered-direct", "SAFT_HFA_001"], "TAX_VDT_052": ["covered-cited", "direct-cite"], "SCHEMA_DVT_044": ["covered-consolidated", "SAFT_CTL_001"], "SCHEMA_DVT_045": ["covered-consolidated", "SAFT_CTL_002"], "SCHEMA_DVT_046": ["covered-consolidated", "SAFT_CTL_003"], "SCHEMA_DVT_047": ["covered-consolidated", "SAFT_CTL_005"], "SCHEMA_DVT_048": ["covered-cited", "direct-cite"], "SCHEMA_DVT_049": ["covered-cited", "direct-cite"], "SCHEMA_DVT_050": ["covered-cited", "direct-cite"], "SCHEMA_DVT_051": ["covered-cited", "cite-range"], "SCHEMA_DVT_052": ["covered-cited", "cite-range"], "SCHEMA_DVT_053": ["covered-cited", "cite-range"], "SCHEMA_DVT_054": ["covered-cited", "cite-range"], "SCHEMA_DVT_055": ["covered-cited", "cite-range"], "SCHEMA_DVT_056": ["covered-cited", "cite-range"], "SCHEMA_DVT_057": ["covered-cited", "cite-range"], "SCHEMA_DVT_058": ["covered-consolidated", "SAFT_CTL_001"], "SCHEMA_DVT_059": ["covered-cited", "direct-cite"], "SCHEMA_DVT_060": ["covered-cited", "cite"], "SCHEMA_INT_050": ["covered-cited", "cite"], "SCHEMA_INT_051": ["covered-cited", "cite"], "SCHEMA_INT_052": ["covered-cited", "cite"], "SCHEMA_INT_053": ["covered-cited", "cite"], "SCHEMA_DVT_061": ["covered-cited", "direct-cite"], "SCHEMA_DVT_062": ["covered-consolidated", "SAFT_SAL_007"], "SCHEMA_DVT_063": ["covered-consolidated", "SAFT_PUR_003"], "SCHEMA_DVT_064": ["covered-cited", "cite"], "SCHEMA_DVT_065": ["covered-cited", "cite"], "SCHEMA_DVT_066": ["covered-cited", "cite"], "SCHEMA_DVT_067": ["covered-cited", "cite"], "SCHEMA_DVT_068": ["covered-cited", "direct-cite"], "SCHEMA_DVT_069": ["covered-cited", "cite-paren"], "SCHEMA_DVT_070": ["covered-cited", "cite-paren"], "SCHEMA_INT_054": ["covered-cited", "direct-cite"], "SCHEMA_INT_055": ["covered-consolidated", "SAFT_INT_043"], "SCHEMA_DUP_007": ["covered-consolidated", "SAFT_DUBL_Asset"], "SCHEMA_DUP_008": ["covered-consolidated", "SAFT_DUBL_TaxCodeDetail"], "SCHEMA_DUP_009": ["covered-consolidated", "SAFT_DUBL_UOMTableEntry"], "SCHEMA_DUP_010": ["covered-consolidated", "SAFT_DUBL_AnalysisTypeTableEntry"], "SCHEMA_DUP_011": ["covered-consolidated", "SAFT_DUBL_Customer"], "SCHEMA_DUP_012": ["covered-consolidated", "SAFT_DUBL_Supplier"], "SCHEMA_DUP_013": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_014": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_015": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_016": ["covered-consolidated", "SAFT_DUBL_Owner"], "SCHEMA_DUP_017": ["covered-consolidated", "SAFT_DUBL_MovementTypeTableEntry"], "SCHEMA_DUP_018": ["covered-consolidated", "SAFT_DUBL_OpenSalesInvoice"], "SCHEMA_DUP_019": ["covered-consolidated", "SAFT_DUBL_OpenPurchaseInvoice"], "SCHEMA_DUP_020": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_021": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_022": ["covered-consolidated", "SAFT_DUBL_SalesInvoice"], "SCHEMA_DUP_023": ["covered-consolidated", "SAFT_DUBL_PurchaseInvoice"], "SCHEMA_DUP_024": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_025": ["covered-consolidated", "SAFT_DUBL_StockMovement"], "SCHEMA_DUP_026": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_027": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_028": ["covered-consolidated", "SAFT_DUBL_StockMovement"], "SCHEMA_DUP_029": ["covered-consolidated", "SAFT_DUBL_GLTransaction"], "SCHEMA_DUP_030": ["covered-consolidated", "SAFT_DUBL_PurchaseInvoice"], "SCHEMA_DUP_031": ["covered-consolidated", "SAFT_DUBL_SalesInvoice"], "SCHEMA_DUP_032": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_033": ["covered-consolidated", "SAFT_DUBL_Journal"], "SCHEMA_DUP_034": ["covered-consolidated", "SAFT_DUBL_OpenPurchaseInvoice"], "SCHEMA_DUP_035": ["covered-consolidated", "SAFT_DUBL_OpenSalesInvoice"], "SCHEMA_DUP_036": ["covered-consolidated", "SAFT_DUBL_MovementTypeTableEntry"], "SCHEMA_DUP_037": ["covered-consolidated", "SAFT_DUBL_Owner"], "SCHEMA_DUP_038": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_039": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_040": ["covered-consolidated", "SAFT_DUBL_Product"], "SCHEMA_DUP_041": ["covered-consolidated", "SAFT_DUBL_Supplier"], "SCHEMA_DUP_042": ["covered-consolidated", "SAFT_DUBL_Customer"], "SCHEMA_DUP_043": ["covered-consolidated", "SAFT_DUBL_AnalysisTypeTableEntry"], "SCHEMA_DUP_044": ["covered-consolidated", "SAFT_DUBL_UOMTableEntry"], "SCHEMA_DUP_045": ["covered-consolidated", "SAFT_DUBL_TaxCodeDetail"], "SCHEMA_DUP_046": ["covered-consolidated", "SAFT_DUBL_Asset"], "SCHEMA_SEQ_001": ["covered-direct", "SAFT_SEQ_001"], "SCHEMA_SEQ_002": ["N/A", "workbook defect: NULL title/description"], "SCHEMA_DVT_071": ["covered-consolidated", "SAFT_CLS_TaxCode"], "SCHEMA_DVT_072": ["covered-consolidated", "SAFT_CLS_STITaxCode"], "SCHEMA_DVT_073": ["covered-cited", "cite"], "SCHEMA_DVT_074": ["covered-cited", "cite"], "SCHEMA_DVT_075": ["covered-cited", "cite"], "SCHEMA_DVT_076": ["covered-cited", "cite"], "SCHEMA_DVT_077": ["covered-cited", "direct-cite"], "SCHEMA_DVT_078": ["covered-consolidated", "SAFT_DVT_OPENDATES"], "SCHEMA_DVT_079": ["covered-cited", "cite"], "SCHEMA_DVT_080": ["covered-cited", "cite"], "SCHEMA_DVT_081": ["covered-cited", "cite"], "SCHEMA_DVT_082": ["covered-cited", "cite-paren"], "SCHEMA_DVT_083": ["covered-cited", "cite"], "SCHEMA_DVT_084": ["covered-cited", "cite"], "SCHEMA_DVT_085": ["covered-cited", "cite-paren"], "SCHEMA_INT_056": ["covered-cited", "cite"], "SCHEMA_INT_057": ["covered-cited", "cite"], "SCHEMA_SEQ_003": ["covered-consolidated", "SAFT_SEQ_001"], "TMP008": ["N/A", "platform temp rule (NULL, risk 0)"]}, "PVM_120_2021_02": {"PP_LT_PVM_106": "covered-direct", "PP_LT_PVM_103": "covered-direct", "PP_LT_PVM_102": "covered-direct", "PP_LT_PVM_101": "covered-direct", "PP_LT_PVM_100": "covered-direct", "PP_LT_PVM_097": "covered-direct", "PP_LT_PVM_094": "covered-direct", "PP_LT_PVM_093": "covered-direct", "PP_LT_PVM_092": "covered-direct", "PP_LT_PVM_091": "covered-direct", "PP_LT_PVM_090": "covered-direct", "PP_LT_PVM_089": "covered-direct", "PP_LT_PVM_081": "covered-direct", "PP_LT_PVM_079": "covered-direct", "PP_LT_PVM_078": "covered-direct", "PP_LT_PVM_076": "covered-direct", "PP_LT_PVM_072": "covered-direct", "PP_LT_PVM_071": "covered-direct", "PP_LT_PVM_070": "covered-direct", "PP_LT_PVM_069": "covered-direct", "PP_LT_PVM_068": "covered-direct", "PP_LT_PVM_054": "covered-direct", "PP_LT_PVM_053": "covered-direct", "PP_LT_PVM_052": "covered-direct", "PP_LT_PVM_051": "covered-direct", "PP_LT_PVM_025": "covered-direct", "PP_LT_PVM_024": "covered-direct", "PP_LT_PVM_017": "covered-direct", "PP_LT_PVM_013": "covered-direct", "PP_LT_PVM_012": "covered-direct", "PP_LT_PVM_011": "covered-direct", "PP_LT_PVM_010": "covered-direct", "PP_LT_PVM_007": "covered-direct", "PP_LT_PVM_002": "covered-direct", "PP_LT_PVM_001": "covered-direct", "PP_LT_PVM_111": "covered-direct", "PP_LT_PVM_105": "covered-direct", "PP_LT_PVM_095": "covered-direct", "PP_LT_PVM_087": "covered-direct", "PP_LT_PVM_082": "covered-direct", "PP_LT_PVM_080": "covered-direct", "PP_LT_PVM_075": "covered-direct", "PP_LT_PVM_067": "covered-direct", "PP_LT_PVM_065": "covered-direct", "PP_LT_PVM_064": "covered-direct", "PP_LT_PVM_063": "covered-direct", "PP_LT_PVM_060": "covered-direct", "PP_LT_PVM_050": "covered-direct", "PP_LT_PVM_049": "covered-direct", "PP_LT_PVM_048": "covered-direct", "PP_LT_PVM_047": "covered-direct", "PP_LT_PVM_046": "covered-direct", "PP_LT_PVM_045": "covered-direct", "PP_LT_PVM_037": "covered-direct", "PP_LT_PVM_036": "covered-direct", "PP_LT_PVM_035": "covered-direct", "PP_LT_PVM_034": "covered-direct", "PP_LT_PVM_033": "covered-direct", "PP_LT_PVM_032": "covered-direct", "PP_LT_PVM_029": "covered-direct", "PP_LT_PVM_028": "covered-direct", "PP_LT_PVM_027": "covered-direct", "PP_LT_PVM_026": "covered-direct", "PP_LT_PVM_016": "covered-direct", "PP_LT_PVM_015": "covered-direct", "PP_LT_PVM_006": "covered-direct", "PP_LT_PVM_005": "covered-direct", "PP_LT_PVM_004": "covered-direct", "PP_LT_PVM_003": "covered-direct", "PP_LT_PVM_119": "covered-direct", "PP_LT_PVM_118": "covered-direct", "PP_LT_PVM_117": "covered-direct", "PP_LT_PVM_116": "covered-direct", "PP_LT_PVM_115": "covered-direct", "PP_LT_PVM_114": "covered-direct", "PP_LT_PVM_113": "covered-direct", "PP_LT_PVM_112": "covered-direct", "PP_LT_PVM_110": "covered-direct", "PP_LT_PVM_109": "covered-direct", "PP_LT_PVM_108": "covered-direct", "PP_LT_PVM_107": "covered-direct", "PP_LT_PVM_104": "covered-direct", "PP_LT_PVM_099": "covered-direct", "PP_LT_PVM_098": "covered-direct", "PP_LT_PVM_088": "covered-direct", "PP_LT_PVM_086": "covered-direct", "PP_LT_PVM_085": "covered-direct", "PP_LT_PVM_084": "covered-direct", "PP_LT_PVM_083": "covered-direct", "PP_LT_PVM_077": "covered-direct", "PP_LT_PVM_074": "covered-direct", "PP_LT_PVM_073": "covered-direct", "PP_LT_PVM_066": "covered-direct", "PP_LT_PVM_062": "covered-direct", "PP_LT_PVM_061": "covered-direct", "PP_LT_PVM_059": "covered-direct", "PP_LT_PVM_058": "covered-direct", "PP_LT_PVM_057": "covered-direct", "PP_LT_PVM_056": "covered-direct", "PP_LT_PVM_044": "covered-direct", "PP_LT_PVM_043": "covered-direct", "PP_LT_PVM_041": "covered-direct", "PP_LT_PVM_040": "covered-direct", "PP_LT_PVM_039": "covered-direct", "PP_LT_PVM_038": "covered-direct", "PP_LT_PVM_031": "covered-direct", "PP_LT_PVM_030": "covered-direct", "PP_LT_PVM_021": "covered-direct", "PP_LT_PVM_020": "covered-direct", "PP_LT_PVM_019": "covered-direct", "PP_LT_PVM_018": "covered-direct", "PP_LT_PVM_014": "covered-direct", "PP_LT_PVM_009": "covered-direct", "PP_LT_PVM_008": "covered-direct", "Visiškai visos": "N/A"}};
 
-const APP_BUILD = "v9.2 · SOTA compliance build (SAF-T LT 2.01 full catalogue · EN 16931 · Peppol BIS 3.0 · SABIS · ViDA)";
+const APP_BUILD = "v11 · SOTA intelligence build (SAF-T LT 2.01 full catalogue · 12-month analytics layer · ISA/TAS e-audit + indicative assessment · EN 16931 · Peppol BIS 3.0 · SABIS · ViDA · legal-bounded Auto-Fix)";
 
 const xmlEsc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 const fmt2 = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
@@ -10638,6 +10860,42 @@ function computeVidaReadiness(profile, settings, { outbox = [], archive = [] } =
     { key: "drr", lt: "DRR duomenų laukai pilni (data, PVM kodai, sumos pagal tarifą)", en: "DRR data fields complete (date, VAT ids, per-rate totals)", ok: true, detail: "by construction" },
   ];
   return { days, mandatoryFrom: EINV_REGIME.vida.intraEuMandatory, items, intraEuShare: live.length ? Math.round(intraEu.length / live.length * 100) : 0, ready: items.every((i) => i.ok) };
+}
+
+// ─── E-INVOICING ANALYTICS (deterministic, 12-month) ───────────────────
+// Every figure is a Σ over outbox/inbox entries and their event timeline —
+// monthly buckets keyed by real issue dates, lifecycle funnel by actual
+// state, route mix from the routing decision, ageing from dueDate vs today.
+function computeEinvAnalytics(einv, todayStr) {
+  const today = todayStr || new Date().toISOString().slice(0, 10);
+  const out = einv.outbox || [], inn = einv.inbox || [];
+  const ym = (s) => { const m = String(s || "").match(/^(\d{4})-(\d{2})/); return m ? m[1] + "-" + m[2] : null; };
+  const addM = (m, k) => { const y = +m.slice(0, 4), mm = +m.slice(5, 7) - 1 + k; return (y + Math.floor(mm / 12)) + "-" + String(((mm % 12) + 12) % 12 + 1).padStart(2, "0"); };
+  let end = ym(today);
+  out.forEach((e) => { const m = ym(e.inv?.issueDate); if (m && m > end) end = m; });
+  const months = []; for (let i = 11; i >= 0; i--) months.push(addM(end, -i));
+  const idx = new Map(months.map((m, i) => [m, i]));
+  const rows = months.map((m) => ({ ym: m, issuedN: 0, issuedV: 0, acceptedV: 0, rejectedV: 0, pendingV: 0, inboundN: 0, inboundV: 0 }));
+  const val = (e) => { try { return einvR2(computeEinvTotals(e.inv).taxInc); } catch { return 0; } };
+  const OKS = new Set(["ACCEPTED", "DELIVERED", "PAID", "ARCHIVED"]);
+  out.forEach((e) => { const r = idx.has(ym(e.inv?.issueDate)) ? rows[idx.get(ym(e.inv.issueDate))] : null; if (!r) return; const v = val(e); r.issuedN++; r.issuedV = einvR2(r.issuedV + v); if (e.state === "REJECTED") r.rejectedV = einvR2(r.rejectedV + v); else if (OKS.has(e.state)) r.acceptedV = einvR2(r.acceptedV + v); else r.pendingV = einvR2(r.pendingV + v); });
+  inn.forEach((e) => { const r = idx.has(ym(e.inv?.issueDate)) ? rows[idx.get(ym(e.inv.issueDate))] : null; if (!r) return; r.inboundN++; r.inboundV = einvR2(r.inboundV + val(e)); });
+  // Lifecycle funnel: how many entries have REACHED each stage (event-based).
+  const FUNNEL = ["ISSUED", "TRANSMITTED", "DELIVERED", "ACCEPTED", "PAID"];
+  const reached = FUNNEL.map((st) => ({ state: st, n: out.filter((e) => (e.events || []).some((ev) => ev.state === st) || e.state === st).length }));
+  // Route mix from the routing decision recorded at issue/transmit time.
+  const routes = {}; out.forEach((e) => { const r = (e.routing && e.routing.route) || "—"; routes[r] = (routes[r] || 0) + 1; });
+  const routeMix = Object.entries(routes).map(([name, value]) => ({ name, value }));
+  // Ageing: live receivables past due (state not terminal-paid/rejected).
+  const LIVE = new Set(["ISSUED", "TRANSMITTED", "DELIVERED", "ACCEPTED"]);
+  const overdue = out.filter((e) => LIVE.has(e.state) && e.inv?.dueDate && e.inv.dueDate < today)
+    .map((e) => ({ no: e.inv.invoiceNo, buyer: e.inv.buyer?.name || "—", due: e.inv.dueDate, days: Math.floor((new Date(today) - new Date(e.inv.dueDate)) / 86400000), value: val(e), state: e.state }))
+    .sort((a, b) => b.days - a.days);
+  // Average issue→delivery latency in hours (from the event timeline).
+  let latN = 0, latSum = 0;
+  out.forEach((e) => { const ev = e.events || []; const i0 = ev.find((x) => x.state === "ISSUED"), d0 = ev.find((x) => x.state === "DELIVERED"); if (i0 && d0) { const h = (new Date(d0.at) - new Date(i0.at)) / 3600000; if (isFinite(h) && h >= 0) { latN++; latSum += h; } } });
+  const totals = { issuedN: rows.reduce((s, r) => s + r.issuedN, 0), issuedV: einvR2(rows.reduce((s, r) => s + r.issuedV, 0)), overdueN: overdue.length, overdueV: einvR2(overdue.reduce((s, r) => s + r.value, 0)), avgDeliveryH: latN ? Math.round(latSum / latN * 10) / 10 : null };
+  return { months: rows, window: { from: months[0], to: months[11] }, funnel: reached, routeMix, overdue: overdue.slice(0, 12), totals };
 }
 
 // ─── Conformance fixtures (reuses the v8 runConformance runner) ────────
@@ -11604,7 +11862,184 @@ function CountUp({ to, dur = 1500, suffix = "" }) {
 // Each metric shows its value, position within the sector band (a gauge),
 // the sector median, an editable target, and a plain-language verdict.
 // ────────────────────────────────────────────────────────────────────
-function KpiDashboard({ lang, kpis, sector, setSector, targets, setTarget }) {
+// ─── ADVANCED ANALYTICS BOARD (12-month graphical layer) ─────────────
+// Renders below the KPI cards. Every series comes from computeMonthlySeries —
+// real calendar months of the fiscal year, credit-note-aware, zero-padded.
+const CHT = {
+  grid: "rgba(255,255,255,0.07)", axis: "#8c8c88", font: 10,
+  rev: "#7cc4ff", pur: "#9a8cff", gross: "#69db7c", neg: "#ff8a8a",
+  outV: "#ffd43b", inV: "#74c0fc", net: "#fff", pay: "#63e6be",
+  sev: { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" },
+};
+function TaxaiTip({ active, payload, label, lang, money }) {
+  if (!active || !payload || !payload.length) return null;
+  return <div style={{ background: "#0b0b0d", border: "1px solid rgba(255,255,255,0.25)", padding: "9px 12px", fontFamily: "var(--m)", fontSize: 11, boxShadow: "0 6px 18px rgba(0,0,0,0.6)" }}>
+    <div style={{ color: "#fff", fontWeight: 700, marginBottom: 5, letterSpacing: ".04em" }}>{label}</div>
+    {payload.map((p, i) => p.value == null ? null : <div key={i} style={{ color: p.color || "#d2d2ce", padding: "1px 0" }}>
+      <span style={{ display: "inline-block", width: 8, height: 8, background: p.color, marginRight: 7 }} />
+      {p.name}: <b style={{ color: "#fff" }}>{money === false ? Number(p.value).toLocaleString() : "€" + Number(p.value).toLocaleString(undefined, { maximumFractionDigits: 0 })}</b>
+    </div>)}
+  </div>;
+}
+function ChartCard({ title, sub, h = 240, children, span }) {
+  const PL_LINE = "rgba(255,255,255,0.12)";
+  return <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "14px 16px 8px", gridColumn: span ? "1 / -1" : undefined }}>
+    <div style={{ fontSize: 10, color: "#bcbcb8", fontFamily: "var(--m)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 2 }}>{title}</div>
+    {sub && <div style={{ fontSize: 9.5, color: "#7a7a76", fontFamily: "var(--m)", marginBottom: 6 }}>{sub}</div>}
+    <div style={{ width: "100%", height: h }}>{children}</div>
+  </div>;
+}
+function KpiAnalyticsBoard({ lang, parsed, findings, supplierBalances }) {
+  const PL_LINE = "rgba(255,255,255,0.12)";
+  const L = (en, lt) => (lang === "lt" ? lt : en);
+  const ms = useMemo(() => { try { return parsed ? computeMonthlySeries(parsed) : null; } catch { return null; } }, [parsed]);
+  const [tableOpen, setTableOpen] = useState(false);
+  if (!ms) return null;
+  const data = ms.months.map((r) => ({ ...r, name: monthLabel(r.ym, lang) }));
+  const axis = { stroke: CHT.axis, fontSize: CHT.font, fontFamily: "var(--m)", tickLine: false, axisLine: { stroke: CHT.grid } };
+  const sevAgg = (() => { const a = { Critical: 0, High: 0, Medium: 0, Low: 0 }; (findings || []).forEach((f) => { if (a[f.severity] != null) a[f.severity]++; }); return Object.entries(a).filter(([, v]) => v > 0).map(([k, v]) => ({ name: k, value: v })); })();
+  const supTop = (supplierBalances || []).slice(0, 5).map((s) => ({ name: (s.name || s.id || "—").slice(0, 22), value: Math.round(s.bal) }));
+  const heat = (() => { const max = Math.max(1, ...data.map((r) => r.glCount + r.salesCount + r.purchaseCount + r.payCount)); return data.map((r) => ({ ym: r.ym, name: r.name, n: r.glCount + r.salesCount + r.purchaseCount + r.payCount, a: (r.glCount + r.salesCount + r.purchaseCount + r.payCount) / max })); })();
+  const lgd = { wrapperStyle: { fontSize: 10, fontFamily: "var(--m)", color: "#8c8c88" } };
+  return <div style={{ marginTop: 28 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
+      <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".14em", color: "#8c8c88", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 10 }}><span style={{ width: 22, height: 1, background: "#8c8c88" }} />{L("Analytics — 12 months", "Analitika — 12 mėnesių")}</div>
+      <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#7cc4ff", border: "1px solid rgba(124,196,255,0.4)", padding: "3px 9px" }}>{ms.window.from} → {ms.window.to}</span>
+      <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{L("active months", "aktyvūs mėnesiai")}: {ms.activeMonths}/12{ms.peakMonth ? ` · ${L("peak", "pikas")}: ${ms.peakMonth}` : ""}</span>
+    </div>
+    {/* activity heat strip */}
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12,1fr)", gap: 3, marginBottom: 14 }}>
+      {heat.map((h2) => <div key={h2.ym} title={`${h2.ym} · ${h2.n} ${L("records", "įrašų")}`} style={{ height: 26, background: h2.n ? `rgba(124,196,255,${0.12 + 0.7 * h2.a})` : "rgba(255,255,255,0.04)", border: `1px solid ${PL_LINE}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--m)", fontSize: 8, color: h2.a > 0.5 ? "#000" : "#8c8c88", cursor: "default" }}>{h2.name.split(" ")[0]}</div>)}
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(420px,1fr))", gap: 12 }}>
+      <ChartCard title={L("Revenue vs purchases by month", "Pajamos ir pirkimai pagal mėnesį")} sub={L("Σ invoice net per real document month · credit notes subtract · line = gross result", "Σ sąskaitų neto pagal realų dokumento mėnesį · kreditinės atimamos · linija = bendrasis rezultatas")} span>
+        <ResponsiveContainer>
+          <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke={CHT.grid} vertical={false} />
+            <XAxis dataKey="name" {...axis} interval={0} />
+            <YAxis {...axis} tickFormatter={eurShort} width={52} />
+            <Tooltip content={<TaxaiTip lang={lang} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+            <Legend {...lgd} />
+            <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" />
+            <Bar dataKey="revenue" name={L("Revenue", "Pajamos")} fill={CHT.rev} maxBarSize={26} />
+            <Bar dataKey="purchases" name={L("Purchases", "Pirkimai")} fill={CHT.pur} maxBarSize={26} />
+            <Line type="monotone" dataKey="grossResult" name={L("Gross result", "Bendrasis rezultatas")} stroke={CHT.gross} strokeWidth={2} dot={{ r: 2.5 }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      <ChartCard title={L("VAT position by month", "PVM pozicija pagal mėnesį")} sub={L("output vs deductible input VAT · white line = net payable to VMI", "pardavimo ir atskaitomas pirkimo PVM · balta linija = mokėtina VMI")}>
+        <ResponsiveContainer>
+          <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke={CHT.grid} vertical={false} />
+            <XAxis dataKey="name" {...axis} interval={1} />
+            <YAxis {...axis} tickFormatter={eurShort} width={52} />
+            <Tooltip content={<TaxaiTip lang={lang} />} />
+            <Legend {...lgd} />
+            <Area type="monotone" dataKey="outputVat" name={L("Output VAT", "Pardavimo PVM")} stroke={CHT.outV} fill={CHT.outV} fillOpacity={0.18} strokeWidth={1.5} />
+            <Area type="monotone" dataKey="inputVat" name={L("Input VAT", "Pirkimo PVM")} stroke={CHT.inV} fill={CHT.inV} fillOpacity={0.18} strokeWidth={1.5} />
+            <Line type="monotone" dataKey="netVat" name={L("Net VAT", "Mokėtinas PVM")} stroke={CHT.net} strokeWidth={2} dot={false} />
+            <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      <ChartCard title={L("Cumulative result & cash flow proxy", "Kaupiamasis rezultatas ir pinigų srautas")} sub={L("running Σ(revenue−purchases) · payments in/out from SAF-T Payments", "kaupiama Σ(pajamos−pirkimai) · mokėjimai iš SAF-T Payments")}>
+        <ResponsiveContainer>
+          <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke={CHT.grid} vertical={false} />
+            <XAxis dataKey="name" {...axis} interval={1} />
+            <YAxis {...axis} tickFormatter={eurShort} width={52} />
+            <Tooltip content={<TaxaiTip lang={lang} />} />
+            <Legend {...lgd} />
+            <Bar dataKey="payIn" name={L("Payments in", "Įplaukos")} fill={CHT.pay} maxBarSize={18} />
+            <Bar dataKey="payOut" name={L("Payments out", "Išmokos")} fill={CHT.neg} maxBarSize={18} />
+            <Line type="monotone" dataKey="cumResult" name={L("Cumulative result", "Kaupiamasis rezultatas")} stroke={CHT.gross} strokeWidth={2} dot={false} />
+            <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      <ChartCard title={L("Document & posting volumes", "Dokumentų ir įrašų apimtys")} sub={L("counts per month — sales/purchase invoices, GL transactions, payments", "kiekiai per mėnesį — pardavimo/pirkimo SF, DK operacijos, mokėjimai")}>
+        <ResponsiveContainer>
+          <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke={CHT.grid} vertical={false} />
+            <XAxis dataKey="name" {...axis} interval={1} />
+            <YAxis {...axis} width={40} allowDecimals={false} />
+            <Tooltip content={<TaxaiTip lang={lang} money={false} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+            <Legend {...lgd} />
+            <Bar dataKey="salesCount" name={L("Sales inv.", "Pardavimo SF")} stackId="v" fill={CHT.rev} maxBarSize={22} />
+            <Bar dataKey="purchaseCount" name={L("Purchase inv.", "Pirkimo SF")} stackId="v" fill={CHT.pur} maxBarSize={22} />
+            <Bar dataKey="glCount" name={L("GL transactions", "DK operacijos")} stackId="v" fill="rgba(255,255,255,0.35)" maxBarSize={22} />
+            <Bar dataKey="payCount" name={L("Payments", "Mokėjimai")} stackId="v" fill={CHT.pay} maxBarSize={22} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      <ChartCard title={L("GL debit/credit turnover", "DK debeto/kredito apyvarta")} sub={L("monthly Σ of all journal lines — symmetry confirms double entry", "mėnesio Σ visų žurnalo eilučių — simetrija patvirtina dvejybinį įrašą")}>
+        <ResponsiveContainer>
+          <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke={CHT.grid} vertical={false} />
+            <XAxis dataKey="name" {...axis} interval={1} />
+            <YAxis {...axis} tickFormatter={eurShort} width={52} />
+            <Tooltip content={<TaxaiTip lang={lang} />} />
+            <Legend {...lgd} />
+            <Line type="monotone" dataKey="glDebit" name={L("Debit Σ", "Debetas Σ")} stroke={CHT.rev} strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="glCredit" name={L("Credit Σ", "Kreditas Σ")} stroke={CHT.outV} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      {(sevAgg.length > 0 || supTop.length > 0) && <ChartCard title={L("Findings mix · supplier concentration", "Radinių sudėtis · tiekėjų koncentracija")} sub={L("left: engine findings by severity · right: top-5 payable balances", "kairėje: variklio radiniai pagal reikšmingumą · dešinėje: top-5 mokėtini likučiai")}>
+        <div style={{ display: "flex", height: "100%" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={sevAgg} dataKey="value" nameKey="name" innerRadius="52%" outerRadius="78%" paddingAngle={2} stroke="#0b0b0d">
+                  {sevAgg.map((s, i) => <Cell key={i} fill={CHT.sev[s.name] || "#888"} />)}
+                </Pie>
+                <Tooltip content={<TaxaiTip lang={lang} money={false} />} />
+                <Legend {...lgd} verticalAlign="bottom" />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ flex: 1.3, minWidth: 0 }}>
+            <ResponsiveContainer>
+              <BarChart data={supTop} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 0 }}>
+                <CartesianGrid stroke={CHT.grid} horizontal={false} />
+                <XAxis type="number" {...axis} tickFormatter={eurShort} />
+                <YAxis type="category" dataKey="name" {...axis} width={120} />
+                <Tooltip content={<TaxaiTip lang={lang} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                <Bar dataKey="value" name={L("Payable balance", "Mokėtinas likutis")} fill={CHT.pur} maxBarSize={14} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </ChartCard>}
+    </div>
+    {/* exact monthly figures */}
+    <div style={{ marginTop: 12, border: `1px solid ${PL_LINE}`, background: "var(--bg2)" }}>
+      <button onClick={() => setTableOpen((o) => !o)} style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".1em", padding: "11px 16px", cursor: "pointer" }}>{tableOpen ? "▾ " : "▸ "}{L("Exact monthly figures (12 × full ledger)", "Tikslūs mėnesio skaičiai (12 × visa knyga)")}</button>
+      {tableOpen && <div style={{ overflowX: "auto", padding: "0 8px 10px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--m)", fontSize: 10.5 }}>
+          <thead><tr>{[L("Month", "Mėnuo"), L("Revenue", "Pajamos"), L("Purchases", "Pirkimai"), L("Gross", "Rezultatas"), L("Cumulative", "Kaupiamasis"), L("Output VAT", "Pard. PVM"), L("Input VAT", "Pirk. PVM"), L("Net VAT", "Mokėtinas"), "SF↑", "SF↓", "GL", L("Pay in", "Įplaukos"), L("Pay out", "Išmokos")].map((h2, i) => <th key={i} style={{ textAlign: i ? "right" : "left", padding: "7px 9px", color: "#8c8c88", borderBottom: `1px solid ${PL_LINE}`, fontWeight: 600, whiteSpace: "nowrap" }}>{h2}</th>)}</tr></thead>
+          <tbody>
+            {data.map((r) => <tr key={r.ym}>
+              <td style={{ padding: "5px 9px", color: "#fff", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" }}>{r.ym}</td>
+              {[r.revenue, r.purchases, r.grossResult, r.cumResult, r.outputVat, r.inputVat, r.netVat].map((v, i) => <td key={i} style={{ padding: "5px 9px", textAlign: "right", color: i === 2 || i === 3 ? (v < 0 ? CHT.neg : CHT.gross) : "#d2d2ce", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{Number(v).toLocaleString()}</td>)}
+              {[r.salesCount, r.purchaseCount, r.glCount].map((v, i) => <td key={"c" + i} style={{ padding: "5px 9px", textAlign: "right", color: "#8c8c88", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{v}</td>)}
+              {[r.payIn, r.payOut].map((v, i) => <td key={"p" + i} style={{ padding: "5px 9px", textAlign: "right", color: "#d2d2ce", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{Number(v).toLocaleString()}</td>)}
+            </tr>)}
+            <tr>
+              <td style={{ padding: "7px 9px", color: "#fff", fontWeight: 700 }}>Σ</td>
+              {[ms.totals.revenue, ms.totals.purchases, ms.totals.grossResult, "", ms.totals.outputVat, ms.totals.inputVat, ms.totals.netVat].map((v, i) => <td key={i} style={{ padding: "7px 9px", textAlign: "right", color: "#fff", fontWeight: 700 }}>{v === "" ? "" : Number(v).toLocaleString()}</td>)}
+              {[ms.totals.salesCount, ms.totals.purchaseCount, ""].map((v, i) => <td key={"c" + i} style={{ padding: "7px 9px", textAlign: "right", color: "#fff", fontWeight: 700 }}>{v === "" ? "" : v}</td>)}
+              {[ms.totals.payIn, ms.totals.payOut].map((v, i) => <td key={"p" + i} style={{ padding: "7px 9px", textAlign: "right", color: "#fff", fontWeight: 700 }}>{Number(v).toLocaleString()}</td>)}
+            </tr>
+          </tbody>
+        </table>
+        <div style={{ fontSize: 9.5, color: "#7a7a76", fontFamily: "var(--s)", padding: "8px 9px 0", lineHeight: 1.5 }}>{ms.derivation}</div>
+      </div>}
+    </div>
+  </div>;
+}
+
+function KpiDashboard({ lang, kpis, sector, setSector, targets, setTarget, parsed, findings, supplierBalances }) {
   const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
   const L = (en, lt) => (lang === "lt" ? lt : en);
   const [editing, setEditing] = useState(null);
@@ -11721,6 +12156,9 @@ function KpiDashboard({ lang, kpis, sector, setSector, targets, setTarget }) {
         {L("Benchmark bands are illustrative baselines per sector and should be replaced with your own aggregated data; the value, median tick, and your target (▼) are shown on each gauge. Figures are accounting approximations — verify against the filed statements.",
            "Lyginimo diapazonai yra orientaciniai pagal sektorių ir turėtų būti pakeisti jūsų agreguotais duomenimis; reikšmė, medianos žyma ir jūsų tikslas (▼) rodomi kiekvienoje skalėje. Skaičiai yra apskaitos aproksimacijos — patikrinkite su pateiktomis ataskaitomis.")}
       </div>
+
+      {/* ── ADVANCED GRAPHICAL LAYER: real 12-month series from the file ── */}
+      <KpiAnalyticsBoard lang={lang} parsed={parsed} findings={findings} supplierBalances={supplierBalances} />
     </div>
   );
 }
@@ -12649,6 +13087,35 @@ function DefensibilityPanel({ verification, lang }) {
 // INTEGRATIONS TAB — ERP hub UI (Module 1)
 // gallery · connections · mapping studio · tax-code mapper · monitor · agent
 // ════════════════════════════════════════════════════════════════════
+// ─── INTEGRATION HUB: capability benchmark + end-to-end pipeline ────────
+// The benchmark lists THIS build's verifiable capabilities (counts come from
+// the live engine) against the typical scope of generalist global compliance
+// suites (Sovos-class). The comparison is categorical, not vendor-specific —
+// verify individual vendors before citing externally.
+const INTEGRATION_BENCH = (ctx) => [
+  { lt: "LT VMI SAF-T taisyklių gylis", en: "LT VMI SAF-T rule depth", ours: `${ctx.rules} ${ctx.LT ? "determinist. taisyklės (VA-49 katalogas + PP_LT)" : "deterministic rules (VA-49 catalogue + PP_LT)"}`, base: ctx.LT ? "XSD schema + bendriniai patikrinimai" : "XSD schema + generic checks", edge: true },
+  { lt: "Vietiniai tilteliai", en: "Local bridges", ours: "i.SAF ⇄ SAF-T · i.VAZ · FR0600 · SABIS B2G + Peppol BIS 3.0", base: ctx.LT ? "Peppol + dalis vietinių režimų" : "Peppol + a subset of local mandates", edge: true },
+  { lt: "Duomenų buvimo vieta", en: "Data residency", ours: ctx.LT ? "100 % naršyklėje — failas nepalieka įrenginio" : "100% in-browser — the file never leaves the device", base: ctx.LT ? "SaaS debesis (duomenys keliauja tiekėjui)" : "SaaS cloud (data travels to the vendor)", edge: true },
+  { lt: "Auto-taisymas", en: "Auto-fix", ours: ctx.LT ? "Teisinės ribos + kilmės manifestas + DK invarianto įrodymas" : "Legal guardrails + provenance manifest + GL-invariant proof", base: ctx.LT ? "Atmetimo pranešimai, taisoma rankomis" : "Rejection messages, manual correction", edge: true },
+  { lt: "ERP jungtys", en: "ERP connectors", ours: `${ctx.connectors} ${ctx.LT ? "sistemų katalogas · atvaizdavimo studija · PVM kodų žemėlapis" : "system catalogue · mapping studio · tax-code mapper"}`, base: ctx.LT ? "Platus katalogas (panašu)" : "Broad catalogue (comparable)", edge: false },
+  { lt: "AI sluoksnis", en: "AI layer", ours: ctx.LT ? "Pagrįstas faktais: kiekvienas sakinys tikrinamas verifyNarrative" : "Fact-grounded: every sentence checked by verifyNarrative", base: ctx.LT ? "Bendrinės santraukos arba nėra" : "Generic summaries or none", edge: true },
+  { lt: "Forensika", en: "Forensics", ours: ctx.LT ? "Benford · grafų analizė · temporal · subjektų rezoliucija — lokaliai" : "Benford · graph analysis · temporal · entity resolution — locally", base: ctx.LT ? "Nėra / atskiras produktas" : "Not included / separate product", edge: true },
+  { lt: "Kaina ir diegimas", en: "Cost & footprint", ours: ctx.LT ? "Vienas SPA failas, be serverio licencijų" : "Single SPA file, no server licences", base: ctx.LT ? "Įmonės licencija + diegimo projektas" : "Enterprise licence + implementation project", edge: true },
+];
+function erpPipelineStatus(erp, hasSaft, einvReady) {
+  const counts = ENTITY_KINDS.map((k) => (erp.store[k] || []).length);
+  const rows = counts.reduce((s, n) => s + n, 0);
+  const sev = { Block: 0, Reject: 0, Warn: 0 };
+  (erp.findings || []).forEach((f) => { if (sev[f.severity] != null) sev[f.severity]++; });
+  const stages = [
+    { id: "src", lt: "ERP šaltiniai", en: "ERP sources", value: erp.connections.length, unit: "conn", ok: erp.connections.length > 0 },
+    { id: "canon", lt: "Kanoninis modelis", en: "Canonical model", value: rows, unit: "rows", ok: rows > 0 },
+    { id: "validate", lt: "Ribinė patikra", en: "Boundary validation", value: (erp.findings || []).length, unit: "findings", ok: sev.Block === 0, sev },
+    { id: "out", lt: "Išvestys", en: "Outputs", value: (hasSaft ? 1 : 0) + (einvReady ? 1 : 0), unit: "ready", ok: sev.Block === 0 && rows > 0, detail: [hasSaft ? "SAF-T" : null, einvReady ? "e-Invoice" : null].filter(Boolean).join(" · ") || "—" },
+  ];
+  return { stages, sev, rows };
+}
+
 function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote, setToast, hasSaft }) {
   const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
   const lbl = { fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase" };
@@ -12746,9 +13213,9 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
 
   const [csvText, setCsvText] = useState("");
   const [csvMap, setCsvMap] = useState(null);
-  const [autoSync, setAutoSync] = useState(false);
-  useEffect(() => { if (!autoSync) return; const t2 = setInterval(() => { connections.forEach((c) => syncNow(c)); }, 60000); return () => clearInterval(t2); }, [autoSync, connections.length]);
-  const SUBS = [["gallery", LT ? "Katalogas" : "Gallery"], ["connections", LT ? "Jungtys" : "Connections"], ["mapping", LT ? "Atvaizdavimas" : "Mapping studio"], ["taxmap", LT ? "PVM kodai" : "Tax codes"], ["csv", "CSV"], ["monitor", LT ? "Stebėsena" : "Monitor"], ["agent", LT ? "Agentas / relė" : "Agent / relay"]];
+  const [autoSync, setAutoSync] = useState(0); // minutes; 0 = off
+  useEffect(() => { if (!autoSync) return; const t2 = setInterval(() => { connections.forEach((c) => syncNow(c)); }, autoSync * 60000); return () => clearInterval(t2); }, [autoSync, connections.length]);
+  const SUBS = [["gallery", LT ? "Katalogas" : "Gallery"], ["connections", LT ? "Jungtys" : "Connections"], ["pipeline", LT ? "Konvejeris · lyginamoji" : "Pipeline · Benchmark"], ["mapping", LT ? "Atvaizdavimas" : "Mapping studio"], ["taxmap", LT ? "PVM kodai" : "Tax codes"], ["csv", "CSV"], ["monitor", LT ? "Stebėsena" : "Monitor"], ["agent", LT ? "Agentas / relė" : "Agent / relay"]];
 
   return <div style={{ maxWidth: 1240 }}>
     <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
@@ -12764,7 +13231,11 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
 
     <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${PL_LINE}`, marginBottom: 18, flexWrap: "wrap" }}>
       {SUBS.map(([k, l]) => <button key={k} onClick={() => setSub(k)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${sub === k ? "#fff" : "transparent"}`, color: sub === k ? "#fff" : "#8c8c88", padding: "10px 16px", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", cursor: "pointer" }}>{l}{k === "connections" && connections.length ? ` (${connections.length})` : ""}{k === "monitor" && erp.findings.length ? ` (${erp.findings.length})` : ""}</button>)}
-      <label style={{ marginLeft: "auto", display: "flex", gap: 7, alignItems: "center", color: autoSync ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, cursor: "pointer", padding: "10px 4px" }}><input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />{LT ? "Auto-sync 60 s" : "Auto-sync 60s"}</label>
+      <label style={{ marginLeft: "auto", display: "flex", gap: 7, alignItems: "center", color: autoSync ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, padding: "10px 4px" }}>{LT ? "Auto-sync" : "Auto-sync"}
+        <select value={autoSync} onChange={(e) => setAutoSync(Number(e.target.value))} style={{ background: "#000", border: `1px solid ${PL_LINE}`, color: autoSync ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, padding: "4px 7px", cursor: "pointer" }}>
+          <option value={0}>{LT ? "išjungta" : "off"}</option><option value={1}>1 min</option><option value={5}>5 min</option><option value={15}>15 min</option>
+        </select>
+      </label>
     </div>
 
     {/* ── GALLERY ── */}
@@ -12829,6 +13300,66 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
     </div>}
 
     {/* ── MAPPING STUDIO ── */}
+    {sub === "pipeline" && (() => {
+      const einvReady = (erp.store.invoicesAR || []).length > 0;
+      const pipe = erpPipelineStatus(erp, hasSaft, einvReady);
+      const dq = computeDataQuality(erp.store);
+      const bench = INTEGRATION_BENCH({ LT, rules: AUDIT_RULES.length + STRUCTURAL_RULES.length + XSD_RULES.length + DUPLICATE_RULES.length + CLASSIFIER_RULES.length, connectors: ERP_CATALOG.length });
+      const stC = (s) => s.ok ? "#69db7c" : s.value > 0 ? "#ffd43b" : "#8c8c88";
+      return <div>
+        <Section title={LT ? "Konvejeris nuo ERP iki VMI (gyvi skaičiai)" : "End-to-end pipeline ERP → VMI (live figures)"} accent="#7cc4ff">
+          <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap" }}>
+            {pipe.stages.map((s, i) => <div key={s.id} style={{ display: "flex", alignItems: "center", flex: "1 1 200px" }}>
+              <div style={{ flex: 1, border: `1px solid ${stC(s)}`, background: `${stC(s)}0d`, padding: "14px 16px", minWidth: 170 }}>
+                <div style={{ fontSize: 9.5, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 6 }}>{i + 1} · {LT ? s.lt : s.en}</div>
+                <div style={{ fontSize: 26, fontWeight: 300, color: stC(s), fontFamily: "var(--f)", lineHeight: 1 }}>{s.value}<span style={{ fontSize: 11, color: "#8c8c88", marginLeft: 6, fontFamily: "var(--m)" }}>{s.unit}</span></div>
+                {s.sev && <div style={{ marginTop: 7, fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}><span style={{ color: "#ff6b6b" }}>B {s.sev.Block}</span> · <span style={{ color: "#ffa94d" }}>R {s.sev.Reject}</span> · <span style={{ color: "#ffd43b" }}>W {s.sev.Warn}</span></div>}
+                {s.detail && <div style={{ marginTop: 7, fontFamily: "var(--m)", fontSize: 10, color: "#d2d2ce" }}>{s.detail}</div>}
+              </div>
+              {i < pipe.stages.length - 1 && <span style={{ padding: "0 8px", color: "#8c8c88", fontSize: 18 }}>→</span>}
+            </div>)}
+          </div>
+          <div style={{ marginTop: 10, fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88" }}>{LT ? "Vartai į išvestis atsidaro tik kai blokuojančių (Block) radinių = 0 — tie patys varikliai kaip SAF-T audite." : "The output gate opens only when blocking findings = 0 — the same engines as the SAF-T audit."}{pipe.sev.Block === 0 && pipe.rows > 0 && onPromote ? "" : ""}</div>
+          {pipe.rows > 0 && <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+            <button onClick={onPromote} disabled={pipe.sev.Block > 0} style={{ ...bP, opacity: pipe.sev.Block > 0 ? 0.4 : 1 }} title={pipe.sev.Block > 0 ? (LT ? "Pašalinkite Block radinius" : "Clear Block findings first") : ""}>{LT ? "Generuoti SAF-T iš kanoninio →" : "Generate SAF-T from canonical →"}</button>
+          </div>}
+        </Section>
+        <Section title={LT ? "Duomenų kokybė pagal subjektą" : "Data quality by entity"}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10 }}>
+            {dq.entities.map((e) => <div key={e.label} style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg)", padding: "10px 12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#fff", fontWeight: 600 }}>{e.label}</span>
+                <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{e.rows} {LT ? "įr." : "rows"}</span>
+              </div>
+              <div style={{ height: 7, background: "rgba(255,255,255,0.06)" }}><div style={{ height: 7, width: `${e.completeness}%`, background: e.completeness >= 95 ? "#69db7c" : e.completeness >= 80 ? "#ffd43b" : "#ff8a8a", transition: "width .3s" }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5, fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88" }}>
+                <span>{LT ? "užpildymas" : "completeness"} {e.completeness}%</span>
+                <span title={LT ? "dažniausiai trūkstami laukai" : "most-missing fields"} style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.missing}</span>
+              </div>
+            </div>)}
+          </div>
+          <div style={{ marginTop: 8, fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88" }}>{LT ? "Dublikatai" : "Duplicates"}: <b style={{ color: dq.duplicates ? "#ffd43b" : "#69db7c" }}>{dq.duplicates}</b> · {LT ? "valiutos" : "currencies"}: {dq.currencies || "—"} · {LT ? "laikotarpis" : "date range"}: {dq.dateRange}</div>
+        </Section>
+        <Section title={LT ? "Galimybių lyginamoji: šis variklis ir „Sovos klasės“ platformos" : "Capability benchmark: this engine vs Sovos-class suites"} accent="#69db7c">
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--s)", fontSize: 12.5 }}>
+              <thead><tr>
+                <th style={{ textAlign: "left", padding: "8px 10px", color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em", borderBottom: `1px solid ${PL_LINE}` }}>{LT ? "Sritis" : "Capability"}</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", color: "#69db7c", fontFamily: "var(--m)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em", borderBottom: `1px solid ${PL_LINE}` }}>TAXAI Hub</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em", borderBottom: `1px solid ${PL_LINE}` }}>{LT ? "Tipinė globali platforma" : "Typical global suite"}</th>
+              </tr></thead>
+              <tbody>{bench.map((r, i) => <tr key={i}>
+                <td style={{ padding: "8px 10px", color: "#fff", borderBottom: "1px solid rgba(255,255,255,0.06)", fontFamily: "var(--m)", fontSize: 11.5, whiteSpace: "nowrap" }}>{LT ? r.lt : r.en}</td>
+                <td style={{ padding: "8px 10px", color: "#d2d2ce", borderBottom: "1px solid rgba(255,255,255,0.06)", lineHeight: 1.5 }}>{r.edge ? <span style={{ color: "#69db7c", marginRight: 6 }}>◆</span> : <span style={{ color: "#8c8c88", marginRight: 6 }}>·</span>}{r.ours}</td>
+                <td style={{ padding: "8px 10px", color: "#8c8c88", borderBottom: "1px solid rgba(255,255,255,0.06)", lineHeight: 1.5 }}>{r.base}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 10.5, color: "#7a7a76", fontFamily: "var(--s)", lineHeight: 1.55 }}>{LT ? "◆ — šio variklio pranašumas. Lyginimas kategorinis (gyvi skaičiai — iš šio kodo; „tipinė platforma“ — bendrinė Sovos klasės apimtis pagal viešus produktų aprašus). Prieš viešą citavimą patikrinkite konkretų tiekėją." : "◆ — this engine's edge. The comparison is categorical (live numbers come from this code; the “typical suite” column reflects generic Sovos-class scope from public product descriptions). Verify any specific vendor before citing externally."}</div>
+        </Section>
+      </div>;
+    })()}
+
     {sub === "mapping" && <div>
       {!connections.length ? <Section title="Mapping studio"><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13.5 }}>{LT ? "Pirma prijunkite bent vieną sistemą." : "Connect at least one system first."}</div></Section> : <div>
         <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -13319,6 +13850,7 @@ function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData,
 
   const liveOut = einv.outbox.filter((e) => e.state !== "REJECTED");
   const vida = useMemo(() => computeVidaReadiness(einv.profile, einv.settings, { outbox: einv.outbox, archive: einv.archive }), [einv.outbox, einv.archive, einv.profile, einv.settings]);
+  const ana = useMemo(() => computeEinvAnalytics(einv, H.today), [einv.outbox, einv.inbox, H.today]);
   const T_draft = draft ? computeEinvTotals(draft) : null;
   const norm = (s) => String(s || "").trim().toUpperCase();
   const downloadText = (txt2, name) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([txt2], { type: "application/xml" })); a.download = name; a.click(); };
@@ -13449,6 +13981,61 @@ function EInvoicingTab({ lang, t, audit, einv, setEinv, erp, fileData, isafData,
         {(() => { const gaps = detectSeqGaps(einv.outbox); return gaps.length ? <span title={gaps.map((g) => `${g.series}: ${g.missing.join(",")}`).join(" · ")} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#ffd43b", border: "1px solid rgba(255,212,59,.4)", padding: "5px 10px", cursor: "help" }}>⚠ {LT ? "Numeracijos spragos" : "Sequence gaps"}: {gaps.map((g) => `${g.series}…×${g.missing.length}`).join(", ")}</span> : liveOut.length ? <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#69db7c" }}>✓ {LT ? "Numeracija be spragų (PVMĮ)" : "Gapless numbering (PVMĮ)"}</span> : null; })()}
       </div>
 
+      {/* ── ANALYTICS — 12 months · lifecycle · ageing ── */}
+      {einv.outbox.length > 0 && <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ ...lbl }}>{LT ? "Analitika — 12 mėnesių" : "Analytics — 12 months"}</span>
+          <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#7cc4ff", border: "1px solid rgba(124,196,255,0.4)", padding: "2px 8px" }}>{ana.window.from} → {ana.window.to}</span>
+          {ana.totals.avgDeliveryH != null && <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{LT ? "vid. išrašymas→pristatymas" : "avg issue→delivery"}: {ana.totals.avgDeliveryH} h</span>}
+          {ana.totals.overdueN > 0 && <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#ff8a8a", border: "1px solid rgba(255,107,107,0.45)", padding: "2px 8px" }}>{LT ? "pradelsta" : "overdue"}: {ana.totals.overdueN} · €{ana.totals.overdueV.toLocaleString()}</span>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(380px,1fr))", gap: 12 }}>
+          <ChartCard title={LT ? "Išrašyta vertė pagal mėnesį ir būseną" : "Issued value by month and state"} sub={LT ? "Σ taxInc pagal realią išrašymo datą — priimta / laukiama / atmesta" : "Σ taxInc by real issue date — accepted / pending / rejected"} h={210}>
+            <ResponsiveContainer>
+              <ComposedChart data={ana.months.map((r) => ({ ...r, name: monthLabel(r.ym, lang) }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke="rgba(255,255,255,0.07)" vertical={false} />
+                <XAxis dataKey="name" stroke="#8c8c88" fontSize={10} fontFamily="var(--m)" tickLine={false} axisLine={{ stroke: "rgba(255,255,255,0.07)" }} interval={1} />
+                <YAxis stroke="#8c8c88" fontSize={10} fontFamily="var(--m)" tickLine={false} axisLine={{ stroke: "rgba(255,255,255,0.07)" }} tickFormatter={eurShort} width={48} />
+                <Tooltip content={<TaxaiTip lang={lang} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                <Legend wrapperStyle={{ fontSize: 10, fontFamily: "var(--m)" }} />
+                <Bar dataKey="acceptedV" name={LT ? "Priimta/pristatyta" : "Accepted/delivered"} stackId="s" fill="#69db7c" maxBarSize={24} />
+                <Bar dataKey="pendingV" name={LT ? "Kelyje" : "In flight"} stackId="s" fill="#ffd43b" maxBarSize={24} />
+                <Bar dataKey="rejectedV" name={LT ? "Atmesta" : "Rejected"} stackId="s" fill="#ff6b6b" maxBarSize={24} />
+                <Line type="monotone" dataKey="inboundV" name={LT ? "Gauta (AP)" : "Inbound (AP)"} stroke="#74c0fc" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartCard>
+          <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "14px 16px" }}>
+            <div style={{ ...lbl, fontSize: 10, marginBottom: 10 }}>{LT ? "Gyvavimo ciklo piltuvas" : "Lifecycle funnel"}</div>
+            {(() => { const max = Math.max(1, ...ana.funnel.map((f) => f.n)); return ana.funnel.map((f, i) => <div key={f.state} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
+              <span style={{ fontFamily: "var(--m)", fontSize: 10, color: STC(f.state), width: 92, letterSpacing: ".04em" }}>{f.state}</span>
+              <div style={{ flex: 1, height: 16, background: "rgba(255,255,255,0.05)" }}><div style={{ height: 16, width: `${Math.round(100 * f.n / max)}%`, background: STC(f.state), opacity: 0.85, transition: "width .3s" }} /></div>
+              <span style={{ fontFamily: "var(--m)", fontSize: 11.5, color: "#fff", width: 56, textAlign: "right" }}>{f.n}{i > 0 && ana.funnel[i - 1].n > 0 ? <span style={{ color: "#8c8c88", fontSize: 9 }}> ({Math.round(100 * f.n / ana.funnel[i - 1].n)}%)</span> : null}</span>
+            </div>); })()}
+            <div style={{ marginTop: 12, ...lbl, fontSize: 10, marginBottom: 6 }}>{LT ? "Maršrutų pasiskirstymas" : "Route mix"}</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {ana.routeMix.map((r) => <span key={r.name} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: r.name === "SABIS" ? "#ffd43b" : r.name === "PEPPOL" ? "#69db7c" : "#74c0fc", border: `1px solid ${PL_LINE}`, padding: "4px 10px" }}>{r.name}: <b style={{ color: "#fff" }}>{r.value}</b></span>)}
+              {!ana.routeMix.length && <span style={{ fontFamily: "var(--s)", fontSize: 12, color: "#8c8c88" }}>—</span>}
+            </div>
+          </div>
+          {ana.overdue.length > 0 && <div style={{ border: "1px solid rgba(255,107,107,0.4)", background: "rgba(255,107,107,0.04)", padding: "14px 16px", gridColumn: "1 / -1" }}>
+            <div style={{ ...lbl, fontSize: 10, color: "#ff8a8a", marginBottom: 8 }}>{LT ? "Pradelstos gautinos sumos (pagal DueDate)" : "Overdue receivables (by DueDate)"}</div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--m)", fontSize: 11 }}>
+                <thead><tr>{[LT ? "Nr." : "No.", LT ? "Pirkėjas" : "Buyer", LT ? "Terminas" : "Due", LT ? "Vėluoja d." : "Days late", "€", LT ? "Būsena" : "State"].map((h2, i) => <th key={i} style={{ textAlign: i >= 3 ? "right" : "left", padding: "5px 9px", color: "#8c8c88", borderBottom: `1px solid ${PL_LINE}`, fontWeight: 600 }}>{h2}</th>)}</tr></thead>
+                <tbody>{ana.overdue.map((r) => <tr key={r.no}>
+                  <td style={{ padding: "4px 9px", color: "#fff" }}>{r.no}</td>
+                  <td style={{ padding: "4px 9px", color: "#d2d2ce" }}>{r.buyer}</td>
+                  <td style={{ padding: "4px 9px", color: "#8c8c88" }}>{r.due}</td>
+                  <td style={{ padding: "4px 9px", textAlign: "right", color: r.days > 30 ? "#ff6b6b" : "#ffd43b", fontWeight: 700 }}>{r.days}</td>
+                  <td style={{ padding: "4px 9px", textAlign: "right", color: "#fff" }}>{r.value.toLocaleString()}</td>
+                  <td style={{ padding: "4px 9px", textAlign: "right" }}><Chip c={STC(r.state)}>{r.state}</Chip></td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+          </div>}
+        </div>
+      </div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
         <Section title={LT ? "Atitikties patikra (fixtures)" : "Conformance check (fixtures)"}>
@@ -13746,6 +14333,7 @@ function TAXAI({ onExit, initialView } = {}) {
   const [fixSel, setFixSel] = useState({});         // fixer id → enabled
   const [fixBusy, setFixBusy] = useState(false);
   const [fixResult, setFixResult] = useState(null); // {manifest, xml, before, after}
+  const [fixAck, setFixAck] = useState(false);      // legal confirmation for review-class fixes
   const fixDocRef = useRef(null);
   const [userRules, setUserRules] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_user_rules") || "[]"); } catch { return []; } });
   const saveUserRules = useCallback((next) => { setUserRules(next); try { localStorage.setItem("taxai_user_rules", JSON.stringify(next)); } catch (e) { /* private mode */ } }, []);
@@ -13760,9 +14348,39 @@ function TAXAI({ onExit, initialView } = {}) {
   const [eaInd, setEaInd] = useState("auto");         // E-Audit industry pack
   const [eaSample, setEaSample] = useState(null);
   const [eaNarr, setEaNarr] = useState("");
-  const [sevFilter, setSevFilter] = useState(null);  // findings list: severity toggle
-  const [findQ, setFindQ] = useState("");            // findings list: text search
-  const findingVisible = useCallback((f) => (!sevFilter || f.severity === sevFilter) && (!findQ.trim() || cpNorm([f.rule_id, f.title, f.detail, f.category].join(" ")).includes(cpNorm(findQ))), [sevFilter, findQ]);
+  // ── Smart filtration: multi-facet, token-aware, risk-sorted ──
+  // q supports plain text plus tokens →  rule:SAFT_SAL  cat:VAT  sev:critical  fix:yes  type:b
+  const FF_DEFAULT = useMemo(() => ({ sev: [], cats: [], types: [], fixable: false, status: "all", q: "", sort: "sev" }), []);
+  const [fFilters, setFFilters] = useState(FF_DEFAULT);
+  const setFF = useCallback((patch) => setFFilters((p) => ({ ...p, ...patch })), []);
+  const ffActive = fFilters.sev.length || fFilters.cats.length || fFilters.types.length || fFilters.fixable || fFilters.status !== "all" || fFilters.q.trim();
+  const findingVisible = useCallback((f) => {
+    const F = fFilters;
+    if (F.sev.length && !F.sev.includes(f.severity)) return false;
+    if (F.cats.length && !F.cats.includes(f.category)) return false;
+    if (F.types.length && !F.types.includes(f.typeName || f.type || "—")) return false;
+    if (F.fixable && !isAutoFixableRule(f.rule_id)) return false;
+    if (F.status !== "all" && f.status !== F.status) return false;
+    const raw = F.q.trim();
+    if (raw) {
+      const toks = raw.split(/\s+/);
+      const hay = cpNorm([f.rule_id, f.title, f.detail, f.category, f.typeName].join(" "));
+      for (const tk of toks) {
+        const m = tk.match(/^(rule|cat|sev|fix|type):(.*)$/i);
+        if (m) {
+          const k = m[1].toLowerCase(), v = cpNorm(m[2]);
+          if (!v) continue;
+          if (k === "rule" && !cpNorm(f.rule_id || "").includes(v)) return false;
+          if (k === "cat" && !cpNorm(f.category || "").includes(v)) return false;
+          if (k === "sev" && !cpNorm(f.severity || "").startsWith(v)) return false;
+          if (k === "type" && !cpNorm((f.typeName || f.type || "")).includes(v)) return false;
+          if (k === "fix" && (v.startsWith("y") || v === "1") !== isAutoFixableRule(f.rule_id)) return false;
+        } else if (!hay.includes(cpNorm(tk))) return false;
+      }
+    }
+    return true;
+  }, [fFilters]);
+  const SEV_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
   const [findingNotes, setFindingNotes] = useState(() => { try { return JSON.parse(localStorage.getItem("taxai_finding_notes") || "{}"); } catch { return {}; } });
   const setFindingNote = useCallback((key, patch) => setFindingNotes((m) => {
     const next = { ...m, [key]: { ...(m[key] || {}), ...patch, updatedAt: new Date().toISOString() } };
@@ -13873,6 +14491,19 @@ function TAXAI({ onExit, initialView } = {}) {
     return base.concat(extra);
   }, [runResult, overrides, userRules, fileData, lang]);
 
+  // Filtered + sorted view over findings (smart filtration bar drives this).
+  const visibleFindings = useMemo(() => {
+    const list = findings.filter(findingVisible);
+    const w = (f) => { try { return ruleRiskWeight(f.rule_id, f.severityUi || f.severity); } catch { return 0; } };
+    const cmp = {
+      sev:  (a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || w(b) - w(a),
+      risk: (a, b) => w(b) - w(a) || (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9),
+      rule: (a, b) => String(a.rule_id || "").localeCompare(String(b.rule_id || "")),
+      cat:  (a, b) => String(a.category || "").localeCompare(String(b.category || "")) || (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9),
+    }[fFilters.sort] || (() => 0);
+    return [...list].sort(cmp);
+  }, [findings, findingVisible, fFilters.sort]);
+
   useEffect(() => { chatRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
   useEffect(() => { try { installTaxAISdk(); } catch (e) { /* SDK optional */ } }, []);
 
@@ -13885,7 +14516,7 @@ function TAXAI({ onExit, initialView } = {}) {
     setEnterpriseResult(null); setEnterpriseKpis(null); setIntel(null);
     setThreatResult(null); setRunResult(null); setOverrides({}); setPersonalRules(null); setSelectedFinding(null);
     setIsafData(null); setIsafFileName(""); setReconResult(null);
-    setFixPlan(null); setFixSel({}); setFixResult(null); fixDocRef.current = null; setSevFilter(null); setFindQ(""); setEaResult(null); setEaSample(null); setEaNarr("");
+    setFixPlan(null); setFixSel({}); setFixResult(null); setFixAck(false); fixDocRef.current = null; setFFilters(FF_DEFAULT); setEaResult(null); setEaSample(null); setEaNarr("");
     const result = runAllRules(parsed);
     setFileData({ type: "xml", parsed, raw, hash: hash || "" });
     setRunResult(result);
@@ -14674,14 +15305,60 @@ function TAXAI({ onExit, initialView } = {}) {
                 </div>}
 
                 {findings.length > 0 && <div style={{ marginBottom: 24 }}>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-                    {["Critical", "High", "Medium", "Low"].map(s => { const c = findings.filter(f => f.severity === s).length; return c > 0 ? <button key={s} onClick={() => setSevFilter(p => p === s ? null : s)} aria-pressed={sevFilter === s} title={lang === "lt" ? "Filtruoti pagal reikšmingumą" : "Filter by severity"} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 14px", border: `1px solid ${SC(s)}`, fontSize: 12, fontWeight: 600, color: sevFilter === s ? "#000" : SC(s), background: sevFilter === s ? SC(s) : "transparent", fontFamily: "var(--m)", letterSpacing: ".04em", cursor: "pointer", transition: "all .15s" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: sevFilter === s ? "#000" : SC(s) }} />{lang === "lt" ? t[s.toLowerCase()] : s}: {c}</button> : null; })}
-                    <div style={{ flex: 1 }} />
-                    <input value={findQ} onChange={(e) => setFindQ(e.target.value)} placeholder={lang === "lt" ? "Ieškoti radiniuose…" : "Search findings…"} aria-label={lang === "lt" ? "Radinių paieška" : "Search findings"} style={{ minWidth: 240, background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 11.5, padding: "7px 12px", outline: "none" }} />
-                    {(sevFilter || findQ.trim()) && <button onClick={() => { setSevFilter(null); setFindQ(""); }} style={{ background: "transparent", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, padding: "6px 12px", cursor: "pointer" }}>✕ {lang === "lt" ? "Valyti" : "Clear"}</button>}
-                    {(sevFilter || findQ.trim()) && <span style={{ alignSelf: "center", fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88" }}>{(() => { const n = findings.filter(findingVisible).length; return lang === "lt" ? `rodoma ${n} iš ${findings.length}` : `showing ${n} of ${findings.length}`; })()}</span>}
-                  </div>
-                  {findings.filter(findingVisible).map((f, i) => { const fk = findingKey(f); const fnote = findingNotes[fk]; const disp = fnote?.disposition;
+                  {(() => {
+                    const catList = [...new Set(findings.map((f) => f.category).filter(Boolean))].sort();
+                    const typeList = [...new Set(findings.map((f) => f.typeName || f.type || "—"))].sort();
+                    const fixableCount = findings.filter((f) => isAutoFixableRule(f.rule_id)).length;
+                    const tIn = (arr, v) => arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
+                    const PRESETS = [
+                      { lt: "Blokuoja pateikimą", en: "Submission blockers", apply: () => setFFilters({ ...FF_DEFAULT, sev: ["Critical"], sort: "risk" }) },
+                      { lt: "Auto-taisoma", en: "Auto-fixable", apply: () => setFFilters({ ...FF_DEFAULT, fixable: true, sort: "sev" }) },
+                      { lt: "PVM", en: "VAT", apply: () => setFFilters({ ...FF_DEFAULT, q: "cat:pvm", sort: "risk" }) },
+                      { lt: "Neišspręsta", en: "Open only", apply: () => setFFilters({ ...FF_DEFAULT, status: "open", sort: "sev" }) },
+                    ];
+                    const selStyle = { background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 10.5, padding: "6px 9px", cursor: "pointer", maxWidth: 190 };
+                    return <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "12px 14px", marginBottom: 14 }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <span style={{ fontSize: 9, fontFamily: "var(--m)", letterSpacing: ".12em", color: "#8c8c88", textTransform: "uppercase" }}>{lang === "lt" ? "Išmanus filtras" : "Smart filter"}</span>
+                        {["Critical", "High", "Medium", "Low"].map((s) => { const c = findings.filter((f) => f.severity === s).length; const on = fFilters.sev.includes(s); return c > 0 ? <button key={s} onClick={() => setFF({ sev: tIn(fFilters.sev, s) })} aria-pressed={on} style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 12px", border: `1px solid ${SC(s)}`, fontSize: 11.5, fontWeight: 600, color: on ? "#000" : SC(s), background: on ? SC(s) : "transparent", fontFamily: "var(--m)", letterSpacing: ".04em", cursor: "pointer", transition: "all .15s" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? "#000" : SC(s) }} />{lang === "lt" ? t[s.toLowerCase()] : s}: {c}</button> : null; })}
+                        <select value="" onChange={(e) => { if (e.target.value) setFF({ cats: tIn(fFilters.cats, e.target.value) }); e.target.value = ""; }} style={selStyle} aria-label={lang === "lt" ? "Kategorija" : "Category"}>
+                          <option value="">{lang === "lt" ? "+ Kategorija" : "+ Category"} ({catList.length})</option>
+                          {catList.map((c) => <option key={c} value={c}>{fFilters.cats.includes(c) ? "✓ " : ""}{c}</option>)}
+                        </select>
+                        <select value="" onChange={(e) => { if (e.target.value) setFF({ types: tIn(fFilters.types, e.target.value) }); e.target.value = ""; }} style={selStyle} aria-label={lang === "lt" ? "Tipas" : "Type"}>
+                          <option value="">{lang === "lt" ? "+ Tipas" : "+ Type"}</option>
+                          {typeList.map((c) => <option key={c} value={c}>{fFilters.types.includes(c) ? "✓ " : ""}{c}</option>)}
+                        </select>
+                        {fixableCount > 0 && <button onClick={() => setFF({ fixable: !fFilters.fixable })} aria-pressed={fFilters.fixable} style={{ padding: "5px 12px", border: "1px solid #7cc4ff", fontSize: 10.5, fontWeight: 600, color: fFilters.fixable ? "#000" : "#7cc4ff", background: fFilters.fixable ? "#7cc4ff" : "transparent", fontFamily: "var(--m)", cursor: "pointer" }}>⚙ {lang === "lt" ? "Auto-taisoma" : "Auto-fixable"}: {fixableCount}</button>}
+                        <select value={fFilters.status} onChange={(e) => setFF({ status: e.target.value })} style={selStyle} aria-label={lang === "lt" ? "Būsena" : "Status"}>
+                          <option value="all">{lang === "lt" ? "Būsena: visos" : "Status: all"}</option>
+                          <option value="open">{lang === "lt" ? "Neišspręsta" : "Open"}</option>
+                          <option value="accepted">{lang === "lt" ? "Priimta" : "Accepted"}</option>
+                          <option value="rejected">{lang === "lt" ? "Atmesta" : "Rejected"}</option>
+                        </select>
+                        <select value={fFilters.sort} onChange={(e) => setFF({ sort: e.target.value })} style={selStyle} aria-label={lang === "lt" ? "Rikiavimas" : "Sort"}>
+                          <option value="sev">{lang === "lt" ? "Rikiuoti: reikšmingumas" : "Sort: severity"}</option>
+                          <option value="risk">{lang === "lt" ? "Rikiuoti: VMI rizika" : "Sort: VMI risk"}</option>
+                          <option value="rule">{lang === "lt" ? "Rikiuoti: taisyklė" : "Sort: rule"}</option>
+                          <option value="cat">{lang === "lt" ? "Rikiuoti: kategorija" : "Sort: category"}</option>
+                        </select>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+                        <input value={fFilters.q} onChange={(e) => setFF({ q: e.target.value })} placeholder={lang === "lt" ? "Ieškoti… (žymos: rule:SAFT_SAL cat:pvm sev:crit fix:yes)" : "Search… (tokens: rule:SAFT_SAL cat:vat sev:crit fix:yes)"} aria-label={lang === "lt" ? "Radinių paieška" : "Search findings"} style={{ flex: 1, minWidth: 260, background: "#000", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontSize: 11.5, padding: "7px 12px", outline: "none" }} />
+                        {PRESETS.map((p, i) => <button key={i} onClick={p.apply} style={{ background: "transparent", border: `1px dashed rgba(124,196,255,0.45)`, color: "#7cc4ff", fontFamily: "var(--m)", fontSize: 9.5, fontWeight: 600, padding: "6px 10px", cursor: "pointer", textTransform: "uppercase", letterSpacing: ".05em" }}>{lang === "lt" ? p.lt : p.en}</button>)}
+                        {ffActive && <button onClick={() => setFFilters(FF_DEFAULT)} style={{ background: "transparent", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, padding: "6px 12px", cursor: "pointer" }}>✕ {lang === "lt" ? "Valyti" : "Clear"}</button>}
+                      </div>
+                      {(fFilters.cats.length > 0 || fFilters.types.length > 0) && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                        {fFilters.cats.map((c) => <button key={"c" + c} onClick={() => setFF({ cats: tIn(fFilters.cats, c) })} style={{ background: "rgba(255,255,255,0.08)", border: `1px solid ${PL_LINE}`, color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 10, padding: "3px 9px", cursor: "pointer" }}>{c} ✕</button>)}
+                        {fFilters.types.map((c) => <button key={"t" + c} onClick={() => setFF({ types: tIn(fFilters.types, c) })} style={{ background: "rgba(255,255,255,0.08)", border: `1px solid ${PL_LINE}`, color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 10, padding: "3px 9px", cursor: "pointer" }}>{c} ✕</button>)}
+                      </div>}
+                      <div style={{ marginTop: 8, fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88" }}>
+                        {lang === "lt" ? `rodoma ${visibleFindings.length} iš ${findings.length}` : `showing ${visibleFindings.length} of ${findings.length}`}
+                        {ffActive && (() => { const sevAgg = { Critical: 0, High: 0, Medium: 0, Low: 0 }; visibleFindings.forEach((f) => { if (sevAgg[f.severity] != null) sevAgg[f.severity]++; }); return <span> · C {sevAgg.Critical} / H {sevAgg.High} / M {sevAgg.Medium} / L {sevAgg.Low}</span>; })()}
+                      </div>
+                    </div>;
+                  })()}
+                  {visibleFindings.map((f, i) => { const fk = findingKey(f); const fnote = findingNotes[fk]; const disp = fnote?.disposition;
                   return <div key={i} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedFinding(f); audit.log("FINDING_OPENED", f.rule_id || f.title); } }} onClick={() => { setSelectedFinding(f); audit.log("FINDING_OPENED", f.rule_id || f.title); }} title={lang === "lt" ? "Atidaryti radinį" : "Open finding"} style={{ display: "flex", gap: 14, padding: "16px 18px", background: "var(--bg2)", borderLeft: `2px solid ${SC(f.severity)}`, border: `1px solid ${PL_LINE}`, borderLeftWidth: 2, marginBottom: 8, opacity: f.status === "rejected" ? 0.4 : 1, cursor: "pointer", transition: "border-color .15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.32)"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
@@ -15078,17 +15755,19 @@ function TAXAI({ onExit, initialView } = {}) {
                     };
                     const applyNow = () => {
                       try {
-                        const chosen = fixPlan.filter((p) => p.changes.length && fixSel[p.id]);
+                        const guardA = autoFixGuardrails(fixPlan.filter((p) => p.changes.length));
+                        const chosen = fixPlan.filter((p) => p.changes.length && fixSel[p.id] && guardA.perPlan[p.id]?.verdict !== "blocked");
                         const gateB = simulateAcceptanceGate(fileData?.parsed, findings); const riskB = computeRiskScore(findings);
                         const manifest = applyAutoFixes(fixDocRef.current, chosen);
                         const xml = serializeSaftDoc(fixDocRef.current);
                         const afterParsed = parseSAFTFull(xml);
                         const afterRun = runAllRules(afterParsed);
                         const af = afterRun.findings || [];
-                        setFixResult({ manifest, xml, afterParsed,
+                        const proof = autoFixInvariantProof(fileData?.parsed, afterParsed);
+                        setFixResult({ manifest, xml, afterParsed, proof, legalNote: guardA.legalNote,
                           before: { n: findings.length, risk: riskB.score, gate: gateB },
                           after: { n: af.length, risk: computeRiskScore(af).score, gate: simulateAcceptanceGate(afterParsed, af) } });
-                        audit.log("AUTOFIX_APPLIED", manifest.length + " corrections (" + chosen.map((p) => p.id).join(", ") + ")");
+                        audit.log("AUTOFIX_APPLIED", manifest.length + " corrections (" + chosen.map((p) => p.id).join(", ") + ") · GL-lines invariant " + (proof.linesUntouched ? "HELD" : "CHANGED"));
                       } catch (ex) { setToast("Auto-fix error: " + String(ex && ex.message || ex).slice(0, 120)); }
                     };
                     if (!fixPlan && !fixBusy) planNow();
@@ -15097,25 +15776,44 @@ function TAXAI({ onExit, initialView } = {}) {
                     if (fixPlan.unavailable) return <div style={{ color: "#ffd43b", fontFamily: "var(--s)", fontSize: 13 }}>{fixPlan.unavailable}</div>;
                     const groups = [["safe", lang === "lt" ? "Saugios pataisos (forma / išvestinės sumos)" : "Safe fixes (form / derived values)", "#69db7c"], ["suggest", lang === "lt" ? "Siūlomos pataisos (patvirtinkite)" : "Suggested fixes (confirm)", "#ffd43b"]];
                     const active = fixPlan.filter((p) => p.changes.length);
-                    const selCount = active.filter((p) => fixSel[p.id]).reduce((s, p) => s + p.changes.length, 0);
+                    const guard = autoFixGuardrails(active);
+                    const selPlans = active.filter((p) => fixSel[p.id] && guard.perPlan[p.id]?.verdict !== "blocked");
+                    const selCount = selPlans.reduce((s, p) => s + p.changes.length, 0);
+                    const needsAck = selPlans.some((p) => guard.perPlan[p.id]?.needsReview);
+                    const BV = { form: { lt: "FORMA", en: "FORM", c: "#69db7c" }, derived: { lt: "IŠVESTINĖ", en: "DERIVED", c: "#7cc4ff" }, removal: { lt: "DUBLIKATAI", en: "DEDUP", c: "#ffd43b" } };
                     return <>
+                      <div style={{ border: "1px solid rgba(124,196,255,0.35)", background: "rgba(124,196,255,0.05)", padding: "12px 16px", marginBottom: 14 }}>
+                        <div style={{ fontSize: 9.5, fontFamily: "var(--m)", letterSpacing: ".12em", color: "#7cc4ff", textTransform: "uppercase", marginBottom: 6 }}>§ {lang === "lt" ? "Teisinės ribos" : "Legal boundaries"} · {lang === "lt" ? "Finansinės apskaitos įst. 12 str. · MAĮ 134 str." : "Financial Accounting Law art. 12 · MAĮ art. 134"}</div>
+                        <div style={{ fontSize: 12, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6 }}>{lang === "lt" ? guard.legalNote.lt : guard.legalNote.en}</div>
+                      </div>
                       {!active.length && <div style={{ color: "#69db7c", fontFamily: "var(--s)", fontSize: 13 }}>{lang === "lt" ? "Automatiškai taisytinų radinių nėra — likę radiniai reikalauja sprendimo šaltinio sistemoje." : "Nothing auto-fixable — remaining findings need decisions in the source system."}</div>}
                       {groups.map(([key, label, col]) => { const list = active.filter((p) => p.safety === key); return !list.length ? null : <div key={key} style={{ marginBottom: 16 }}>
                         <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: col, textTransform: "uppercase", marginBottom: 8 }}>{label} · {list.reduce((s, p) => s + p.changes.length, 0)}</div>
-                        {list.map((p) => <div key={p.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", padding: "8px 2px" }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontFamily: "var(--m)", fontSize: 12.5, color: "#fff" }}>
-                            <input type="checkbox" checked={!!fixSel[p.id]} onChange={(e) => setFixSel((s) => ({ ...s, [p.id]: e.target.checked }))} />
-                            <span style={{ flex: 1 }}>{lang === "lt" ? p.titleLt : p.titleEn}</span>
+                        {list.map((p) => { const g = guard.perPlan[p.id] || {}; const bv = BV[g.boundary] || BV.form; return <div key={p.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", padding: "8px 2px" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontFamily: "var(--m)", fontSize: 12.5, color: "#fff", flexWrap: "wrap" }}>
+                            <input type="checkbox" checked={!!fixSel[p.id] && g.verdict !== "blocked"} disabled={g.verdict === "blocked"} onChange={(e) => setFixSel((s) => ({ ...s, [p.id]: e.target.checked }))} />
+                            <span style={{ flex: 1, minWidth: 200 }}>{lang === "lt" ? p.titleLt : p.titleEn}</span>
+                            <span title={lang === "lt" ? g.basisLt : g.basisEn} style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".08em", color: bv.c, border: `1px solid ${bv.c}`, padding: "2px 7px", cursor: "help" }}>{lang === "lt" ? bv.lt : bv.en}</span>
+                            {g.numericChanges > 0 && <span style={{ fontSize: 9.5, color: g.maxAbs > 100 ? "#ffd43b" : "#8c8c88" }} title={lang === "lt" ? "Σ|Δ| perskaičiuotų reikšmių; maks. vieno pakeitimo Δ" : "Σ|Δ| of recomputed values; max single-change Δ"}>Δ €{g.delta.toLocaleString()} · max €{g.maxAbs.toLocaleString()}</span>}
+                            {g.verdict === "review" && <span style={{ fontSize: 8.5, fontWeight: 700, color: "#ffd43b", border: "1px solid #ffd43b", padding: "2px 7px", letterSpacing: ".06em" }}>{lang === "lt" ? "REIKIA PATVIRTINTI" : "NEEDS CONFIRM"}</span>}
+                            {g.verdict === "blocked" && <span style={{ fontSize: 8.5, fontWeight: 700, color: "#ff6b6b", border: "1px solid #ff6b6b", padding: "2px 7px", letterSpacing: ".06em" }} title={(g.blocked || []).join(", ")}>{lang === "lt" ? "UŽBLOKUOTA (apsaugotas laukas)" : "BLOCKED (protected field)"}</span>}
                             <span style={{ color: "#8c8c88" }}>×{p.changes.length}</span>
                           </label>
+                          <div style={{ marginLeft: 26, marginTop: 3, fontSize: 10, color: "#7a7a76", fontFamily: "var(--s)" }}>§ {lang === "lt" ? g.basisLt : g.basisEn}</div>
                           <details style={{ marginLeft: 26, marginTop: 4 }}>
                             <summary style={{ fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", cursor: "pointer" }}>{lang === "lt" ? "peržiūrėti pakeitimus" : "preview changes"}</summary>
                             {p.changes.slice(0, 5).map((c, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#bcbcb8", padding: "3px 0" }}>{c.label}: <span style={{ color: "#ff8a8a" }}>{String(c.before).slice(0, 40)}</span> → <span style={{ color: "#69db7c" }}>{c.kind === "remove" ? (lang === "lt" ? "(pašalinama)" : "(removed)") : c.value}</span></div>)}
                             {p.changes.length > 5 && <div style={{ fontFamily: "var(--m)", fontSize: 10, color: "#666" }}>+{p.changes.length - 5}</div>}
                           </details>
-                        </div>)}
+                        </div>; })}
                       </div>; })}
-                      {active.length > 0 && !fixResult && <button disabled={!selCount} onClick={applyNow} style={{ background: selCount ? "#fff" : "rgba(255,255,255,0.25)", color: "#000", border: "none", padding: "10px 22px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: selCount ? "pointer" : "default", marginTop: 6 }}>⚙ {lang === "lt" ? `Taikyti ${selCount} pataisas ir pertikrinti` : `Apply ${selCount} fixes & re-audit`}</button>}
+                      {active.length > 0 && !fixResult && <div>
+                        {needsAck && <label style={{ display: "flex", alignItems: "flex-start", gap: 9, margin: "8px 0 4px", cursor: "pointer", maxWidth: 760 }}>
+                          <input type="checkbox" checked={fixAck} onChange={(e) => setFixAck(e.target.checked)} style={{ marginTop: 3 }} />
+                          <span style={{ fontSize: 11.5, color: "#ffd43b", fontFamily: "var(--s)", lineHeight: 1.55 }}>{lang === "lt" ? "Patvirtinu, kad pažymėtos „peržiūrėtinos“ pataisos atitinka pirminius apskaitos dokumentus ir kad atitinkami taisymai bus (arba jau yra) atlikti šaltinio apskaitos sistemoje (Finansinės apskaitos įst. 12 str.)." : "I confirm the selected review-class fixes match the primary accounting records and that corresponding corrections will be (or already are) made in the source accounting system (Financial Accounting Law art. 12)."}</span>
+                        </label>}
+                        <button disabled={!selCount || (needsAck && !fixAck)} onClick={applyNow} style={{ background: selCount && (!needsAck || fixAck) ? "#fff" : "rgba(255,255,255,0.25)", color: "#000", border: "none", padding: "10px 22px", fontSize: 11, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: selCount && (!needsAck || fixAck) ? "pointer" : "default", marginTop: 6 }}>⚙ {lang === "lt" ? `Taikyti ${selCount} pataisas ir pertikrinti` : `Apply ${selCount} fixes & re-audit`}</button>
+                      </div>}
                       {fixResult && (() => { const GC = { rejected: "#ff6b6b", warnings: "#ffd43b", clean: "#69db7c" }; const dl = (name, content, type) => { const b = new Blob([content], { type }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); }; return <div style={{ marginTop: 16, border: "1px solid rgba(255,255,255,0.16)", background: "var(--bg)", padding: "16px 18px" }}>
                         <div style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 10 }}>{lang === "lt" ? "Rezultatas po pertikrinimo (482 taisyklės)" : "Re-audit result (482 rules)"}</div>
                         <div style={{ display: "flex", gap: 26, flexWrap: "wrap", fontFamily: "var(--m)", fontSize: 13, alignItems: "center" }}>
@@ -15124,9 +15822,12 @@ function TAXAI({ onExit, initialView } = {}) {
                           <span style={{ color: "#d2d2ce" }}>{lang === "lt" ? "Vartai" : "Gate"}: <strong style={{ color: GC[fixResult.before.gate.verdict] }}>{lang === "lt" ? fixResult.before.gate.label[1] : fixResult.before.gate.label[0]}</strong> → <strong style={{ color: GC[fixResult.after.gate.verdict] }}>{lang === "lt" ? fixResult.after.gate.label[1] : fixResult.after.gate.label[0]}</strong></span>
                           <span style={{ color: "#8c8c88", fontSize: 11 }}>{fixResult.manifest.length} {lang === "lt" ? "pakeitimai" : "changes"}</span>
                         </div>
+                        {fixResult.proof && <div style={{ marginTop: 10, fontFamily: "var(--m)", fontSize: 11, color: fixResult.proof.linesUntouched ? "#69db7c" : "#ff8a8a" }}>
+                          {fixResult.proof.linesUntouched ? "✓ " : "⚠ "}{lang === "lt" ? "Įrodymas: DK eilučių Σ debetas/kreditas nepakitę" : "Proof: GL-line Σ debit/credit untouched"} — D {fixResult.proof.glLinesDebitBefore.toLocaleString()} → {fixResult.proof.glLinesDebitAfter.toLocaleString()} · K {fixResult.proof.glLinesCreditBefore.toLocaleString()} → {fixResult.proof.glLinesCreditAfter.toLocaleString()} <span style={{ color: "#7a7a76" }}>({lang === "lt" ? "taisytos tik kontrolinės/išvestinės reikšmės" : "only control/derived values were repaired"})</span>
+                        </div>}
                         <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                           <button onClick={() => { dl(fileName.replace(/\.xml$/i, "") + "_fixed.xml", fixResult.xml, "text/xml"); audit.log("EXPORT", "Auto-fixed XML"); }} style={{ background: "#fff", color: "#000", border: "none", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Pataisytas XML" : "Fixed XML"}</button>
-                          <button onClick={() => dl(fileName.replace(/\.xml$/i, "") + "_fix-manifest.json", JSON.stringify({ engine: "TaxAI v" + ENGINE_VERSION, generatedAt: new Date().toISOString(), corrections: fixResult.manifest }, null, 2), "application/json")} style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Pataisų manifestas" : "Fix manifest"}</button>
+                          <button onClick={() => dl(fileName.replace(/\.xml$/i, "") + "_fix-manifest.json", JSON.stringify({ engine: "TaxAI v" + ENGINE_VERSION, generatedAt: new Date().toISOString(), legalBasis: fixResult.legalNote, glLinesInvariantProof: fixResult.proof, corrections: fixResult.manifest }, null, 2), "application/json")} style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>↓ {lang === "lt" ? "Pataisų manifestas" : "Fix manifest"}</button>
                           <button onClick={() => { const nf = fileName.replace(/\.xml$/i, "") + "_fixed.xml"; setFileName(nf); processParsed(fixResult.afterParsed, fixResult.xml, ""); setSaftTab("tests"); setToast(lang === "lt" ? "Pataisytas failas įkeltas į auditą" : "Fixed file loaded into the audit"); }} style={{ background: "transparent", color: "#7cc4ff", border: "1px solid #7cc4ff", padding: "9px 18px", fontSize: 10.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>{lang === "lt" ? "Įkelti pataisytą į auditą →" : "Load fixed into audit →"}</button>
                         </div>
                       </div>; })()}
@@ -15250,7 +15951,7 @@ function TAXAI({ onExit, initialView } = {}) {
               const active = benchSector || (detected && sectorList.includes(detected) ? detected : sectorList[0]);
               return <div style={{ ...panel, marginTop: 16 }}>
                 {detected && detected !== "Unknown" && !benchSector && <div style={{ marginBottom: 14, fontSize: 11, color: "#8c8c88", fontFamily: "var(--m)" }}>{lang === "lt" ? "Aptiktas sektorius" : "Detected sector"}: <span style={{ color: "#7cc4ff" }}>{detected}</span> — {lang === "lt" ? "naudojamas lyginimui (galite pakeisti)." : "used for benchmarking (you can change it)."}</div>}
-                <KpiDashboard lang={lang} kpis={enterpriseKpis.kpis} sector={active} setSector={setBenchSector} targets={kpiTargets} setTarget={setKpiTarget} />
+                <KpiDashboard lang={lang} kpis={enterpriseKpis.kpis} sector={active} setSector={setBenchSector} targets={kpiTargets} setTarget={setKpiTarget} parsed={fileData?.parsed} findings={findings} supplierBalances={enterpriseKpis.supplierBalances} />
               </div>;
             })() : <div style={{ ...panel, marginTop: 16, textAlign: "center", padding: "56px 24px" }}>
               <div style={{ ...lbl, justifyContent: "center", marginBottom: 16 }}><span style={rule} />{lang === "lt" ? "Nėra duomenų KPI" : "No data for KPIs"}</div>
@@ -15290,6 +15991,16 @@ function TAXAI({ onExit, initialView } = {}) {
                   const sevC = { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" };
                   const popItems = eaPop === "gl" ? (fileData.parsed.transactions || []).flatMap((t) => (t.lines || []).map((l) => ({ transactionID: (t.transactionID || "—") + "/" + (l.recordID || ""), _v: Math.max(l.debitAmount || 0, l.creditAmount || 0) }))) : ((fileData.parsed[eaPop] && fileData.parsed[eaPop].items) || []).map((i) => ({ invoiceNo: i.invoiceNo, _v: (i.documentTotals && (i.documentTotals.netTotal != null ? i.documentTotals.netTotal : i.documentTotals.grossTotal)) || 0 }));
                   return <>
+                    {ea.opinion && <div style={{ border: `1px solid ${ea.opinion.c}`, background: `${ea.opinion.c}10`, padding: "14px 18px", marginBottom: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".1em", color: "#8c8c88", textTransform: "uppercase" }}>{lang === "lt" ? "Indikatyvus vertinimas" : "Indicative assessment"}</span>
+                        <span style={{ padding: "5px 14px", background: ea.opinion.c, color: "#000", fontFamily: "var(--m)", fontSize: 12, fontWeight: 800, letterSpacing: ".05em" }}>{lang === "lt" ? ea.opinion.lt : ea.opinion.en}</span>
+                        {ea.coverage && <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#8c8c88", marginLeft: "auto" }}>{lang === "lt" ? "aprėptis" : "coverage"}: {ea.coverage.glTransactions} {lang === "lt" ? "DK op." : "GL tx"} · {ea.coverage.glLines} {lang === "lt" ? "eil." : "lines"} · Σ €{ea.coverage.glValue.toLocaleString()} · {ea.coverage.testsRun} {lang === "lt" ? "testų" : "tests"}</span>}
+                      </div>
+                      {ea.opinion.reasons.length > 0 ? <div style={{ marginTop: 9 }}>{ea.opinion.reasons.map((r, i) => <div key={i} style={{ fontFamily: "var(--s)", fontSize: 12.5, color: "#d2d2ce", padding: "2px 0" }}>· {lang === "lt" ? r.lt : r.en}</div>)}</div>
+                        : <div style={{ marginTop: 8, fontFamily: "var(--s)", fontSize: 12.5, color: "#d2d2ce" }}>{lang === "lt" ? ea.opinion.noteLt : ea.opinion.noteEn}</div>}
+                      <div style={{ marginTop: 8, fontSize: 10, color: "#7a7a76", fontFamily: "var(--m)" }}>{lang === "lt" ? ea.opinion.disclaimer.lt : ea.opinion.disclaimer.en}</div>
+                    </div>}
                     <Section title={`${lang === "lt" ? "Reikšmingumas" : "Materiality"} · ${m.ref}`}>
                       <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "baseline" }}>
                         <div><div style={{ fontSize: 10, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase" }}>{lang === "lt" ? m.basisLt : m.basis} · {m.pct}%</div><div style={{ fontSize: 26, color: "#fff", fontFamily: "var(--f)", fontWeight: 300 }}>{m.overall.toLocaleString()}</div></div>
@@ -15298,6 +16009,43 @@ function TAXAI({ onExit, initialView } = {}) {
                       </div>
                       <div style={{ fontSize: 10.5, color: "#7a7a76", fontFamily: "var(--m)", marginTop: 8 }}>{(m.alternatives || []).map((a) => `${lang === "lt" ? a.basisLt : a.basis}: ${a.overall.toLocaleString()}`).join(" · ")}</div>
                     </Section>
+                    {(() => {
+                      const mon = (ea.analytics.monthly || []).map((r) => ({ ...r, name: monthLabel(r.m, lang) }));
+                      const bf = (ea.jeTests.find((x) => x.id === "JE_BENFORD") || {}).stats;
+                      const bfData = (bf && bf.dist || []).map((r2) => ({ name: String(r2.skaitmuo), actual: r2.faktas, expected: r2.tiketina }));
+                      const axis = { stroke: "#8c8c88", fontSize: 10, fontFamily: "var(--m)", tickLine: false, axisLine: { stroke: "rgba(255,255,255,0.07)" } };
+                      if (!mon.length && !bfData.length) return null;
+                      return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(380px,1fr))", gap: 12, margin: "4px 0 16px" }}>
+                        {mon.length > 0 && <ChartCard title={lang === "lt" ? "Mėnesio dinamika (TAS 520)" : "Monthly dynamics (ISA 520)"} sub={lang === "lt" ? "pajamos / pirkimai / bendroji marža % — analitinių nuokrypių pagrindas" : "revenue / purchases / gross margin % — basis for analytics deviations"} h={210}>
+                          <ResponsiveContainer>
+                            <ComposedChart data={mon} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                              <CartesianGrid stroke="rgba(255,255,255,0.07)" vertical={false} />
+                              <XAxis dataKey="name" {...axis} interval={mon.length > 8 ? 1 : 0} />
+                              <YAxis yAxisId="v" {...axis} tickFormatter={eurShort} width={48} />
+                              <YAxis yAxisId="p" orientation="right" {...axis} width={34} unit="%" />
+                              <Tooltip content={<TaxaiTip lang={lang} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                              <Legend wrapperStyle={{ fontSize: 10, fontFamily: "var(--m)" }} />
+                              <Bar yAxisId="v" dataKey="revenue" name={lang === "lt" ? "Pajamos" : "Revenue"} fill="#7cc4ff" maxBarSize={20} />
+                              <Bar yAxisId="v" dataKey="purchases" name={lang === "lt" ? "Pirkimai" : "Purchases"} fill="#9a8cff" maxBarSize={20} />
+                              <Line yAxisId="p" type="monotone" dataKey="margin" name={lang === "lt" ? "Marža %" : "Margin %"} stroke="#69db7c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        </ChartCard>}
+                        {bfData.length > 0 && <ChartCard title={`Benford (TAS 240) — MAD ${bf.mad} · ${bf.verdict} · n=${bf.n}`} sub={lang === "lt" ? "pirmo skaitmens faktinis % prieš log₁₀(1+1/d) tikėtiną" : "first-digit actual % vs log₁₀(1+1/d) expected"} h={210}>
+                          <ResponsiveContainer>
+                            <ComposedChart data={bfData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                              <CartesianGrid stroke="rgba(255,255,255,0.07)" vertical={false} />
+                              <XAxis dataKey="name" {...axis} />
+                              <YAxis {...axis} width={36} unit="%" />
+                              <Tooltip content={<TaxaiTip lang={lang} money={false} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                              <Legend wrapperStyle={{ fontSize: 10, fontFamily: "var(--m)" }} />
+                              <Bar dataKey="actual" name={lang === "lt" ? "Faktas %" : "Actual %"} fill={bf.verdict === "nonconformity" ? "#ff8a8a" : "#7cc4ff"} maxBarSize={26} />
+                              <Line type="monotone" dataKey="expected" name={lang === "lt" ? "Tikėtina %" : "Expected %"} stroke="#ffd43b" strokeWidth={2} dot={{ r: 2.5 }} />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        </ChartCard>}
+                      </div>;
+                    })()}
                     {ea.vmi && <Section title={lang === "lt" ? "VMI atitiktis (482 taisyklės · VA-49)" : "VMI compliance (482 rules · VA-49)"}>
                       <div style={{ fontFamily: "var(--m)", fontSize: 12.5, color: "#fff", marginBottom: 6 }}>{lang === "lt" ? ea.vmi.gate.label[1] : ea.vmi.gate.label[0]} · <span style={{ color: "#ff8a8a" }}>{ea.vmi.gate.blockingTotal}</span> {lang === "lt" ? "blokuoja" : "blocking"} · <span style={{ color: "#ffd43b" }}>{ea.vmi.gate.warningCount}</span> {lang === "lt" ? "perspėjimai" : "warnings"} · {lang === "lt" ? "rizika" : "risk"} <b>{ea.vmi.risk.score}</b> ({ea.vmi.risk.band}) · C/H/M/L {ea.vmi.sev.Critical}/{ea.vmi.sev.High}/{ea.vmi.sev.Medium}/{ea.vmi.sev.Low}</div>
                       {(ea.vmi.risk.perRule || []).slice(0, 5).map((r, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#9f9f9b" }}>{i + 1}. {r.rule_id} ×{r.hits} · {lang === "lt" ? "indėlis" : "contrib"} {r.contrib}</div>)}
@@ -15334,6 +16082,7 @@ function TAXAI({ onExit, initialView } = {}) {
                           <span style={{ color: "#7a7a76", fontFamily: "var(--m)", fontSize: 10 }}>{t.tas}</span>
                           {t.id === "JE_BENFORD" && t.stats && <span style={{ color: t.stats.verdict === "nonconformity" ? "#ff6b6b" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5 }}>MAD {t.stats.mad} → {t.stats.verdict} (n={t.stats.n})</span>}
                           {t.id === "JE_PERIOD_END" && t.stats && <span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5 }}>{t.stats.sharePct}% {lang === "lt" ? "visų įrašų" : "of entries"}</span>}
+                          {t.id === "JE_TRAIL00" && t.stats && <span style={{ color: t.severity === "High" ? "#ff8a8a" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5 }}>{t.stats.sharePct}% (n={t.stats.n}, {lang === "lt" ? "tikėtina" : "expected"} ~{t.stats.expectedPct}%)</span>}
                         </div>
                         {t.count > 0 && t.hits.slice(0, 4).map((h, i) => <div key={i} style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#9f9f9b", padding: "1px 0 0 58px" }}>· {Object.entries(h).map(([k, v]) => `${k} = ${v}`).join(" | ")}</div>)}
                       </div>)}
@@ -15362,7 +16111,7 @@ function TAXAI({ onExit, initialView } = {}) {
                     </Section>}
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
                       <button onClick={() => { const html = buildEAuditReportHTML(ea, lang, taxaiBrand().name, { company: fileData.parsed?.header?.company?.name, period: `${fileData.parsed?.header?.periodStart || ""}–${fileData.parsed?.header?.periodEnd || ""}` }); const b = new Blob([html], { type: "text/html" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `taxai-${fileName}-eaudit.html`; a.click(); window.open(u, "_blank"); setTimeout(() => URL.revokeObjectURL(u), 60000); audit.log("EXPORT", "E-Audit workpaper"); }} style={bP}>↓ {lang === "lt" ? "Darbo dokumentas" : "Workpaper"}</button>
-                      {runResult && <button onClick={async () => { setSaftLoading(true); try { const eaTxt = `E-AUDIT FACTS:\nOverall materiality: ${m.overall} | Performance: ${m.performance} | Trivial: ${m.trivial}\nJE tests: ${ea.jeTests.map((t) => `${t.id}=${t.count}`).join("; ")}\nGoing-concern flags: ${ea.goingConcern.flags.length} | Analytics deviations: ${ea.analytics.flags.length}${ea.vmi ? `\nVMI: gate=${ea.vmi.gate.verdict} blocking=${ea.vmi.gate.blockingTotal} warnings=${ea.vmi.gate.warningCount} riskScore=${ea.vmi.risk.score} findings=${ea.vmi.total}` : ""}${ea.industry ? `\nIndustry ${ea.industry.id}: flagged checks=${ea.industry.checks.filter((c) => c.flag).length}` : ""}${ea.companyRules && ea.companyRules.length ? `\nCompany rules hits: ${ea.companyRules.reduce((s, r) => s + r.count, 0)}` : ""}`; const md = await groundedAgentRun({ persona: "You are a certified auditor (atestuotas auditorius) reporting under ISA/TAS to the owner of an SME. The deterministic E-Audit engine has executed all tests — you interpret.", sections: lang === "en" ? ["VMI compliance summary and blocking issues (SAF-T)", "Audit scope summary (materiality and risk, plainly)", "Journal-entry testing conclusions (ISA 240) — what each non-zero test means", "Going-concern assessment (ISA 570)", "Recommended next steps for the auditor and management"] : ["VMI atitikties santrauka ir blokuojantys klausimai (SAF-T)", "Audito apimties santrauka (reikšmingumas ir rizika, paprastai)", "Žurnalo įrašų testų išvados (TAS 240) — ką reiškia kiekvienas nenulinis testas", "Veiklos tęstinumo vertinimas (TAS 570)", "Rekomenduojami tolesni žingsniai auditoriui ir vadovybei"], parsed: fileData.parsed, runResult, callAI, lang, extraFacts: eaFacts(ea), extraFactsText: eaTxt }); setEaNarr(md); audit.log("EAUDIT_AI", fileName); } catch (e) { setEaNarr("Error: " + (e && e.message || e)); } setSaftLoading(false); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>🛡 {lang === "lt" ? "AI auditoriaus išvada" : "AI auditor narrative"}</button>}
+                      {runResult && <button onClick={async () => { setSaftLoading(true); try { const eaTxt = `E-AUDIT FACTS:\nIndicative assessment: ${ea.opinion ? ea.opinion.en + (ea.opinion.reasons.length ? " — " + ea.opinion.reasons.map((r) => r.en).join("; ") : "") : "—"} (rules-based, NOT an ISA 700 opinion)\nCoverage: ${ea.coverage ? `${ea.coverage.glTransactions} GL tx · ${ea.coverage.glLines} lines · Σ ${ea.coverage.glValue} · ${ea.coverage.txFlagged} flagged` : "—"}\nOverall materiality: ${m.overall} | Performance: ${m.performance} | Trivial: ${m.trivial}\nJE tests: ${ea.jeTests.map((t) => `${t.id}=${t.count}`).join("; ")}\nGoing-concern flags: ${ea.goingConcern.flags.length} | Analytics deviations: ${ea.analytics.flags.length}${ea.vmi ? `\nVMI: gate=${ea.vmi.gate.verdict} blocking=${ea.vmi.gate.blockingTotal} warnings=${ea.vmi.gate.warningCount} riskScore=${ea.vmi.risk.score} findings=${ea.vmi.total}` : ""}${ea.industry ? `\nIndustry ${ea.industry.id}: flagged checks=${ea.industry.checks.filter((c) => c.flag).length}` : ""}${ea.companyRules && ea.companyRules.length ? `\nCompany rules hits: ${ea.companyRules.reduce((s, r) => s + r.count, 0)}` : ""}`; const md = await groundedAgentRun({ persona: "You are a certified auditor (atestuotas auditorius) reporting under ISA/TAS to the owner of an SME. The deterministic E-Audit engine has executed all tests — you interpret.", sections: lang === "en" ? ["VMI compliance summary and blocking issues (SAF-T)", "Audit scope summary (materiality and risk, plainly)", "Journal-entry testing conclusions (ISA 240) — what each non-zero test means", "Going-concern assessment (ISA 570)", "Recommended next steps for the auditor and management"] : ["VMI atitikties santrauka ir blokuojantys klausimai (SAF-T)", "Audito apimties santrauka (reikšmingumas ir rizika, paprastai)", "Žurnalo įrašų testų išvados (TAS 240) — ką reiškia kiekvienas nenulinis testas", "Veiklos tęstinumo vertinimas (TAS 570)", "Rekomenduojami tolesni žingsniai auditoriui ir vadovybei"], parsed: fileData.parsed, runResult, callAI, lang, extraFacts: eaFacts(ea), extraFactsText: eaTxt }); setEaNarr(md); audit.log("EAUDIT_AI", fileName); } catch (e) { setEaNarr("Error: " + (e && e.message || e)); } setSaftLoading(false); }} style={bG} onMouseEnter={e => e.currentTarget.style.borderColor = "#fff"} onMouseLeave={e => e.currentTarget.style.borderColor = PL_LINE}>🛡 {lang === "lt" ? "AI auditoriaus išvada" : "AI auditor narrative"}</button>}
                     </div>
                     {eaNarr && <div style={{ marginTop: 18 }}><Md text={eaNarr} /></div>}
                   </>;
