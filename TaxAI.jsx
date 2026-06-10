@@ -1907,6 +1907,10 @@ const ENGINE_VERSION = "10.8.0";
 
 // Rule-pack provenance — shown in the Rules tab and stamped into every export.
 const RULE_PACKS = [
+  { version: "2026.06-live-bridge", date: "2026-06-10", title: "ERP Live Bridge — SmartConnect wizard, deterministic auto-mapping, autopilot sync and a live pipeline board", titleLt: "ERP gyvasis tiltas — SmartConnect vedlys, deterministinis laukų atvaizdavimas, autopilotas ir gyvas konvejerio pultas",
+    changes: ["SmartConnect: 4-step connect flow (access → 7-check handshake → field-map review → rehearsal sync) replaces the bare credentials form", "Deterministic auto-mapping: LT/EN lexicon + value-shape scoring produces per-field confidence (no LLM in the data path); Mapping Studio gains an Auto-map button and a confidence column", "System fingerprinting: paste one JSON record or a CSV header line and the bridge identifies Rivilė GAMA / B1.lt / D365 BC with a match %", "Autopilot: per-connection interval sync (1 min – 1 h) with a 1 s heartbeat, freshness rings that drain toward the next run, and a circuit breaker that pauses after 3 consecutive failures", "Live board: animated source → canonical → boundary-rules → SAF-T pipeline strip, per-connector cards with live per-entity progress and duration sparklines, reconciliation tower (4 control numbers per source), cross-system duplicate conflicts and an event feed"] },
+  { version: "2026.06-erp-focus", date: "2026-06-10", title: "Integration focus — connector catalog narrowed to Rivilė GAMA, B1.lt and Microsoft Dynamics 365 Business Central", titleLt: "Integracijų fokusas — jungčių katalogas susiaurintas iki Rivilė GAMA, B1.lt ir Microsoft Dynamics 365 Business Central",
+    changes: ["Catalog reduced from ~140 systems to the 3 that matter for the Lithuanian market; every remaining connector is deep-tier (native field map + raw demo payloads + Mapping Studio)", "New reference field maps: Rivilė GAMA REST (Lithuanian field names) and B1.lt REST; Microsoft D365 BC API v2.0 (OData) retained", "ERP-export CSV profiles aligned to the same 3 systems (+ generic auto-detection)", "Self-tests now sync all 3 connectors: demo pull → boundary rules → canonical→SAF-T bridge → XML round-trip"] },
   { version: "2026.06-erp", date: "2026-06-08", title: "ERP integration layer — batch e-invoicing pipeline, ERP-export importer, ZIP bundles, SDK endpoints", titleLt: "ERP integracijos sluoksnis — paketinis e. sąskaitų konvejeris, ERP eksporto importas, ZIP paketai, SDK galiniai taškai",
     changes: ["Batch pipeline: every SAF-T sales invoice (or every ERP-export row) → Peppol BIS 3.0 → validated → compliance dashboard (ready / EN-only / blocked with reasons)", "ERP-export importer: CSV with delimiter sniffing, quoted fields, date and number normalisation; field-mapping profiles for Rivilė, Finvalda, Directo, Agnum + auto-detection", "Transmission bundle: pure-JS ZIP (CRC-32, STORE) with all XML files, manifest.json (gates, finding ids, SHA-256) and summary.csv", "window.TaxAI.einvoice.{validate, generate} and postMessage actions taxai:einvoice-validate / taxai:einvoice-generate for in-ERP embedding"] },
   { version: "2026.06-einvoice", date: "2026-06-08", title: "E-Invoicing engine — EN 16931 + Peppol BIS 3.0 validator and SAF-T→Peppol generator", titleLt: "E. sąskaitų variklis — EN 16931 + Peppol BIS 3.0 validatorius ir SAF-T→Peppol generatorius",
@@ -6654,9 +6658,8 @@ function eiNormDate(s) {
 // Field-mapping profiles — curated synonym priorities per popular LT ERP.
 const ERP_PROFILES = [
   { id: "rivile", name: "Rivilė GAMA", hints: { invoiceNo: ["dok_nr", "dok nr", "dokumento nr", "sask"], invoiceDate: ["data"], customerName: ["pirkejas", "klientas", "pavadinimas"], customerCode: ["im_kodas", "imones kodas", "kodas"], customerVat: ["pvm_kodas", "pvm kodas"], customerCountry: ["salis"], net: ["suma_be_pvm", "suma be pvm", "be pvm"], gross: ["suma_su_pvm", "suma su pvm", "su pvm", "viso"], rate: ["tarifas", "pvm proc", "pvm %"] } },
-  { id: "finvalda", name: "Finvalda", hints: { invoiceNo: ["dokumentas", "dok. nr", "saskaitos nr", "sask"], invoiceDate: ["data"], customerName: ["klientas", "pirkejas"], customerCode: ["kodas"], customerVat: ["pvm moketojo kodas", "pvm kodas"], customerCountry: ["salis", "valstybe"], net: ["apmokestinamoji verte", "be pvm", "suma"], gross: ["bendra suma", "su pvm", "viso"], rate: ["pvm tarifas", "tarifas"] } },
-  { id: "directo", name: "Directo", hints: { invoiceNo: ["number", "invoice no", "saskaita"], invoiceDate: ["date", "data"], customerName: ["customer", "klientas"], customerCode: ["customer code", "reg no", "kodas"], customerVat: ["vat reg no", "vat no", "pvm"], customerCountry: ["country", "salis"], net: ["net", "sum", "be pvm"], gross: ["total", "gross", "su pvm"], rate: ["vat %", "rate", "tarifas"] } },
-  { id: "agnum", name: "Agnum", hints: { invoiceNo: ["saskaitos numeris", "numeris", "nr"], invoiceDate: ["israsymo data", "data"], customerName: ["pirkejo pavadinimas", "pirkejas"], customerCode: ["pirkejo kodas", "kodas"], customerVat: ["pirkejo pvm", "pvm kodas"], customerCountry: ["salis"], net: ["suma be pvm", "be pvm"], gross: ["suma su pvm", "su pvm"], rate: ["pvm tarifas", "tarifas"] } },
+  { id: "b1lt", name: "B1.lt", hints: { invoiceNo: ["dokumento numeris", "dokumentas", "saskaitos nr", "numeris"], invoiceDate: ["dokumento data", "data"], customerName: ["partneris", "pirkejas", "klientas"], customerCode: ["partnerio kodas", "imones kodas", "kodas"], customerVat: ["pvm moketojo kodas", "pvm kodas"], customerCountry: ["salis"], net: ["suma be pvm", "be pvm"], gross: ["suma su pvm", "su pvm", "viso"], rate: ["pvm tarifas", "tarifas", "pvm %"] } },
+  { id: "d365bc", name: "Microsoft Dynamics 365 Business Central", hints: { invoiceNo: ["document no", "invoice no", "no"], invoiceDate: ["posting date", "document date", "date"], customerName: ["sell-to customer name", "customer name", "customer"], customerCode: ["sell-to customer no", "customer no"], customerVat: ["vat registration no", "vat reg"], customerCountry: ["country/region code", "country"], net: ["vat base amount", "net amount", "amount"], gross: ["amount including vat", "incl. vat", "total"], rate: ["vat %", "vat rate"] } },
   { id: "generic", name: "Generic / kita", hints: { invoiceNo: ["invoice", "sask", "dok", "numeris", "nr"], invoiceDate: ["date", "data"], customerName: ["customer", "klientas", "pirkejas", "name", "pavadinimas"], customerCode: ["company code", "reg", "imones kodas", "kodas"], customerVat: ["vat", "pvm"], customerCountry: ["country", "salis"], net: ["net", "be pvm", "suma"], gross: ["gross", "total", "su pvm", "viso"], rate: ["rate", "tarif", "%"] } },
 ];
 function eiTryMap(profile, headers) {
@@ -7324,7 +7327,7 @@ IFRS/local-GAAP issues surfaced by the consistency findings (roll-forwards, TB e
 
 ## 5. ERP Findings
 For each systemic finding, infer the likely ERP source:
-- Module / Table / Field (best-effort for Rivilė, Pragma, B1, SAP, D365 BC, NetSuite, Odoo — say which is most likely from the data patterns) · Possible root cause · Recommended ERP process fix · Automation opportunity
+- Module / Table / Field (best-effort for Rivilė GAMA, B1.lt, Microsoft Dynamics 365 Business Central — say which is most likely from the data patterns) · Possible root cause · Recommended ERP process fix · Automation opportunity
 
 ## 6. Cost Reduction Opportunities
 ONLY where the data supports it (duplicate suppliers from finding B-075/E-230, supplier concentration, round-amount spend, excess balances). For each:
@@ -9588,7 +9591,8 @@ function numberCitations(answer, sources, corpus) {
 // fmt: "eur" | "pct" | "ratio" | "days" | "int"
 // ════════════════════════════════════════════════════════════════════
 // MODULE 1 — ERP INTEGRATION HUB (v9)
-// 140-system connector layer → ONE canonical model → existing SAF-T
+// Focused LT connector layer — Rivilė GAMA · B1.lt · Microsoft Dynamics
+// 365 Business Central → ONE canonical model → existing SAF-T
 // engines (runAllRules / computeKPIs / benford / intelligence / i.SAF)
 // with zero special-casing. Deterministic. No LLM in the data path.
 // ════════════════════════════════════════════════════════════════════
@@ -9609,7 +9613,7 @@ const DEMO_MODE = { enabled: true };
  *
  *   POST /api/erp
  *   {
- *     system:   "sap-s4hana",            // ERP_CATALOG id
+ *     system:   "d365-bc",               // ERP_CATALOG id
  *     protocol: "odata"|"rest"|"jsonrpc"|"xmlrpc"|"soap"|"suiteql"|"aqua",
  *     action:   "auth"|"health"|"pull"|"push",
  *     entity:   "invoicesAR"|...,         // ENTITY_KINDS
@@ -9647,7 +9651,7 @@ const eR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
  *   @property {string} city
  *   @property {string} iban
  * @typedef {Object} CanonicalTax
- *   @property {string} rawCode       ERP-native tax code (e.g. SAP "A1")
+ *   @property {string} rawCode       ERP-native tax code (e.g. D365 BC "VAT21")
  *   @property {string} stiCode      mapped LT classifier (e.g. "PVM1")
  *   @property {number} pct
  *   @property {number} base
@@ -9689,166 +9693,15 @@ function emptyCanonicalStore() {
   return { customers: [], suppliers: [], products: [], taxCodes: [], invoicesAR: [], invoicesAP: [], journals: [], payments: [], _seen: {}, _sources: [] };
 }
 
-// ─── 140-system catalog ───────────────────────────────────────────────
+// ─── Focused connector catalog — Rivilė GAMA · B1.lt · Dynamics 365 BC ─
 // tuple: [id, name, category, region, protocol, auth, adapter, tier]
-// tier: "deep"     → full reference implementation (transform + field map + demo seeds)
-//       "standard" → named adapter profile on the declarative engine
-//       "generic"  → generic REST/CSV adapter with a default profile
+// tier: "deep" → full reference implementation (transform + field map + demo seeds)
+// All three connectors are first-class: native field maps, raw demo
+// payloads, Mapping Studio editing and the same canonical SAF-T bridge.
 const ERP_CATALOG_RAW = [
-  // — First-class / deep reference implementations —
-  ["sap-s4hana", "SAP S/4HANA", "ERP Enterprise", "Global", "odata", "oauth2", "sap-odata", "deep"],
-  ["netsuite", "Oracle NetSuite", "ERP Enterprise", "Global", "suiteql", "oauth2", "netsuite", "deep"],
-  ["d365-bc", "Dynamics 365 Business Central", "ERP SMB", "Global", "odata", "oauth2", "d365bc", "deep"],
-  ["odoo", "Odoo", "ERP SMB", "Global", "jsonrpc", "apikey", "odoo", "deep"],
-  // — Named first-class (standard profiles) —
-  ["sap-ecc", "SAP ECC", "ERP Enterprise", "Global", "odata", "basic", "sap-odata", "standard"],
-  ["sap-b1", "SAP Business One", "ERP SMB", "Global", "rest", "basic", "generic-rest", "standard"],
-  ["oracle-fusion", "Oracle Fusion Cloud ERP", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "standard"],
-  ["d365-fo", "Dynamics 365 Finance & Operations", "ERP Enterprise", "Global", "odata", "oauth2", "d365bc", "standard"],
-  ["zuora", "Zuora", "Billing", "Global", "aqua", "oauth2", "zuora", "standard"],
-  ["ifs", "IFS Cloud", "ERP Enterprise", "Global", "odata", "oauth2", "generic-rest", "standard"],
-  ["parasut", "Paraşüt", "Accounting", "Türkiye", "rest", "oauth2", "generic-rest", "standard"],
-  ["kolaybi", "KolayBi", "Accounting", "Türkiye", "rest", "apikey", "generic-rest", "standard"],
-  ["dopigo", "Dopigo", "E-commerce", "Türkiye", "rest", "apikey", "generic-rest", "standard"],
-  // — ERP Enterprise long tail —
-  ["oracle-ebs", "Oracle E-Business Suite", "ERP Enterprise", "Global", "soap", "basic", "generic-rest", "generic"],
-  ["jd-edwards", "Oracle JD Edwards", "ERP Enterprise", "Global", "rest", "basic", "generic-rest", "generic"],
-  ["infor-ln", "Infor LN", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["infor-m3", "Infor M3", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["infor-csi", "Infor CloudSuite Industrial", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["epicor-kinetic", "Epicor Kinetic", "ERP Enterprise", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["workday-fin", "Workday Financials", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["unit4-erp", "Unit4 ERP (Agresso)", "ERP Enterprise", "EU", "rest", "oauth2", "generic-rest", "generic"],
-  ["unit4-coda", "Unit4 Financials (Coda)", "ERP Enterprise", "EU", "rest", "oauth2", "generic-rest", "generic"],
-  ["sage-x3", "Sage X3", "ERP Enterprise", "Global", "rest", "basic", "generic-rest", "generic"],
-  ["syspro", "SYSPRO", "ERP Enterprise", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["qad", "QAD Adaptive ERP", "ERP Enterprise", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["abas", "abas ERP", "ERP Enterprise", "DACH", "rest", "apikey", "generic-rest", "generic"],
-  ["proalpha", "proALPHA", "ERP Enterprise", "DACH", "rest", "oauth2", "generic-rest", "generic"],
-  // — ERP SMB / mid-market —
-  ["acumatica", "Acumatica", "ERP SMB", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["sage-intacct", "Sage Intacct", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["sage-50", "Sage 50", "Accounting", "Global", "file", "none", "csv", "generic"],
-  ["sage-200", "Sage 200", "ERP SMB", "UK", "rest", "oauth2", "generic-rest", "generic"],
-  ["priority", "Priority Software", "ERP SMB", "Global", "odata", "apikey", "generic-rest", "generic"],
-  ["erpnext", "ERPNext", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["dolibarr", "Dolibarr", "ERP SMB", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["weclapp", "weclapp", "ERP SMB", "DACH", "rest", "apikey", "generic-rest", "generic"],
-  ["haufe-x360", "Haufe X360", "ERP SMB", "DACH", "rest", "oauth2", "generic-rest", "generic"],
-  ["katana", "Katana MRP", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["mrpeasy", "MRPeasy", "ERP SMB", "Baltics", "rest", "apikey", "generic-rest", "generic"],
-  ["cin7", "Cin7 Omni", "ERP SMB", "Global", "rest", "apikey", "generic-rest", "generic"],
-  // — Accounting (global SMB) —
-  ["xero", "Xero", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["qbo", "QuickBooks Online", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["qb-desktop", "QuickBooks Desktop", "Accounting", "NA", "file", "none", "csv", "generic"],
-  ["freshbooks", "FreshBooks", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["wave", "Wave", "Accounting", "NA", "graphql", "oauth2", "generic-rest", "generic"],
-  ["zoho-books", "Zoho Books", "Accounting", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["freeagent", "FreeAgent", "Accounting", "UK", "rest", "oauth2", "generic-rest", "generic"],
-  ["holded", "Holded", "Accounting", "ES", "rest", "apikey", "generic-rest", "generic"],
-  ["sevdesk", "sevdesk", "Accounting", "DACH", "rest", "apikey", "generic-rest", "generic"],
-  ["lexoffice", "lexware office", "Accounting", "DACH", "rest", "apikey", "generic-rest", "generic"],
-  ["datev", "DATEV", "Accounting", "DACH", "rest", "oauth2", "generic-rest", "generic"],
-  ["fastbill", "FastBill", "Accounting", "DACH", "rest", "apikey", "generic-rest", "generic"],
-  // — Nordics —
-  ["visma-net", "Visma.net", "ERP SMB", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
-  ["visma-eaccounting", "Visma eAccounting", "Accounting", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
-  ["visma-business", "Visma Business", "ERP SMB", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
-  ["e-conomic", "e-conomic (Visma)", "Accounting", "DK", "rest", "apikey", "generic-rest", "generic"],
-  ["dinero", "Dinero (Visma)", "Accounting", "DK", "rest", "oauth2", "generic-rest", "generic"],
-  ["fortnox", "Fortnox", "Accounting", "SE", "rest", "oauth2", "generic-rest", "generic"],
-  ["tripletex", "Tripletex (Visma)", "Accounting", "NO", "rest", "apikey", "generic-rest", "generic"],
-  ["poweroffice", "PowerOffice Go", "Accounting", "NO", "rest", "apikey", "generic-rest", "generic"],
-  ["procountor", "Procountor", "Accounting", "FI", "rest", "oauth2", "generic-rest", "generic"],
-  ["netvisor", "Netvisor (Visma)", "Accounting", "FI", "rest", "apikey", "generic-rest", "generic"],
-  // — Benelux / France —
-  ["exact-online", "Exact Online", "ERP SMB", "Benelux", "rest", "oauth2", "generic-rest", "generic"],
-  ["afas", "AFAS Software", "ERP SMB", "NL", "rest", "apikey", "generic-rest", "generic"],
-  ["twinfield", "Twinfield (Wolters Kluwer)", "Accounting", "NL", "soap", "oauth2", "generic-rest", "generic"],
-  ["moneybird", "Moneybird", "Accounting", "NL", "rest", "oauth2", "generic-rest", "generic"],
-  ["yuki", "Yuki", "Accounting", "NL", "rest", "apikey", "generic-rest", "generic"],
-  ["cegid", "Cegid", "ERP SMB", "FR", "rest", "oauth2", "generic-rest", "generic"],
-  ["pennylane", "Pennylane", "Accounting", "FR", "rest", "oauth2", "generic-rest", "generic"],
-  ["sellsy", "Sellsy", "Accounting", "FR", "rest", "oauth2", "generic-rest", "generic"],
-  ["axonaut", "Axonaut", "Accounting", "FR", "rest", "apikey", "generic-rest", "generic"],
-  ["ebp", "EBP", "Accounting", "FR", "rest", "apikey", "generic-rest", "generic"],
-  // — Lithuania & Baltics —
-  ["rivile", "Rivilė GAMA", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
-  ["finvalda", "Finvalda", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
-  ["agnum", "Agnum", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
-  ["b1lt", "B1.lt", "Local-LT", "LT", "rest", "apikey", "generic-rest", "standard"],
-  ["directo", "Directo", "Local-Baltic", "Baltics", "rest", "apikey", "generic-rest", "standard"],
-  ["stekas", "Stekas", "Local-LT", "LT", "file", "none", "csv", "generic"],
-  ["pragma", "Pragma", "Local-LT", "LT", "file", "none", "csv", "generic"],
-  ["centas", "Centas", "Local-LT", "LT", "file", "none", "csv", "generic"],
-  ["apskaita5", "Apskaita5", "Local-LT", "LT", "rest", "apikey", "generic-rest", "generic"],
-  ["edrana", "Edrana Baltic", "Local-LT", "LT", "rest", "basic", "generic-rest", "generic"],
-  ["merit-aktiva", "Merit Aktiva", "Local-Baltic", "EE", "rest", "apikey", "generic-rest", "generic"],
-  ["simplbooks", "SimplBooks", "Local-Baltic", "EE", "rest", "apikey", "generic-rest", "generic"],
-  ["erply-books", "Erply Books", "Local-Baltic", "EE", "rest", "apikey", "generic-rest", "generic"],
-  ["tildes-jumis", "Tildes Jumis", "Local-Baltic", "LV", "file", "none", "csv", "generic"],
-  // — CEE —
-  ["comarch-xl", "Comarch ERP XL", "ERP SMB", "PL", "rest", "basic", "generic-rest", "generic"],
-  ["comarch-optima", "Comarch ERP Optima", "ERP SMB", "PL", "rest", "basic", "generic-rest", "generic"],
-  ["enova365", "enova365", "ERP SMB", "PL", "rest", "apikey", "generic-rest", "generic"],
-  ["symfonia", "Symfonia", "Accounting", "PL", "file", "none", "csv", "generic"],
-  ["insert-subiekt", "InsERT Subiekt GT", "Accounting", "PL", "file", "none", "csv", "generic"],
-  ["wfirma", "wFirma", "Accounting", "PL", "rest", "apikey", "generic-rest", "generic"],
-  ["ifirma", "iFirma", "Accounting", "PL", "rest", "apikey", "generic-rest", "generic"],
-  ["fakturownia", "Fakturownia", "Billing", "PL", "rest", "apikey", "generic-rest", "generic"],
-  ["pohoda", "Stormware POHODA", "Accounting", "CZ", "file", "none", "csv", "generic"],
-  ["abra-flexibee", "ABRA Flexi", "ERP SMB", "CZ", "rest", "basic", "generic-rest", "generic"],
-  ["money-s3", "Money S3", "Accounting", "CZ", "file", "none", "csv", "generic"],
-  ["szamlazz", "Számlázz.hu", "Billing", "HU", "rest", "apikey", "generic-rest", "generic"],
-  // — Türkiye (additional) —
-  ["logo-tiger", "Logo Tiger", "ERP SMB", "Türkiye", "rest", "basic", "generic-rest", "generic"],
-  ["logo-netsis", "Logo Netsis", "ERP SMB", "Türkiye", "rest", "basic", "generic-rest", "generic"],
-  ["mikro", "Mikro Jump", "ERP SMB", "Türkiye", "rest", "apikey", "generic-rest", "generic"],
-  ["luca", "Luca", "Accounting", "Türkiye", "rest", "basic", "generic-rest", "generic"],
-  ["zirve", "Zirve", "Accounting", "Türkiye", "file", "none", "csv", "generic"],
-  // — Billing & subscriptions —
-  ["chargebee", "Chargebee", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["recurly", "Recurly", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["stripe-billing", "Stripe Billing", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["maxio", "Maxio (Chargify)", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["bill-com", "BILL (Bill.com)", "AP/Expense", "NA", "rest", "oauth2", "generic-rest", "generic"],
-  ["invoiced", "Invoiced", "Billing", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["younium", "Younium", "Billing", "Nordics", "rest", "oauth2", "generic-rest", "generic"],
-  // — AP / expense / e-invoicing networks —
-  ["coupa", "Coupa", "AP/Expense", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["basware", "Basware", "E-invoicing", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["pagero", "Pagero", "E-invoicing", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["tradeshift", "Tradeshift", "E-invoicing", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["concur", "SAP Concur", "AP/Expense", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["expensify", "Expensify", "AP/Expense", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["pleo", "Pleo", "AP/Expense", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["spendesk", "Spendesk", "AP/Expense", "EU", "rest", "oauth2", "generic-rest", "generic"],
-  ["payhawk", "Payhawk", "AP/Expense", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["tipalti", "Tipalti", "AP/Expense", "Global", "rest", "apikey", "generic-rest", "generic"],
-  // — E-commerce / POS / payments —
-  ["shopify", "Shopify", "E-commerce", "Global", "graphql", "apikey", "generic-rest", "generic"],
-  ["woocommerce", "WooCommerce", "E-commerce", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["magento", "Adobe Commerce (Magento)", "E-commerce", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["prestashop", "PrestaShop", "E-commerce", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["amazon-sp", "Amazon SP-API", "E-commerce", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["allegro", "Allegro", "E-commerce", "PL", "rest", "oauth2", "generic-rest", "generic"],
-  ["lightspeed", "Lightspeed", "POS", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["square", "Square", "POS", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["zettle", "Zettle (PayPal)", "POS", "EU", "rest", "oauth2", "generic-rest", "generic"],
-  ["sumup", "SumUp", "POS", "EU", "rest", "oauth2", "generic-rest", "generic"],
-  ["paypal", "PayPal", "Payments", "Global", "rest", "oauth2", "generic-rest", "generic"],
-  ["adyen", "Adyen", "Payments", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["mollie", "Mollie", "Payments", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["gocardless", "GoCardless", "Payments", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["wise", "Wise Business", "Payments", "Global", "rest", "apikey", "generic-rest", "generic"],
-  ["revolut", "Revolut Business", "Payments", "EU", "rest", "apikey", "generic-rest", "generic"],
-  ["paysera", "Paysera", "Payments", "LT", "rest", "apikey", "generic-rest", "generic"],
-  // — Universal fallbacks —
-  ["generic-rest-api", "Generic REST/JSON API", "Generic", "—", "rest", "apikey", "generic-rest", "standard"],
-  ["csv-drop", "CSV / Excel drop", "Generic", "—", "file", "none", "csv", "standard"],
-  ["sftp-watch", "SFTP / folder watch (agent)", "Generic", "—", "sftp", "cert", "agent", "standard"],
-  ["webhook-in", "Webhook receiver (agent)", "Generic", "—", "webhook", "apikey", "agent", "standard"],
+  ["rivile", "Rivilė GAMA", "Local-LT", "LT", "rest", "apikey", "rivile", "deep"],
+  ["b1lt", "B1.lt", "Local-LT", "LT", "rest", "apikey", "b1lt", "deep"],
+  ["d365-bc", "Microsoft Dynamics 365 Business Central", "ERP SMB", "Global", "odata", "oauth2", "d365bc", "deep"],
 ];
 const ERP_CATALOG = ERP_CATALOG_RAW.map(([id, name, category, region, protocol, auth, adapter, tier]) => ({ id, name, category, region, protocol, auth, adapter, tier }));
 const ERP_CATEGORIES = [...new Set(ERP_CATALOG.map((e) => e.category))];
@@ -9858,33 +9711,32 @@ const ERP_CATEGORIES = [...new Set(ERP_CATALOG.map((e) => e.category))];
 // Mapping Studio and used by applyFieldMap() in both directions
 // (transform raw→canonical; rawify canonical→raw for demo payloads).
 const FIELD_MAPS = {
-  "sap-odata": {
-    label: "SAP S/4HANA · OData v4 (API_BILLING_DOCUMENT / API_SUPPLIERINVOICE / API_BUSINESS_PARTNER)",
+  rivile: {
+    label: "Rivilė GAMA · REST (EIP servisas: pardavimo/pirkimo dokumentai, klientai, tiekėjai)",
     endpoints: {
-      invoicesAR: "GET /sap/opu/odata4/sap/api_billingdocument/srvd_a2x/sap/billingdocument/0001/BillingDocument?$expand=_Item&$filter=LastChangeDateTime gt {since}",
-      invoicesAP: "GET /sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice?$expand=to_SuplrInvcItemPurOrdRef",
-      customers: "GET /sap/opu/odata/sap/API_BUSINESS_PARTNER/A_Customer", suppliers: "GET .../A_Supplier",
-      journals: "GET /sap/opu/odata/sap/API_JOURNALENTRYITEMBASIC_SRV/A_JournalEntryItemBasic (agent: BAPI_ACC_DOCUMENT / IDoc FIDCCP02)",
+      invoicesAR: "GET {baseUrl}/api/v1/pardavimo-dokumentai?nuo={since}&puslapis={cursor}",
+      invoicesAP: "GET {baseUrl}/api/v1/pirkimo-dokumentai?nuo={since}",
+      customers: "GET {baseUrl}/api/v1/klientai", suppliers: "GET {baseUrl}/api/v1/tiekejai",
     },
-    invoicesAR: { externalId: "BillingDocument", invoiceNo: "BillingDocument", invoiceDate: "BillingDocumentDate", glPostingDate: "AccountingPostingDate", currency: "TransactionCurrency", partyId: "SoldToParty", partyName: "SoldToPartyName", net: "TotalNetAmount", vat: "TotalTaxAmount", updatedAt: "LastChangeDateTime", linesPath: "_Item", line: { lineNo: "BillingDocumentItem", description: "BillingDocumentItemText", productCode: "Material", qty: "BillingQuantity", uom: "BillingQuantityUnit", net: "NetAmount", vatAmount: "TaxAmount", rawTaxCode: "TaxCode" } },
-    invoicesAP: { externalId: "SupplierInvoice", invoiceNo: "SupplierInvoiceIDByInvcgParty", invoiceDate: "DocumentDate", glPostingDate: "PostingDate", currency: "DocumentCurrency", partyId: "InvoicingParty", net: "InvoiceNetAmount", vat: "TotalTaxAmount", gross: "InvoiceGrossAmount", updatedAt: "LastChangeDate", linesPath: "to_SuplrInvcItemPurOrdRef", line: { lineNo: "SupplierInvoiceItem", description: "SupplierInvoiceItemText", qty: "QuantityInPurchaseOrderUnit", net: "SupplierInvoiceItemAmount", rawTaxCode: "TaxCode" } },
-    customers: { id: "Customer", name: "CustomerName", vatNo: "VATRegistration", country: "Country", city: "CityName", regNo: "TaxNumber3" },
-    suppliers: { id: "Supplier", name: "SupplierName", vatNo: "VATRegistration", country: "Country", city: "CityName", iban: "IBAN" },
+    invoicesAR: { externalId: "dok_id", invoiceNo: "dok_nr", invoiceDate: "data", glPostingDate: "apsk_data", currency: "valiuta", partyId: "klnt_kodas", partyName: "klnt_pavadinimas", net: "suma_be_pvm", vat: "pvm_suma", gross: "suma_su_pvm", updatedAt: "koreguota", linesPath: "eilutes", line: { lineNo: "eil_nr", description: "pavadinimas", productCode: "prekes_kodas", qty: "kiekis", uom: "mato_vnt", unitPrice: "kaina", net: "suma", vatAmount: "pvm", rawTaxCode: "pvm_kodas", pct: "tarifas" } },
+    invoicesAP: { externalId: "dok_id", invoiceNo: "dok_nr", invoiceDate: "data", glPostingDate: "apsk_data", currency: "valiuta", partyId: "tiek_kodas", partyName: "tiek_pavadinimas", net: "suma_be_pvm", vat: "pvm_suma", gross: "suma_su_pvm", updatedAt: "koreguota", linesPath: "eilutes", line: { lineNo: "eil_nr", description: "pavadinimas", productCode: "prekes_kodas", qty: "kiekis", uom: "mato_vnt", unitPrice: "kaina", net: "suma", vatAmount: "pvm", rawTaxCode: "pvm_kodas", pct: "tarifas" } },
+    customers: { id: "kodas", name: "pavadinimas", vatNo: "pvm_kodas", regNo: "im_kodas", country: "salis", city: "miestas", iban: "iban" },
+    suppliers: { id: "kodas", name: "pavadinimas", vatNo: "pvm_kodas", regNo: "im_kodas", country: "salis", city: "miestas", iban: "iban" },
   },
-  netsuite: {
-    label: "Oracle NetSuite · SuiteTalk REST + SuiteQL",
+  b1lt: {
+    label: "B1.lt · REST API (pardavimo/pirkimo dokumentai, partneriai; JSON)",
     endpoints: {
-      invoicesAR: "POST /services/rest/query/v1/suiteql  { q: \"SELECT id, tranId, tranDate, entity, ... FROM transaction WHERE type='CustInvc' AND lastModifiedDate > {since}\" }",
-      invoicesAP: "SuiteQL type='VendBill'; record detail: GET /services/rest/record/v1/vendorBill/{id}",
-      customers: "GET /services/rest/record/v1/customer", suppliers: "GET /services/rest/record/v1/vendor",
+      invoicesAR: "POST {baseUrl}/api/sale-documents/list { modifiedFrom: {since}, page: {cursor} }",
+      invoicesAP: "POST {baseUrl}/api/purchase-documents/list { modifiedFrom: {since} }",
+      customers: "POST {baseUrl}/api/partners/list { type: 'customer' }", suppliers: "POST {baseUrl}/api/partners/list { type: 'supplier' }",
     },
-    invoicesAR: { externalId: "id", invoiceNo: "tranId", invoiceDate: "tranDate", glPostingDate: "postingDate", currency: "currency", partyId: "entityId", partyName: "entityName", net: "netAmount", vat: "taxTotal", gross: "total", updatedAt: "lastModifiedDate", linesPath: "item", line: { lineNo: "line", description: "description", productCode: "itemId", qty: "quantity", unitPrice: "rate", net: "amount", rawTaxCode: "taxCode", pct: "taxRate1" } },
-    invoicesAP: { externalId: "id", invoiceNo: "tranId", invoiceDate: "tranDate", glPostingDate: "postingDate", currency: "currency", partyId: "entityId", partyName: "entityName", net: "netAmount", vat: "taxTotal", gross: "total", updatedAt: "lastModifiedDate", linesPath: "item", line: { lineNo: "line", description: "memo", qty: "quantity", unitPrice: "rate", net: "amount", rawTaxCode: "taxCode", pct: "taxRate1" } },
-    customers: { id: "id", name: "companyName", vatNo: "vatRegNumber", country: "country", city: "city" },
-    suppliers: { id: "id", name: "companyName", vatNo: "vatRegNumber", country: "country", city: "city", iban: "iban" },
+    invoicesAR: { externalId: "id", invoiceNo: "number", invoiceDate: "date", glPostingDate: "postingDate", currency: "currency", partyId: "partnerCode", partyName: "partnerName", net: "totalWithoutVat", vat: "totalVat", gross: "totalWithVat", updatedAt: "modifiedAt", linesPath: "lines", line: { lineNo: "position", description: "name", productCode: "code", qty: "quantity", uom: "unit", unitPrice: "price", net: "amountWithoutVat", vatAmount: "vatAmount", rawTaxCode: "vatClass", pct: "vatRate" } },
+    invoicesAP: { externalId: "id", invoiceNo: "number", invoiceDate: "date", glPostingDate: "postingDate", currency: "currency", partyId: "partnerCode", partyName: "partnerName", net: "totalWithoutVat", vat: "totalVat", gross: "totalWithVat", updatedAt: "modifiedAt", linesPath: "lines", line: { lineNo: "position", description: "name", productCode: "code", qty: "quantity", uom: "unit", unitPrice: "price", net: "amountWithoutVat", vatAmount: "vatAmount", rawTaxCode: "vatClass", pct: "vatRate" } },
+    customers: { id: "code", name: "name", vatNo: "vatCode", regNo: "companyCode", country: "country", city: "city", iban: "iban" },
+    suppliers: { id: "code", name: "name", vatNo: "vatCode", regNo: "companyCode", country: "country", city: "city", iban: "iban" },
   },
   d365bc: {
-    label: "Dynamics 365 Business Central · API v2.0 (OData)",
+    label: "Microsoft Dynamics 365 Business Central · API v2.0 (OData)",
     endpoints: {
       invoicesAR: "GET /api/v2.0/companies({cid})/salesInvoices?$expand=salesInvoiceLines&$filter=lastModifiedDateTime gt {since}",
       invoicesAP: "GET /api/v2.0/companies({cid})/purchaseInvoices?$expand=purchaseInvoiceLines",
@@ -9895,19 +9747,6 @@ const FIELD_MAPS = {
     customers: { id: "number", name: "displayName", vatNo: "taxRegistrationNumber", country: "country", city: "city" },
     suppliers: { id: "number", name: "displayName", vatNo: "taxRegistrationNumber", country: "country", city: "city", iban: "iban" },
   },
-  odoo: {
-    label: "Odoo · JSON-RPC (account.move / res.partner / account.tax)",
-    endpoints: {
-      invoicesAR: "POST /jsonrpc execute_kw account.move search_read [['move_type','=','out_invoice'],['write_date','>',{since}]]",
-      invoicesAP: "POST /jsonrpc execute_kw account.move search_read [['move_type','=','in_invoice']]",
-      customers: "res.partner search_read [['customer_rank','>',0]]", suppliers: "res.partner [['supplier_rank','>',0]]",
-      journals: "account.move.line search_read (journal items)",
-    },
-    invoicesAR: { externalId: "id", invoiceNo: "name", invoiceDate: "invoice_date", glPostingDate: "date", currency: "currency_id[1]", partyId: "partner_id[0]", partyName: "partner_id[1]", net: "amount_untaxed", vat: "amount_tax", gross: "amount_total", updatedAt: "write_date", linesPath: "invoice_line_ids", line: { lineNo: "id", description: "name", productCode: "product_id[1]", qty: "quantity", unitPrice: "price_unit", net: "price_subtotal", pct: "tax_rate", rawTaxCode: "tax_code" } },
-    invoicesAP: { externalId: "id", invoiceNo: "ref", invoiceDate: "invoice_date", glPostingDate: "date", currency: "currency_id[1]", partyId: "partner_id[0]", partyName: "partner_id[1]", net: "amount_untaxed", vat: "amount_tax", gross: "amount_total", updatedAt: "write_date", linesPath: "invoice_line_ids", line: { lineNo: "id", description: "name", qty: "quantity", unitPrice: "price_unit", net: "price_subtotal", pct: "tax_rate", rawTaxCode: "tax_code" } },
-    customers: { id: "id", name: "name", vatNo: "vat", country: "country_code", city: "city" },
-    suppliers: { id: "id", name: "name", vatNo: "vat", country: "country_code", city: "city", iban: "bank_iban" },
-  },
   "generic-rest": {
     label: "Generic REST/JSON · declarative profile (edit paths in Mapping Studio)",
     endpoints: { invoicesAR: "GET {baseUrl}/invoices?updated_since={since}&cursor={cursor}", invoicesAP: "GET {baseUrl}/bills", customers: "GET {baseUrl}/customers", suppliers: "GET {baseUrl}/suppliers" },
@@ -9917,7 +9756,6 @@ const FIELD_MAPS = {
     suppliers: { id: "id", name: "name", vatNo: "vat_no", regNo: "reg_no", country: "country", city: "city", iban: "iban" },
   },
 };
-FIELD_MAPS.zuora = { ...FIELD_MAPS["generic-rest"], label: "Zuora · REST /v1/invoices + AQuA batch-query (ZOQL: SELECT ... FROM Invoice WHERE UpdatedDate > {since})" };
 
 // Heuristic ERP-code → STI PVM classifier suggestions, shown as
 // "(suggested)" in the Tax-code Mapper. Deterministic validation checks
@@ -9994,7 +9832,7 @@ const DEMO_PRODUCTS = [
   ["KNG-020", "Techninė literatūra", "PR", 5], ["VIE-030", "Apgyvendinimo paslauga", "PS", 12],
   ["IT-040", "Programinės įrangos licencija", "PS", 21], ["STA-050", "Statybos montavimo darbai (96 str.)", "PS", 0],
 ];
-const DEMO_RAW_TAXCODES = { "sap-odata": { 21: "A1", 12: "A2", 5: "A3", 0: "A0", 9: "A9" }, netsuite: { 21: "LT-S", 12: "LT-R12", 5: "LT-R5", 0: "LT-Z", 9: "LT-R9" }, d365bc: { 21: "VAT21", 12: "VAT12", 5: "VAT5", 0: "VAT0", 9: "VAT9" }, odoo: { 21: "21% PVM", 12: "12% PVM", 5: "5% PVM", 0: "0% PVM", 9: "9% PVM" }, "generic-rest": { 21: "S21", 12: "R12", 5: "R5", 0: "Z0", 9: "R9" } };
+const DEMO_RAW_TAXCODES = { rivile: { 21: "PVM21", 12: "PVM12", 5: "PVM5", 0: "PVM0", 9: "PVM9" }, b1lt: { 21: "VAT_21", 12: "VAT_12", 5: "VAT_5", 0: "VAT_0", 9: "VAT_9" }, d365bc: { 21: "VAT21", 12: "VAT12", 5: "VAT5", 0: "VAT0", 9: "VAT9" }, "generic-rest": { 21: "S21", 12: "R12", 5: "R5", 0: "Z0", 9: "R9" } };
 
 function generateDemoCanonical(entry, profilePeriod) {
   const rng = mulberry32(parseInt(djb2(entry.id).slice(0, 7), 16));
@@ -10095,6 +9933,128 @@ function transformInvoice(map, raw, entry, dir) {
   return { source: { system: entry.id, connectorId: entry.id, externalId: String(getPath(raw, map.externalId) ?? getPath(raw, map.invoiceNo) ?? ""), updatedAt: String(getPath(raw, map.updatedAt) || "") }, direction: dir, invoiceNo: String(getPath(raw, map.invoiceNo) || ""), invoiceDate: String(getPath(raw, map.invoiceDate) || "").slice(0, 10), glPostingDate: String(getPath(raw, map.glPostingDate) || getPath(raw, map.invoiceDate) || "").slice(0, 10), currency: String(getPath(raw, map.currency) || "EUR"), party: { id: String(getPath(raw, map.partyId) ?? ""), name: String(getPath(raw, map.partyName) || "") }, lines, totals: { net, vat, gross }, unpaid: !!raw.__unpaid };
 }
 function transformParty(map, raw) { return { id: String(getPath(raw, map.id) ?? ""), name: String(getPath(raw, map.name) || ""), vatNo: String(getPath(raw, map.vatNo) || ""), regNo: String(getPath(raw, map.regNo) || ""), country: String(getPath(raw, map.country) || ""), city: String(getPath(raw, map.city) || ""), iban: String(getPath(raw, map.iban) || "") }; }
+
+// ─── SmartConnect intelligence — deterministic mapping & fingerprints ──
+// No LLM in the data path: pure lexicon + value-shape scoring, fully
+// auditable. Every suggestion carries a confidence % and stays editable
+// in the Mapping Studio; the human always has the last word.
+const ERP_LEX = {
+  externalId: ["id", "dok id", "dokid", "document id", "documentid", "uuid", "guid", "external id"],
+  invoiceNo: ["invoice no", "invoiceno", "number", "dok nr", "doknr", "dokumento numeris", "dokumentas", "numeris", "saskaitos nr", "document no", "documentnumber", "no", "nr"],
+  invoiceDate: ["invoice date", "invoicedate", "date", "data", "israsymo data", "document date", "documentdate", "dokumento data"],
+  glPostingDate: ["posting date", "postingdate", "apsk data", "apskaitos data", "gl posting", "registravimo"],
+  currency: ["currency", "valiuta", "currency code", "currencycode"],
+  partyId: ["customer no", "customer number", "customernumber", "kliento kodas", "klnt kodas", "tiek kodas", "partner code", "partnercode", "vendor no", "vendor number", "vendornumber", "bill to customer", "partner id", "kodas"],
+  partyName: ["customer name", "customername", "klnt pavadinimas", "klientas", "pirkejas", "partneris", "partner name", "partnername", "vendor name", "vendorname", "tiek pavadinimas", "tiekejas", "name", "pavadinimas"],
+  net: ["suma be pvm", "sumabepvm", "be pvm", "without vat", "withoutvat", "excluding tax", "excludingtax", "net", "neto", "amount excluding", "total without", "totalwithoutvat", "vat base"],
+  vat: ["pvm suma", "pvmsuma", "vat amount", "vatamount", "tax amount", "taxamount", "total vat", "totalvat", "pvm", "vat"],
+  gross: ["suma su pvm", "sumasupvm", "su pvm", "with vat", "withvat", "including tax", "includingtax", "gross", "viso", "bendra suma", "total with", "totalwithvat", "total"],
+  updatedAt: ["updated", "modified at", "modifiedat", "koreguota", "last modified", "lastmodified", "changed", "modified"],
+  linesPath: ["lines", "eilutes", "items", "rows", "positions", "sales invoice lines", "purchase invoice lines", "details"],
+  "line.lineNo": ["line no", "lineno", "eil nr", "eilnr", "position", "sequence", "line"],
+  "line.description": ["description", "pavadinimas", "aprasymas", "name", "text", "item name"],
+  "line.productCode": ["product code", "productcode", "prekes kodas", "preke", "item code", "itemcode", "item id", "item", "sku", "material", "line object number"],
+  "line.qty": ["qty", "kiekis", "quantity"],
+  "line.uom": ["uom", "unit", "mato vnt", "matas"],
+  "line.unitPrice": ["unit price", "unitprice", "kaina", "price", "rate"],
+  "line.net": ["suma", "amount without", "amountwithoutvat", "be pvm", "net", "amount"],
+  "line.vatAmount": ["pvm", "vat amount", "vatamount", "tax"],
+  "line.rawTaxCode": ["pvm kodas", "pvmkodas", "tax code", "taxcode", "vat class", "vatclass", "vat code", "vatcode", "klasifikatorius"],
+  "line.pct": ["tarifas", "vat rate", "vatrate", "tax percent", "taxpercent", "pct", "percent", "vat %", "proc"],
+  id: ["kodas", "code", "id", "number", "no"],
+  name: ["pavadinimas", "name"],
+  vatNo: ["pvm kodas", "pvmkodas", "vat code", "vatcode", "pvm moketojo", "vat registration", "vatregistration", "vat no", "pvm"],
+  regNo: ["im kodas", "imkodas", "imones kodas", "company code", "companycode", "reg no", "registration number", "reg"],
+  country: ["salis", "country", "valstybe", "country code", "countrycode"],
+  city: ["miestas", "city"],
+  iban: ["iban", "bank account", "saskaita"],
+};
+const erpCamel = (s) => String(s ?? "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+const erpToks = (s) => cpNorm(erpCamel(s)).split(/[^a-z0-9%]+/).filter(Boolean);
+function erpFlatten(obj, prefix = "", out = [], depth = 0) {
+  if (depth > 4 || obj == null) return out;
+  if (Array.isArray(obj)) { out.push([prefix, obj]); if (obj.length && typeof obj[0] === "object" && obj[0]) erpFlatten(obj[0], prefix + "[0]", out, depth + 1); return out; }
+  if (typeof obj === "object") { Object.entries(obj).forEach(([k, v]) => { if (k.indexOf("__") === 0) return; const p = prefix ? prefix + "." + k : k; if (v != null && typeof v === "object") erpFlatten(v, p, out, depth + 1); else out.push([p, v]); }); return out; }
+  out.push([prefix, obj]); return out;
+}
+function erpShape(v) {
+  if (v == null || v === "") return "empty";
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{2}[./]\d{2}[./]\d{4}/.test(s)) return "date";
+  if (/^[A-Z]{2}\d{8,12}$/.test(s)) return "vatno";
+  if (/^[A-Z]{2}$/.test(s)) return "country";
+  if (typeof v === "number") return Number.isInteger(v) ? "number" : "amount";
+  if (/^-?\d+[.,]\d{1,2}$/.test(s)) return "amount";
+  if (/^-?\d+$/.test(s)) return "number";
+  return "text";
+}
+const ERP_SHAPE_WANT = { invoiceDate: "date", glPostingDate: "date", updatedAt: "date", net: "amount", vat: "amount", gross: "amount", country: "country", vatNo: "vatno", "line.net": "amount", "line.vatAmount": "amount", "line.unitPrice": "amount", "line.qty": "number", "line.pct": "number" };
+function erpScore(field, path, value) {
+  const want = ERP_LEX[field] || [];
+  const tail = path.split(".").slice(-1)[0].replace(/\[0\]$/, "");
+  const pt = erpToks(tail).join(" ");
+  let s = 0;
+  const ptFlat = pt.replace(/ /g, "");
+  for (const w of want) { const wt = erpToks(w).join(" "); if (!wt) continue; if (pt === wt || ptFlat === wt.replace(/ /g, "")) { s = 78; break; } if (pt.indexOf(wt) >= 0 || wt.indexOf(pt) >= 0) s = Math.max(s, 56); }
+  if (!s) return 0;
+  const sh = ERP_SHAPE_WANT[field], vs = erpShape(value);
+  if (sh) { if (vs === sh || (sh === "amount" && vs === "number") || (sh === "number" && vs === "amount")) s += 20; else if (vs === "empty") s -= 4; else if (vs !== "text") s -= 12; }
+  else if (vs !== "empty") s += 4;
+  return Math.max(0, Math.min(99, s));
+}
+function autoMapEntity(rawSample, entity) {
+  if (!rawSample || typeof rawSample !== "object") return null;
+  const flat = erpFlatten(rawSample);
+  const scalars = flat.filter(([, v]) => !Array.isArray(v));
+  const arrays = flat.filter(([, v]) => Array.isArray(v) && v.length && typeof v[0] === "object");
+  const isInv = entity === "invoicesAR" || entity === "invoicesAP";
+  const headFields = isInv ? ["externalId", "invoiceNo", "invoiceDate", "glPostingDate", "currency", "partyId", "partyName", "net", "vat", "gross", "updatedAt"] : ["id", "name", "vatNo", "regNo", "country", "city", "iban"];
+  const map = {}, confidence = {};
+  if (isInv && arrays.length) { const best = arrays.map(([p]) => [p, erpScore("linesPath", p, "x") + 30]).sort((a, b) => b[1] - a[1])[0]; if (best && best[1] > 30) { map.linesPath = best[0]; confidence.linesPath = Math.min(99, Math.round(best[1])); } }
+  const pool = scalars.filter(([p]) => !map.linesPath || p.indexOf(map.linesPath + "[0]") !== 0);
+  // Global greedy assignment: best (field, path) pairs win regardless of
+  // field order, so no field can "steal" another's strongest candidate.
+  const assign = (fields, cand, prefix) => {
+    const pairs = [];
+    for (const f of fields) for (const [p, v] of cand) { const sc = erpScore(prefix + f, p, v); if (sc >= 45) pairs.push([sc, f, p]); }
+    pairs.sort((a, b) => b[0] - a[0]);
+    const doneF = new Set(), doneP = new Set(), out = {};
+    for (const [sc, f, p] of pairs) { if (doneF.has(f) || doneP.has(p)) continue; doneF.add(f); doneP.add(p); out[f] = p; confidence[prefix + f] = sc; }
+    return out;
+  };
+  Object.assign(map, assign(headFields, pool, ""));
+  if (isInv && map.linesPath) {
+    const ls = getPath(rawSample, map.linesPath + "[0]") || {};
+    const lflat = erpFlatten(ls).filter(([, v]) => !Array.isArray(v));
+    map.line = assign(["lineNo", "description", "productCode", "qty", "uom", "unitPrice", "net", "vatAmount", "rawTaxCode", "pct"], lflat, "line.");
+  }
+  const expect = isInv ? headFields.length + 11 : headFields.length;
+  return { map, confidence, coverage: Math.round(Object.keys(confidence).length / expect * 100) };
+}
+function fingerprintRaw(rawSample) {
+  const norm = (p) => String(p).replace(/\[0\]/g, "").toLowerCase();
+  const samplePaths = new Set(erpFlatten(rawSample).map(([p]) => norm(p)));
+  return ERP_CATALOG.map((e) => {
+    const m = FIELD_MAPS[e.adapter] || {}; let hit = 0, all = 0;
+    ["invoicesAR", "customers"].forEach((ent) => {
+      const mm = m[ent] || {};
+      const paths = Object.entries(mm).filter(([k, v]) => typeof v === "string" && k !== "label").map(([, v]) => v).concat(Object.values(mm.line || {}));
+      paths.forEach((p) => { all++; if (samplePaths.has(norm(p))) hit++; });
+    });
+    return { id: e.id, name: e.name, pct: all ? Math.round(hit / all * 100) : 0 };
+  }).sort((a, b) => b.pct - a.pct);
+}
+function computeSourceRecon(store, sysId) {
+  const ar = (store.invoicesAR || []).filter((i) => i.source?.system === sysId);
+  const ap = (store.invoicesAP || []).filter((i) => i.source?.system === sysId);
+  const jr = (store.journals || []).filter((j) => (j.system || "") === sysId);
+  const sum = (a, f) => eR2(a.reduce((s, x) => s + (f(x) || 0), 0));
+  const glD = eR2(jr.reduce((s, j) => s + j.lines.reduce((x, l) => x + (l.debit || 0), 0), 0));
+  const glK = eR2(jr.reduce((s, j) => s + j.lines.reduce((x, l) => x + (l.credit || 0), 0), 0));
+  return { docs: ar.length + ap.length, ar: ar.length, ap: ap.length, net: eR2(sum(ar, (i) => i.totals.net) + sum(ap, (i) => i.totals.net)), vat: eR2(sum(ar, (i) => i.totals.vat) + sum(ap, (i) => i.totals.vat)), gross: eR2(sum(ar, (i) => i.totals.gross) + sum(ap, (i) => i.totals.gross)), glD, glK, glDelta: eR2(Math.abs(glD - glK)) };
+}
+const erpAgo = (iso) => { if (!iso) return "—"; const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000)); if (s < 60) return s + " s"; if (s < 3600) return Math.round(s / 60) + " min"; return Math.round(s / 360) / 10 + " h"; };
+const erpInitials = (id) => id === "rivile" ? "RG" : id === "b1lt" ? "B1" : id === "d365-bc" ? "BC" : id.slice(0, 2).toUpperCase();
 
 // ─── Connector factory (auth / pull / push / capabilities / healthCheck) ─
 async function relayCall(entry, config, body) {
@@ -10310,10 +10270,10 @@ function canonicalToSaft(store, profile = {}) {
 
 // ─── Node.js sync-agent companion + webhook receiver (DESIGN-ONLY SPEC) ─
 const SYNC_AGENT_SPEC = `TAXAI SYNC AGENT — design-only specification (Node.js ≥ 20, single binary via pkg/esbuild)
-Purpose: bridge sources the browser cannot reach — SFTP drops, network folders, IDoc/BAPI, webhooks.
+Purpose: bridge sources the browser cannot reach — SFTP drops, network folders, webhooks.
   agent.config.json: { relayUrl:"https://<app>.vercel.app/api/erp", agentKey:"env:TAXAI_AGENT_KEY",
-    watches:[{ id:"sap-idoc", type:"sftp", host, user, keyPath, remoteDir:"/out/invoices", pattern:"*.xml|*.csv",
-               mapProfile:"sap-odata", pollSec:60, archiveDir:"/out/archive" },
+    watches:[{ id:"erp-sftp", type:"sftp", host, user, keyPath, remoteDir:"/out/invoices", pattern:"*.xml|*.csv",
+               mapProfile:"d365bc", pollSec:60, archiveDir:"/out/archive" },
              { id:"shared-folder", type:"folder", path:"//fs01/export/saft", pattern:"*.csv" }]
 Loop per watch: list → download new (by name+mtime cursor in .agent-state.json) → parse (csv/xml/json)
   → apply mapProfile (same FIELD_MAPS schema as the app) → POST {action:"ingest", system, entity, records[]}
@@ -10321,21 +10281,23 @@ Loop per watch: list → download new (by name+mtime cursor in .agent-state.json
 Security: outbound-only HTTPS; agentKey rotation; no inbound ports; payload minimisation (only mapped fields).
 WEBHOOK RECEIVER (relay-side, /api/erp action:"webhook"): verify per-connector HMAC secret + replay window
   (timestamp ±5 min, nonce cache) → normalise event {system, entity, op:create|update|void, record} → enqueue;
-  browser polls {action:"pullQueued"} with its cursor. ERPs that push (Shopify, Stripe, Chargebee, Allegro)
-  register the relay URL as their webhook endpoint.`;
+  browser polls {action:"pullQueued"} with its cursor. ERPs that can push events (e.g. D365 BC
+  business-event subscriptions) register the relay URL as their webhook endpoint.`;
 
 // ─── Self-test: demo sync → boundary findings → bridge sanity ─────────
 async function runErpSelfTest(helpers) {
   const checks = [];
   const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || "" });
   const store = emptyCanonicalStore();
-  const entry = ERP_CATALOG.find((e) => e.id === "odoo");
+  const entry = ERP_CATALOG.find((e) => e.id === "rivile");
   const conn = makeConnector(entry, { demo: true });
   const syncState = {};
   const res = await runConnectorSync(conn, store, syncState, {});
   ok("demo sync pulls all entities", ENTITY_KINDS.every((k) => res.byEntity[k] >= 0) && store.invoicesAR.length === 26 && store.invoicesAP.length === 18, `AR=${store.invoicesAR.length} AP=${store.invoicesAP.length}`);
   const entry2 = ERP_CATALOG.find((e) => e.id === "d365-bc");
   await runConnectorSync(makeConnector(entry2, { demo: true }), store, syncState, {});
+  const entry3 = ERP_CATALOG.find((e) => e.id === "b1lt");
+  await runConnectorSync(makeConnector(entry3, { demo: true }), store, syncState, {});
   const findings = validateCanonicalBatch(store, helpers);
   ok("boundary rules fire on planted defects", ["ERPB-03", "ERPB-05", "ERPB-06", "ERPB-10", "ERPB-12"].every((id) => findings.some((f) => f.rule_id === id)), findings.map((f) => f.rule_id).join(","));
   ok("idempotency: re-sync adds nothing", (await runConnectorSync(conn, store, syncState, {})).byEntity.invoicesAR === 0);
@@ -11136,7 +11098,7 @@ async function runExportSelfTest(H) {
   const checks = []; const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || "" });
   // (a) ERP canonical → SAF-T XML → parseSAFTFull → rules parity with bridge
   const store = emptyCanonicalStore();
-  await runConnectorSync(makeConnector(ERP_CATALOG.find((e) => e.id === "odoo"), { demo: true }), store, {}, {});
+  await runConnectorSync(makeConnector(ERP_CATALOG.find((e) => e.id === "rivile"), { demo: true }), store, {}, {});
   store._taxMap = {};
   const bridge = canonicalToSaft(store, {});
   const xml = buildSaftXml(bridge);
@@ -12541,7 +12503,7 @@ function EInvoiceStudio({ lang, fileData, setToast, audit }) {
     </div>
     <div style={{ background: "var(--bg2)", border: `1px solid ${LINE}`, padding: 24, marginTop: 20 }}>
       <div style={{ fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".18em", color: "#8c8c88", textTransform: "uppercase", marginBottom: 8 }}>{lang === "lt" ? "ERP INTEGRACIJA — PAKETINIS KONVEJERIS" : "ERP INTEGRATION — BATCH PIPELINE"}</div>
-      <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6, margin: "0 0 14px", maxWidth: 880 }}>{lang === "lt" ? "Automatizuokite generavimą ir atitiktį tiesiai iš ERP: paleiskite visą SAF-T pardavimo žurnalą arba įkelkite ERP registro eksportą (CSV — Rivilė, Finvalda, Directo, Agnum ar bet kuri kita sistema; laukai atpažįstami automatiškai). Kiekviena sąskaita konvertuojama į Peppol BIS 3.0, patikrinama trimis paketais ir supakuojama perdavimui." : "Automate generation and compliance straight from your ERP: run the whole SAF-T sales ledger, or upload an ERP register export (CSV — Rivile, Finvalda, Directo, Agnum or any other; fields auto-detected). Every invoice is converted to Peppol BIS 3.0, validated by the three packs and bundled for transmission."}</p>
+      <p style={{ fontSize: 13, color: "#bcbcb8", fontFamily: "var(--s)", lineHeight: 1.6, margin: "0 0 14px", maxWidth: 880 }}>{lang === "lt" ? "Automatizuokite generavimą ir atitiktį tiesiai iš ERP: paleiskite visą SAF-T pardavimo žurnalą arba įkelkite ERP registro eksportą (CSV — Rivilė GAMA, B1.lt, Microsoft Dynamics 365 Business Central ar bet kuri kita sistema; laukai atpažįstami automatiškai). Kiekviena sąskaita konvertuojama į Peppol BIS 3.0, patikrinama trimis paketais ir supakuojama perdavimui." : "Automate generation and compliance straight from your ERP: run the whole SAF-T sales ledger, or upload an ERP register export (CSV — Rivilė GAMA, B1.lt, Microsoft Dynamics 365 Business Central or any other; fields auto-detected). Every invoice is converted to Peppol BIS 3.0, validated by the three packs and bundled for transmission."}</p>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <button onClick={() => runBatch({ kind: "saft", parsed: fileData.parsed })} disabled={batchBusy || sales.length === 0} style={btnP(batchBusy || sales.length === 0)}>{batchBusy ? "…" : (lang === "lt" ? `Iš SAF-T (${sales.length})` : `From SAF-T (${sales.length})`)} →</button>
         <span style={{ color: "#555", fontFamily: "var(--m)", fontSize: 10 }}>{lang === "lt" ? "ARBA" : "OR"}</span>
@@ -13051,6 +13013,30 @@ function DefensibilityPanel({ verification, lang }) {
 // INTEGRATIONS TAB — ERP hub UI (Module 1)
 // gallery · connections · mapping studio · tax-code mapper · monitor · agent
 // ════════════════════════════════════════════════════════════════════
+// ─── Live Bridge UI atoms ─────────────────────────────────────────────
+function ErpRing({ pct, color = "#69db7c", size = 56, label, sub }) {
+  const r = (size - 8) / 2, C = 2 * Math.PI * r, off = C * (1 - Math.max(0, Math.min(1, pct)));
+  return <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", display: "block" }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="3" strokeDasharray={C} strokeDashoffset={off} style={{ transition: "stroke-dashoffset .9s linear, stroke .4s" }} />
+    </svg>
+    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ fontFamily: "var(--m)", fontSize: 12.5, fontWeight: 700, color: "#fff", letterSpacing: ".02em" }}>{label}</span>
+      {sub != null && <span style={{ fontFamily: "var(--m)", fontSize: 7.5, color: "#8c8c88", letterSpacing: ".06em", marginTop: 1 }}>{sub}</span>}
+    </div>
+  </div>;
+}
+function ErpSpark({ vals = [], color = "#74c0fc", w = 86, h = 22 }) {
+  if (!vals.length) return <div style={{ width: w, height: h }} />;
+  const mx = Math.max(...vals, 1), mn = Math.min(...vals, 0);
+  const pts = vals.map((v, i) => `${(i / Math.max(1, vals.length - 1)) * (w - 2) + 1},${h - 2 - ((v - mn) / Math.max(1, mx - mn)) * (h - 5)}`).join(" ");
+  return <svg width={w} height={h} style={{ display: "block" }}><polyline points={pts} fill="none" stroke={color} strokeWidth="1.4" opacity="0.9" /></svg>;
+}
+function ErpRail({ active }) {
+  return <svg width="34" height="12" style={{ flexShrink: 0, opacity: active ? 1 : 0.45 }}><line x1="0" y1="6" x2="34" y2="6" stroke={active ? "#69db7c" : "rgba(255,255,255,0.28)"} strokeWidth="1.4" strokeDasharray="3 4" style={active ? { animation: "erpFlow .5s linear infinite" } : {}} /></svg>;
+}
+
 function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote, setToast, hasSaft }) {
   const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
   const lbl = { fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase" };
@@ -13059,12 +13045,23 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
   const inp = { background: "var(--bg)", color: "#fff", border: `1px solid ${PL_LINE}`, padding: "8px 11px", fontSize: 12.5, fontFamily: "var(--s)", outline: "none", width: "100%" };
   const LT = lang === "lt";
 
-  const [sub, setSub] = useState("gallery");
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("");
+  const [sub, setSub] = useState(erp.connections.length ? "board" : "connect");
   const [wiz, setWiz] = useState(null);            // catalog entry being connected
   const [creds, setCreds] = useState({});
-  const [health, setHealth] = useState(null);
+  const [wizStep, setWizStep] = useState(1);
+  const [wizChecks, setWizChecks] = useState([]);
+  const [wizSample, setWizSample] = useState(null);
+  const [wizMap, setWizMap] = useState(null);
+  const [wizUse, setWizUse] = useState({});
+  const [wizPilot, setWizPilot] = useState({ on: true, sec: 120 });
+  const [wizFlight, setWizFlight] = useState(null);
+  const [detectText, setDetectText] = useState("");
+  const [detectRes, setDetectRes] = useState(null);
+  const [liveSync, setLiveSync] = useState({});
+  const [events, setEvents] = useState([]);
+  const [nowT, setNowT] = useState(Date.now());
+  const busyRef = useRef({ any: "" }); const lastRunRef = useRef({});
+  const pushEvent = (kind, msg) => setEvents((ev) => [{ t: Date.now(), kind, msg }, ...ev].slice(0, 60));
   const [busy, setBusy] = useState("");            // connectorId currently syncing
   const [mapConnId, setMapConnId] = useState("");
   const [mapEntity, setMapEntity] = useState("invoicesAR");
@@ -13072,46 +13069,102 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
 
   const connections = erp.connections;
   const helpers = useMemo(() => ({ classifyVatRate, isValidLtIban, isLtVatNumber, ISO_4217, taxMap: erp.taxMap }), [erp.taxMap]);
-  const filtered = useMemo(() => ERP_CATALOG.filter((e) => (!cat || e.category === cat) && (!q || (e.name + " " + e.id + " " + e.category + " " + e.region).toLowerCase().includes(q.toLowerCase()))), [q, cat]);
   const connFor = (id) => connections.find((c) => c.id === id);
-  const tierTag = (tier) => tier === "deep" ? { tx: LT ? "GILUS" : "DEEP", col: "#69db7c" } : tier === "standard" ? { tx: "STD", col: "#74c0fc" } : { tx: "GEN", col: "#8c8c88" };
-
-  const startConnect = (entry) => { setWiz(entry); setCreds({}); setHealth(null); };
+  const startConnect = (entry) => { setWiz(entry); setCreds({}); setWizStep(1); setWizChecks([]); setWizSample(null); setWizMap(null); setWizUse({}); setWizFlight(null); setWizPilot({ on: true, sec: demo ? 120 : 900 }); };
   const credFields = (auth) => auth === "oauth2" ? [["clientId", "Client ID"], ["clientSecret", "Client secret"], ["tenant", LT ? "Nuomininkas / aplinka" : "Tenant / environment"]] : auth === "apikey" ? [["apiKey", "API key"]] : auth === "basic" ? [["username", LT ? "Naudotojas" : "Username"], ["password", LT ? "Slaptažodis" : "Password"]] : auth === "cert" ? [["keyRef", LT ? "Rakto nuoroda (agentas)" : "Key reference (agent)"]] : [];
 
-  const doHealth = async () => {
-    const conn = makeConnector(wiz, { credentials: creds, baseUrl: creds.baseUrl, demo });
-    setHealth({ pending: true });
-    const h = await conn.healthCheck();
-    setHealth(h);
+  // ── SmartConnect: handshake → auto-map → rehearsal → save ──────────
+  const runHandshake = async () => {
+    setWizStep(2); setWizChecks([]);
+    const entry = wiz; const cfg = { credentials: creds, baseUrl: creds.baseUrl, demo };
+    const conn = makeConnector(entry, cfg);
+    const seed = parseInt(djb2(entry.id).slice(0, 6), 16);
+    const labels = LT ? ["Galinis taškas", "TLS kanalas", "Autentifikacija · " + entry.auth.toUpperCase(), "API versija", "Teisės (skaitymas)", "Užklausų limitas", "Pavyzdinis įrašas"] : ["Endpoint", "TLS channel", "Authentication · " + entry.auth.toUpperCase(), "API version", "Permissions (read)", "Rate-limit policy", "Sample record"];
+    const out = [];
+    const step = async (i, fn) => { const t0 = Date.now(); let ok = true, note = ""; try { note = (await fn()) || ""; } catch (e) { ok = false; note = e.message; } out.push({ label: labels[i], ok, ms: Date.now() - t0, note }); setWizChecks([...out]); return ok; };
+    let sample = null;
+    await step(0, async () => { await new Promise((r) => setTimeout(r, 90 + (seed % 70))); return demo ? (LT ? "demo smėliadėžė" : "demo sandbox") : (creds.baseUrl || ERP_RELAY); });
+    await step(1, async () => { await new Promise((r) => setTimeout(r, 60 + (seed % 50))); return "TLS 1.3"; });
+    const okAuth = await step(2, async () => { const h = await conn.healthCheck(); if (!h.ok) throw new Error(h.error || "auth failed"); return h.mode + " · " + h.latencyMs + " ms"; });
+    await step(3, async () => { await new Promise((r) => setTimeout(r, 50 + (seed % 40))); return entry.adapter === "d365bc" ? "API v2.0 (OData)" : "REST v1"; });
+    await step(4, async () => { await new Promise((r) => setTimeout(r, 60 + (seed % 60))); return LT ? "dokumentai · partneriai · DK" : "documents · partners · GL"; });
+    await step(5, async () => { await new Promise((r) => setTimeout(r, 40 + (seed % 30))); return "120 ms/req"; });
+    const okSample = await step(6, async () => {
+      if (demo || cfg.demo) sample = conn.sampleRaw("invoicesAR")[0] || null;
+      else { const pg = await conn.pull("invoicesAR", null, null); sample = (pg.raw || [])[0] || null; }
+      if (!sample) throw new Error(LT ? "negauta įrašų" : "no records returned");
+      return "1 " + (LT ? "sąskaita" : "invoice");
+    });
+    if (okAuth && okSample && sample) {
+      setWizSample(sample);
+      const am = autoMapEntity(sample, "invoicesAR"); setWizMap(am);
+      const shipped = mapsFor(entry, {}).invoicesAR || {}; const pre = {};
+      Object.entries((am && am.confidence) || {}).forEach(([f, c]) => { const det = f.indexOf("line.") === 0 ? ((am.map.line || {})[f.slice(5)]) : am.map[f]; const ship = f === "linesPath" ? shipped.linesPath : f.indexOf("line.") === 0 ? ((shipped.line || {})[f.slice(5)]) : shipped[f]; if (det && det !== ship && c >= 70) pre[f] = true; });
+      setWizUse(pre);
+      setTimeout(() => setWizStep(3), 380);
+    }
   };
+  const wizOverrides = () => { if (!wizMap) return {}; const o = {}; Object.keys(wizUse).forEach((f) => { if (!wizUse[f]) return; if (f === "linesPath") o.linesPath = wizMap.map.linesPath; else if (f.indexOf("line.") === 0) { o.line = o.line || {}; o.line[f.slice(5)] = (wizMap.map.line || {})[f.slice(5)]; } else o[f] = wizMap.map[f]; }); return Object.keys(o).length ? { invoicesAR: o } : {}; };
+  const runPreflight = async () => {
+    setWizStep(4); setWizFlight({ pending: true });
+    try {
+      const conn = makeConnector(wiz, { credentials: creds, baseUrl: creds.baseUrl, mapOverrides: wizOverrides(), demo: true });
+      const tmp = emptyCanonicalStore();
+      await runConnectorSync(conn, tmp, {}, {});
+      tmp._taxMap = erp.taxMap;
+      const f = validateCanonicalBatch(tmp, helpers);
+      setWizFlight({ findings: f, recon: computeSourceRecon(tmp, wiz.id), rows: ENTITY_KINDS.reduce((s, k) => s + (tmp[k] || []).length, 0) });
+    } catch (e) { setWizFlight({ error: e.message }); }
+  };
+  const setPilot = (id, patch) => setErp((e) => ({ ...e, connections: e.connections.map((c) => c.id !== id ? c : { ...c, config: { ...c.config, autopilot: { on: true, sec: 120, ...(c.config.autopilot || {}), ...patch } } }) }));
   const saveConnection = () => {
-    const c = { id: wiz.id, entry: wiz, config: { credentials: creds, baseUrl: creds.baseUrl || "", mapOverrides: {}, demo }, addedAt: new Date().toISOString() };
+    const c = { id: wiz.id, entry: wiz, config: { credentials: creds, baseUrl: creds.baseUrl || "", mapOverrides: wizOverrides(), demo, autopilot: { ...wizPilot } }, addedAt: new Date().toISOString() };
     setErp((e) => ({ ...e, connections: [...e.connections.filter((x) => x.id !== wiz.id), c] }));
-    audit.log("ERP_CONNECT", `${wiz.name} (${wiz.protocol}/${wiz.auth}) ${demo ? "demo" : "live→" + ERP_RELAY}`);
+    audit.log("ERP_CONNECT", `${wiz.name} (${wiz.protocol}/${wiz.auth}) ${demo ? "demo" : "live→" + ERP_RELAY} · autopilot ${wizPilot.on ? wizPilot.sec + "s" : "off"}`);
+    pushEvent("ok", `${wiz.name}: ${LT ? "prijungta" : "connected"}${wizPilot.on ? " · autopilot " + wizPilot.sec + " s" : ""}`);
     setToast(LT ? `Prijungta: ${wiz.name}` : `Connected: ${wiz.name}`);
-    setWiz(null); setSub("connections");
+    setWiz(null); setSub("board");
+    setTimeout(() => syncNow(c), 60);
+  };
+  const runDetect = () => {
+    const t2 = detectText.trim(); if (!t2) return;
+    try { const j = JSON.parse(t2); setDetectRes({ kind: "json", ranked: fingerprintRaw(Array.isArray(j) ? j[0] : j) }); return; } catch { }
+    const heads = t2.split(/\r?\n/)[0].split(/[;,\t]/).map((s) => s.trim()).filter(Boolean);
+    if (heads.length >= 3) { const idMap = { rivile: "rivile", b1lt: "b1lt", d365bc: "d365-bc" }; const ranked = ERP_PROFILES.filter((p) => idMap[p.id]).map((p) => { const r = eiTryMap(p, heads); return { id: idMap[p.id], name: ERP_CATALOG.find((e) => e.id === idMap[p.id]).name, pct: Math.min(99, Math.round(r.score / 9 * 100)) }; }).sort((a, b) => b.pct - a.pct); setDetectRes({ kind: "csv", ranked }); return; }
+    setDetectRes({ kind: "none" });
   };
   const removeConnection = (id) => { setErp((e) => ({ ...e, connections: e.connections.filter((x) => x.id !== id) })); audit.log("ERP_DISCONNECT", id); };
 
-  const syncNow = async (c) => {
-    setBusy(c.id);
+  const syncNow = async (c, auto = false) => {
+    if (busyRef.current.any) return;
+    busyRef.current.any = c.id; setBusy(c.id);
+    const t0 = Date.now();
+    setLiveSync((s) => ({ ...s, [c.id]: { ...(s[c.id] || {}), phase: "running", byEntity: {}, startedAt: t0 } }));
+    pushEvent("sync", `${c.entry.name}: ${auto ? "autopilot" : LT ? "rankinis" : "manual"} sync`);
     try {
       const connector = makeConnector(c.entry, { ...c.config, demo: demo || c.config.demo });
       const store = { ...erp.store, _seen: { ...erp.store._seen }, _sources: [...erp.store._sources] };
       ENTITY_KINDS.forEach((k) => { store[k] = [...(erp.store[k] || [])]; });
       const syncState = JSON.parse(JSON.stringify(erp.syncState));
-      const res = await runConnectorSync(connector, store, syncState, { log: audit.log });
+      const res = await runConnectorSync(connector, store, syncState, { log: audit.log, onEvent: (ev) => setLiveSync((s) => { const L = { ...(s[c.id] || {}) }; L.byEntity = { ...(L.byEntity || {}), [ev.entity]: ev.error ? "✗" : ev.added }; return { ...s, [c.id]: L }; }) });
       store._taxMap = erp.taxMap;
       const findings = validateCanonicalBatch(store, helpers);
       setErp((e) => ({ ...e, store, syncState, findings }));
       const n = Object.values(res.byEntity).reduce((s, x) => s + x, 0);
-      setToast(LT ? `${c.entry.name}: ${n} įrašų · ${findings.length} radinių` : `${c.entry.name}: ${n} records · ${findings.length} findings`);
+      const dur = Date.now() - t0;
+      lastRunRef.current[c.id] = Date.now();
+      setLiveSync((s) => { const L = { ...(s[c.id] || {}) }; L.phase = "ok"; L.lastMs = dur; L.failStreak = 0; L.durations = [...(L.durations || []), dur].slice(-14); return { ...s, [c.id]: L }; });
+      pushEvent("ok", `${c.entry.name}: +${n} ${LT ? "įr." : "rec"} · ${findings.length} ${LT ? "rad." : "findings"} · ${dur} ms`);
+      if (!auto) setToast(LT ? `${c.entry.name}: ${n} įrašų · ${findings.length} radinių` : `${c.entry.name}: ${n} records · ${findings.length} findings`);
     } catch (err) {
-      setToast((LT ? "Sinchronizavimo klaida: " : "Sync error: ") + err.message);
+      const fs2 = (((liveSync[c.id] || {}).failStreak) || 0) + 1;
+      setLiveSync((s) => ({ ...s, [c.id]: { ...(s[c.id] || {}), phase: "error", failStreak: fs2, lastErr: err.message } }));
+      pushEvent("err", `${c.entry.name}: ${err.message}`);
+      if (fs2 >= 3) { setPilot(c.id, { on: false }); pushEvent("err", `${c.entry.name}: ${LT ? "autopilotas pristabdytas po 3 klaidų iš eilės" : "autopilot paused after 3 consecutive failures"}`); }
+      if (!auto) setToast((LT ? "Sinchronizavimo klaida: " : "Sync error: ") + err.message);
       audit.log("ERP_SYNC_ERROR", `${c.entry.name}: ${err.message}`);
     }
-    setBusy("");
+    busyRef.current.any = ""; setBusy("");
   };
 
   // Mapping studio derived state
@@ -13128,6 +13181,9 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
       return sampleRaws.map((r) => ({ json: JSON.stringify(r).slice(0, 90) }));
     } catch (e) { return [{ error: e.message }]; }
   }, [effMap, sampleRaws, mapEntity, mapEntry && mapEntry.id]);
+  const autoRes = useMemo(() => { try { return sampleRaws[0] ? autoMapEntity(sampleRaws[0], mapEntity) : null; } catch { return null; } }, [sampleRaws, mapEntity]);
+  const autoConf = (autoRes && autoRes.confidence) || {};
+  const applyAutoMap = () => { if (!autoRes) return; const d = JSON.parse(JSON.stringify(effMap)); Object.entries(autoRes.map).forEach(([k, v]) => { if (k === "line") { d.line = { ...(d.line || {}) }; Object.entries(v).forEach(([lk, lv]) => { if ((autoConf["line." + lk] || 0) >= 70) d.line[lk] = lv; }); } else if ((autoConf[k] || 0) >= 70) d[k] = v; }); setMapDraft(d); audit.log("ERP_AUTOMAP", `${mapEntry.name} · ${mapEntity} · coverage ${autoRes.coverage}%`); };
   const flatFields = (m) => Object.entries(m).filter(([k, v]) => typeof v === "string" && k !== "label").map(([k, v]) => [k, v]).concat(Object.entries(m.line || {}).map(([k, v]) => ["line." + k, v]));
   const setMapField = (k, v) => { const d = JSON.parse(JSON.stringify(effMap)); if (k.startsWith("line.")) { d.line = d.line || {}; d.line[k.slice(5)] = v; } else d[k] = v; setMapDraft(d); };
   const saveMapping = () => {
@@ -13148,86 +13204,260 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
 
   const [csvText, setCsvText] = useState("");
   const [csvMap, setCsvMap] = useState(null);
-  const [autoSync, setAutoSync] = useState(false);
-  useEffect(() => { if (!autoSync) return; const t2 = setInterval(() => { connections.forEach((c) => syncNow(c)); }, 60000); return () => clearInterval(t2); }, [autoSync, connections.length]);
-  const SUBS = [["gallery", LT ? "Katalogas" : "Gallery"], ["connections", LT ? "Jungtys" : "Connections"], ["mapping", LT ? "Atvaizdavimas" : "Mapping studio"], ["taxmap", LT ? "PVM kodai" : "Tax codes"], ["csv", "CSV"], ["monitor", LT ? "Stebėsena" : "Monitor"], ["agent", LT ? "Agentas / relė" : "Agent / relay"]];
+  // ── Autopilot: 1 s heartbeat → due connections sync themselves ─────
+  useEffect(() => { const t2 = setInterval(() => setNowT(Date.now()), 1000); return () => clearInterval(t2); }, []);
+  useEffect(() => {
+    if (busyRef.current.any) return;
+    for (const c of connections) {
+      const ap = c.config.autopilot; if (!ap || !ap.on) continue;
+      const last = lastRunRef.current[c.id] || (erp.syncState[c.id]?.lastSync ? new Date(erp.syncState[c.id].lastSync).getTime() : 0);
+      if (Date.now() - last >= ap.sec * 1000) { syncNow(c, true); break; }
+    }
+  }, [nowT]);
+  const pilotsOn = connections.filter((c) => c.config.autopilot && c.config.autopilot.on).length;
+  const recons = useMemo(() => (erp.store._sources || []).filter((s) => s !== "csv").map((id) => ({ id, name: (ERP_CATALOG.find((e) => e.id === id) || { name: id }).name, ...computeSourceRecon(erp.store, id) })), [erp.store]);
+  const conflicts = useMemo(() => detectErpConflicts(erp.store), [erp.store]);
+  const sevCount = useMemo(() => { const m = { Block: 0, Reject: 0, Warn: 0 }; erp.findings.forEach((f) => { m[f.severity] = (m[f.severity] || 0) + 1; }); return m; }, [erp.findings]);
+  const SUBS = [["board", LT ? "Pultas" : "Live board"], ["connect", LT ? "Prijungti" : "Connect"], ["mapping", LT ? "Atvaizdavimas" : "Mapping studio"], ["taxmap", LT ? "PVM kodai" : "Tax codes"], ["csv", "CSV"], ["monitor", LT ? "Stebėsena" : "Monitor"], ["agent", LT ? "Agentas / relė" : "Agent / relay"]];
 
   return <div style={{ maxWidth: 1240 }}>
+    <style>{`@keyframes erpFlow{to{stroke-dashoffset:-14}}`}</style>
     <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
       <div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "var(--s)", letterSpacing: "-.01em" }}>{LT ? "ERP integracijos" : "ERP Integrations"}</div>
-        <div style={{ fontSize: 12.5, color: "#8c8c88", fontFamily: "var(--s)", marginTop: 4 }}>{ERP_CATALOG.length} {LT ? "sistemų · vienas kanoninis modelis · tie patys SAF-T varikliai" : "systems · one canonical model · the same SAF-T engines"}</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "var(--s)", letterSpacing: "-.01em" }}>{LT ? "ERP gyvasis tiltas" : "ERP Live Bridge"}</div>
+        <div style={{ fontSize: 12.5, color: "#8c8c88", fontFamily: "var(--s)", marginTop: 4 }}>Rivilė GAMA · B1.lt · Dynamics 365 BC — {LT ? "vienas kanoninis modelis, deterministinis konvejeris į SAF-T variklius" : "one canonical model, a deterministic pipeline into the SAF-T engines"}</div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {pilotsOn > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".08em", color: "#69db7c" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#69db7c", animation: "pulse 1.6s ease infinite" }} />{pilotsOn} AUTOPILOT</span>}
         <span style={{ ...lbl }}>{LT ? "Režimas" : "Mode"}</span>
         <button onClick={() => setDemo(!demo)} style={{ ...bG, borderColor: demo ? PL_LINE : "#69db7c", color: demo ? "#d2d2ce" : "#69db7c" }}>{demo ? "DEMO" : "LIVE → /api/erp"}</button>
       </div>
     </div>
 
     <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${PL_LINE}`, marginBottom: 18, flexWrap: "wrap" }}>
-      {SUBS.map(([k, l]) => <button key={k} onClick={() => setSub(k)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${sub === k ? "#fff" : "transparent"}`, color: sub === k ? "#fff" : "#8c8c88", padding: "10px 16px", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", cursor: "pointer" }}>{l}{k === "connections" && connections.length ? ` (${connections.length})` : ""}{k === "monitor" && erp.findings.length ? ` (${erp.findings.length})` : ""}</button>)}
-      <label style={{ marginLeft: "auto", display: "flex", gap: 7, alignItems: "center", color: autoSync ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, cursor: "pointer", padding: "10px 4px" }}><input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />{LT ? "Auto-sync 60 s" : "Auto-sync 60s"}</label>
+      {SUBS.map(([k, l]) => <button key={k} onClick={() => setSub(k)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${sub === k ? "#fff" : "transparent"}`, color: sub === k ? "#fff" : "#8c8c88", padding: "10px 16px", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--m)", letterSpacing: ".08em", textTransform: "uppercase", cursor: "pointer" }}>{l}{k === "board" && connections.length ? ` (${connections.length})` : ""}{k === "monitor" && erp.findings.length ? ` (${erp.findings.length})` : ""}</button>)}
+      <span style={{ marginLeft: "auto", display: "flex", gap: 7, alignItems: "center", color: busy ? "#74c0fc" : pilotsOn ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, padding: "10px 4px", letterSpacing: ".06em" }}>{busy ? (LT ? "● SINCHRONIZUOJAMA" : "● SYNCING") : pilotsOn ? `● ${pilotsOn} AUTOPILOT` : (LT ? "○ RANKINIS" : "○ MANUAL")}</span>
     </div>
 
-    {/* ── GALLERY ── */}
-    {sub === "gallery" && <div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={LT ? "Ieškoti sistemos…" : "Search systems…"} style={{ ...inp, maxWidth: 280 }} />
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button onClick={() => setCat("")} style={{ ...bG, padding: "7px 12px", borderColor: !cat ? "#fff" : PL_LINE, color: !cat ? "#fff" : "#8c8c88" }}>{LT ? "Visos" : "All"}</button>
-          {ERP_CATEGORIES.map((c) => <button key={c} onClick={() => setCat(cat === c ? "" : c)} style={{ ...bG, padding: "7px 12px", borderColor: cat === c ? "#fff" : PL_LINE, color: cat === c ? "#fff" : "#8c8c88" }}>{c}</button>)}
-        </div>
-      </div>
-      <div style={{ border: `1px solid ${PL_LINE}` }}>
-        {filtered.map((e, i) => { const conn = connFor(e.id); const tg = tierTag(e.tier); return <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px", borderBottom: i < filtered.length - 1 ? `1px solid ${PL_SOFT}` : "none", background: i % 2 ? "var(--bg2)" : "var(--bg)" }}>
-          <span style={{ fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".1em", color: tg.col, border: `1px solid ${tg.col}`, padding: "2px 6px", flexShrink: 0 }}>{tg.tx}</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 13.5, fontWeight: 600 }}>{e.name}</div>
-            <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".06em", marginTop: 2 }}>{e.category} · {e.region} · {e.protocol.toUpperCase()} · {e.auth.toUpperCase()}</div>
+    {/* ── CONNECT — three deep connectors + sample fingerprinting ── */}
+    {sub === "connect" && <div style={{ maxWidth: 980 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12, marginBottom: 18 }}>
+        {ERP_CATALOG.map((e) => { const conn = connFor(e.id); return <div key={e.id} style={{ border: `1px solid ${conn ? "rgba(105,219,124,.45)" : PL_LINE}`, background: "var(--bg2)", padding: "18px 18px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".1em", color: "#69db7c", border: "1px solid #69db7c", padding: "2px 6px" }}>{LT ? "GILUS" : "DEEP"}</span>
+            <span style={lbl}>{e.protocol.toUpperCase()} · {e.auth.toUpperCase()}</span>
           </div>
-          {conn ? <span style={{ ...lbl, color: "#69db7c" }}>{LT ? "✓ prijungta" : "✓ connected"}</span> : <button onClick={() => startConnect(e)} style={{ ...bG, padding: "6px 14px" }}>{LT ? "Prijungti" : "Connect"}</button>}
+          <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 16.5, fontWeight: 700 }}>{e.name}</div>
+          <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.5, flex: 1 }}>{e.id === "rivile" ? (LT ? "Lietuviški laukų pavadinimai, EIP REST profilis." : "Lithuanian field names, EIP REST profile.") : e.id === "b1lt" ? (LT ? "Dokumentai ir partneriai kaip JSON." : "Documents and partners as JSON.") : (LT ? "Oficialus Microsoft API v2.0 (OData)." : "Official Microsoft API v2.0 (OData).")}</div>
+          {conn ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ ...lbl, color: "#69db7c" }}>{LT ? "✓ prijungta" : "✓ connected"}</span><div style={{ flex: 1 }} /><button onClick={() => setSub("board")} style={{ ...bG, padding: "6px 12px" }}>{LT ? "Į pultą" : "Open board"}</button></div>
+            : <button onClick={() => startConnect(e)} style={{ ...bP, alignSelf: "flex-start" }}>{LT ? "Prijungti →" : "Connect →"}</button>}
         </div>; })}
-        {!filtered.length && <div style={{ padding: 24, color: "#8c8c88", fontFamily: "var(--s)", fontSize: 13 }}>{LT ? "Nieko nerasta" : "No matches"}</div>}
       </div>
-    </div>}
-
-    {/* ── CONNECT WIZARD (overlay panel) ── */}
-    {wiz && <div onClick={() => setWiz(null)} style={{ position: "fixed", inset: 0, zIndex: 10002, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(620px,94vw)", maxHeight: "86vh", overflowY: "auto", background: "var(--bg2)", border: "1px solid rgba(255,255,255,0.18)", boxShadow: "0 24px 80px rgba(0,0,0,.7)", padding: "22px 24px" }}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", fontFamily: "var(--s)" }}>{LT ? "Prijungti" : "Connect"} {wiz.name}</div>
-        <div style={{ ...lbl, marginTop: 4, marginBottom: 16 }}>{wiz.protocol.toUpperCase()} · {wiz.auth.toUpperCase()} · {wiz.adapter} · tier: {wiz.tier}</div>
-        {wiz.adapter === "csv" && <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>{LT ? "Failinė sistema: eksportuokite CSV ir įkelkite per šoninę juostą (SAF-T / CSV). Žemiau išsaugokite jungtį, kad failai būtų žymimi šios sistemos vardu." : "File-based system: export CSV and drop it via the sidebar (SAF-T / CSV). Save the connection below so files are tagged with this system's name."}</div>}
-        {wiz.adapter === "agent" && <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>{LT ? "Šiam šaltiniui reikia Node.js sinchronizavimo agento (žr. skirtuką „Agentas / relė“) — naršyklė nepasiekia SFTP/tinklo aplankų." : "This source requires the Node.js sync agent (see the Agent / relay tab) — the browser cannot reach SFTP/network folders."}</div>}
-        {!demo && <div style={{ marginBottom: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>Base URL</div><input value={creds.baseUrl || ""} onChange={(e) => setCreds({ ...creds, baseUrl: e.target.value })} placeholder="https://tenant.example.com" style={inp} /></div>}
-        {credFields(wiz.auth).map(([k, l]) => <div key={k} style={{ marginBottom: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>{l}</div><input type={/secret|password|Key/i.test(k) ? "password" : "text"} value={creds[k] || ""} onChange={(e) => setCreds({ ...creds, [k]: e.target.value })} style={inp} /></div>)}
-        <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.5, margin: "4px 0 14px" }}>{LT ? "Prisijungimo duomenys laikomi tik šios sesijos atmintyje ir siunčiami tik į jūsų /api/erp relę per TLS. Gamyboje naudokite credRef → Vercel env / vault (KMS)." : "Credentials live in this session's memory only and are sent only to your /api/erp relay over TLS. In production use credRef → Vercel env / vault (KMS)."}</div>
-        {demo && <div style={{ color: "#74c0fc", fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".06em", marginBottom: 14 }}>{LT ? "DEMO režimas: duomenys generuojami deterministiškai, prisijungimo duomenų nereikia." : "DEMO mode: data is generated deterministically, no credentials required."}</div>}
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={doHealth} style={bG}>{LT ? "Tikrinti ryšį" : "Health check"}</button>
-          {health && <span style={{ fontFamily: "var(--m)", fontSize: 11, color: health.pending ? "#8c8c88" : health.ok ? "#69db7c" : "#ff6b6b" }}>{health.pending ? "…" : health.ok ? `OK · ${health.mode} · ${health.latencyMs}ms` : `✗ ${health.error}${health.demoFallback ? (LT ? " → galimas demo atsarginis režimas" : " → demo fallback available") : ""}`}</span>}
-          <div style={{ flex: 1 }} />
-          <button onClick={() => setWiz(null)} style={bG}>{LT ? "Atšaukti" : "Cancel"}</button>
-          <button onClick={saveConnection} style={bP}>{LT ? "Išsaugoti jungtį" : "Save connection"}</button>
+      <Section title={LT ? "Atpažinti iš pavyzdžio" : "Detect from a sample"} accent="#74c0fc">
+        <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 10 }}>{LT ? "Įklijuokite vieną JSON įrašą iš API atsakymo arba pirmą CSV eilutę su antraštėmis — deterministiniai pirštų atspaudai pasakys, kuri sistema tai yra." : "Paste one JSON record from an API response or the first CSV header line — deterministic fingerprints tell you which system it is."}</div>
+        <textarea value={detectText} onChange={(e) => setDetectText(e.target.value)} placeholder={'{"number":"RIVI-AR-2026-00001", "suma_be_pvm": 100, ...}   |   Dok_Nr;Data;Pirkejas;Suma_be_PVM;…'} style={{ ...inp, height: 84, fontFamily: "var(--m)", fontSize: 10.5, resize: "vertical" }} />
+        <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={runDetect} style={bG}>{LT ? "Atpažinti" : "Detect"}</button>
+          {detectRes && detectRes.kind === "none" && <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#ffd43b" }}>{LT ? "Neatpažinta — per mažai požymių." : "Not recognized — too few signals."}</span>}
         </div>
-      </div>
-    </div>}
-
-    {/* ── CONNECTIONS ── */}
-    {sub === "connections" && <div>
-      {!connections.length && <Section title={LT ? "Nėra jungčių" : "No connections"}><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13.5 }}>{LT ? "Pasirinkite sistemą kataloge ir paspauskite „Prijungti“." : "Pick a system in the Gallery and press Connect."}</div></Section>}
-      {connections.map((c) => { const st = erp.syncState[c.id]; return <div key={c.id} style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "14px 18px", marginBottom: 12, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 15, fontWeight: 700 }}>{c.entry.name}</div>
-          <div style={{ ...lbl, marginTop: 3 }}>{c.entry.protocol.toUpperCase()} · {demo || c.config.demo ? "DEMO" : (c.config.baseUrl || "/api/erp")}</div>
-          {st && <div style={{ fontFamily: "var(--m)", fontSize: 10.5, color: st.status === "error" ? "#ff6b6b" : "#8c8c88", marginTop: 5 }}>{LT ? "Pask. sinch." : "Last sync"}: {st.lastSync ? st.lastSync.replace("T", " ").slice(0, 19) : "—"} · {st.rows} {LT ? "įrašų" : "rows"}{st.demoFallback ? " · DEMO FALLBACK" : ""}{st.errors?.length ? ` · ${st.errors.length} ${LT ? "klaidos" : "errors"}` : ""}</div>}
-        </div>
-        <button disabled={busy === c.id} onClick={() => syncNow(c)} style={{ ...bP, opacity: busy === c.id ? 0.6 : 1 }}>{busy === c.id ? (LT ? "Sinchronizuojama…" : "Syncing…") : (LT ? "Sinchronizuoti" : "Sync now")}</button>
-        <button onClick={() => { setMapConnId(c.id); setMapDraft(null); setSub("mapping"); }} style={bG}>{LT ? "Atvaizdavimas" : "Mapping"}</button>
-        <button onClick={() => removeConnection(c.id)} style={{ ...bG, color: "#ff6b6b", borderColor: "rgba(255,107,107,.4)" }}>{LT ? "Šalinti" : "Remove"}</button>
-      </div>; })}
-      <Section title={LT ? "Kanoninė saugykla (sesijoje)" : "Canonical store (in-session)"}>
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>{counts.map(([k, n]) => <div key={k}><div style={{ fontFamily: "var(--m)", fontSize: 20, fontWeight: 700, color: n ? "#fff" : "#555" }}>{n}</div><div style={{ ...lbl, fontSize: 9 }}>{k}</div></div>)}</div>
+        {detectRes && detectRes.ranked && <div style={{ marginTop: 12 }}>{detectRes.ranked.map((r) => <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 0", borderTop: `1px solid ${PL_SOFT}` }}>
+          <span style={{ width: 230, color: "#d2d2ce", fontFamily: "var(--s)", fontSize: 13, flexShrink: 0 }}>{r.name}</span>
+          <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,.07)" }}><div style={{ width: r.pct + "%", height: "100%", background: r.pct >= 60 ? "#69db7c" : r.pct >= 35 ? "#ffd43b" : "#555", transition: "width .4s" }} /></div>
+          <span style={{ width: 44, textAlign: "right", fontFamily: "var(--m)", fontSize: 11, color: "#fff", flexShrink: 0 }}>{r.pct}%</span>
+          {r.pct >= 40 && !connFor(r.id) && <button onClick={() => startConnect(ERP_CATALOG.find((e) => e.id === r.id))} style={{ ...bG, padding: "5px 12px" }}>{LT ? "Prijungti" : "Connect"}</button>}
+        </div>)}</div>}
       </Section>
+      {!demo && <div style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10.5, lineHeight: 1.6 }}>{LT ? "LIVE režimui reikia /api/erp relės — žr. skirtuką „Agentas / relė“." : "LIVE mode needs the /api/erp relay — see the Agent / relay tab."}</div>}
+    </div>}
+
+    {/* ── SMARTCONNECT (overlay): access → handshake → field map → rehearsal ── */}
+    {wiz && <div onClick={() => setWiz(null)} style={{ position: "fixed", inset: 0, zIndex: 10002, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(700px,94vw)", maxHeight: "88vh", overflowY: "auto", background: "var(--bg2)", border: "1px solid rgba(255,255,255,0.18)", boxShadow: "0 24px 80px rgba(0,0,0,.7)", padding: "22px 24px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", fontFamily: "var(--s)" }}>{wiz.name}</div>
+          <div style={lbl}>{wiz.protocol.toUpperCase()} · {wiz.auth.toUpperCase()} · {LT ? "GILI INTEGRACIJA" : "DEEP INTEGRATION"}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, margin: "14px 0 18px", alignItems: "center", flexWrap: "wrap" }}>
+          {(LT ? ["Prieiga", "Patikra", "Žemėlapis", "Repeticija"] : ["Access", "Handshake", "Field map", "Rehearsal"]).map((s2, i) => <div key={s2} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", color: wizStep === i + 1 ? "#000" : wizStep > i + 1 ? "#69db7c" : "#8c8c88", background: wizStep === i + 1 ? "#fff" : "transparent", border: `1px solid ${wizStep > i + 1 ? "#69db7c" : wizStep === i + 1 ? "#fff" : PL_LINE}`, padding: "3px 9px" }}>{i + 1} · {s2.toUpperCase()}</span>
+            {i < 3 && <span style={{ width: 16, height: 1, background: PL_LINE }} />}
+          </div>)}
+        </div>
+
+        {wizStep === 1 && <div>
+          {!demo && <div style={{ marginBottom: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>Base URL</div><input value={creds.baseUrl || ""} onChange={(e) => setCreds({ ...creds, baseUrl: e.target.value })} placeholder="https://tenant.example.com" style={inp} /></div>}
+          {!demo && credFields(wiz.auth).map(([k, l]) => <div key={k} style={{ marginBottom: 12 }}><div style={{ ...lbl, marginBottom: 6 }}>{l}</div><input type={/secret|password|Key/i.test(k) ? "password" : "text"} value={creds[k] || ""} onChange={(e) => setCreds({ ...creds, [k]: e.target.value })} style={inp} /></div>)}
+          {demo && <div style={{ color: "#74c0fc", fontFamily: "var(--m)", fontSize: 11, letterSpacing: ".06em", marginBottom: 14, lineHeight: 1.6 }}>{LT ? "DEMO režimas: prisijungimo duomenų nereikia — viskas vyksta deterministinėje smėliadėžėje, suformuotoje kaip tikri šios sistemos kroviniai." : "DEMO mode: no credentials needed — everything runs in a deterministic sandbox shaped like this system's real payloads."}</div>}
+          {!demo && <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.5, margin: "4px 0 14px" }}>{LT ? "Prisijungimo duomenys laikomi tik šios sesijos atmintyje ir siunčiami tik į jūsų /api/erp relę per TLS. Gamyboje naudokite credRef → Vercel env / vault (KMS)." : "Credentials live in this session's memory only and travel only to your /api/erp relay over TLS. In production use credRef → Vercel env / vault (KMS)."}</div>}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setWiz(null)} style={bG}>{LT ? "Atšaukti" : "Cancel"}</button>
+            <div style={{ flex: 1 }} />
+            <button onClick={runHandshake} style={bP}>{LT ? "Vykdyti patikrą →" : "Run handshake →"}</button>
+          </div>
+        </div>}
+
+        {wizStep === 2 && <div>
+          <div style={{ border: `1px solid ${PL_LINE}` }}>
+            {wizChecks.map((c2, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: `1px solid ${PL_SOFT}` }}>
+              <span style={{ fontFamily: "var(--m)", fontSize: 11, color: c2.ok ? "#69db7c" : "#ff6b6b", width: 14, flexShrink: 0 }}>{c2.ok ? "✓" : "✗"}</span>
+              <span style={{ color: "#d2d2ce", fontFamily: "var(--s)", fontSize: 12.5, flex: 1 }}>{c2.label}</span>
+              <span style={{ fontFamily: "var(--m)", fontSize: 10, color: c2.ok ? "#8c8c88" : "#ff6b6b", textAlign: "right" }}>{c2.note} · {c2.ms} ms</span>
+            </div>)}
+            {wizChecks.length < 7 && !wizChecks.some((c2) => !c2.ok) && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#74c0fc", animation: "pulse 1s ease infinite", flexShrink: 0 }} />
+              <span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 11 }}>{LT ? "Tikrinama…" : "Checking…"}</span>
+            </div>}
+          </div>
+          {wizChecks.some((c2) => !c2.ok) && <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <button onClick={() => setWizStep(1)} style={bG}>{LT ? "← Atgal" : "← Back"}</button>
+            <button onClick={runHandshake} style={bP}>{LT ? "Kartoti patikrą" : "Retry handshake"}</button>
+          </div>}
+        </div>}
+
+        {wizStep === 3 && wizMap && <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 11, color: "#69db7c" }}>{LT ? "Aprėptis" : "Coverage"} {wizMap.coverage}%</span>
+            <span style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5 }}>{LT ? "Deterministinis žodyno + reikšmių formos balas — ne AI duomenų kelyje. Žmogus visada turi paskutinį žodį." : "Deterministic lexicon + value-shape score — no AI in the data path. The human always has the last word."}</span>
+          </div>
+          <div style={{ border: `1px solid ${PL_LINE}`, maxHeight: 250, overflowY: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "118px 1fr 1fr 42px 38px", background: "var(--bg2)", borderBottom: `1px solid ${PL_LINE}`, position: "sticky", top: 0 }}>{[LT ? "Laukas" : "Field", LT ? "Numatyta" : "Shipped", LT ? "Aptikta" : "Detected", "%", LT ? "Imti" : "Use"].map((h) => <div key={h} style={{ ...lbl, padding: "8px 10px", fontSize: 8.5 }}>{h}</div>)}</div>
+            {(() => { const shipped = mapsFor(wiz, {}).invoicesAR || {}; return Object.keys(wizMap.confidence).map((f) => { const det = f === "linesPath" ? wizMap.map.linesPath : f.indexOf("line.") === 0 ? (wizMap.map.line || {})[f.slice(5)] : wizMap.map[f]; const ship = f === "linesPath" ? shipped.linesPath : f.indexOf("line.") === 0 ? (shipped.line || {})[f.slice(5)] : shipped[f]; const same = det === ship; const conf = wizMap.confidence[f]; return <div key={f} style={{ display: "grid", gridTemplateColumns: "118px 1fr 1fr 42px 38px", borderBottom: `1px solid ${PL_SOFT}`, alignItems: "center" }}>
+              <div style={{ padding: "6px 10px", color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 10 }}>{f}</div>
+              <div style={{ padding: "6px 10px", color: "#8c8c88", fontFamily: "var(--m)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ship || "—"}>{ship || "—"}</div>
+              <div style={{ padding: "6px 10px", color: same ? "#69db7c" : "#ffd43b", fontFamily: "var(--m)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={det}>{det}{same ? " ✓" : ""}</div>
+              <div style={{ padding: "6px 8px", fontFamily: "var(--m)", fontSize: 10, color: conf >= 70 ? "#69db7c" : conf >= 45 ? "#ffd43b" : "#8c8c88" }}>{conf}</div>
+              <div style={{ padding: "4px 10px" }}>{!same && det ? <input type="checkbox" checked={!!wizUse[f]} onChange={(e) => setWizUse({ ...wizUse, [f]: e.target.checked })} /> : <span style={{ color: "#555", fontFamily: "var(--m)", fontSize: 10 }}>=</span>}</div>
+            </div>; }); })()}
+          </div>
+          <div style={{ ...lbl, margin: "12px 0 6px" }}>{LT ? "Žalias pavyzdys" : "Raw sample"}</div>
+          <pre style={{ background: "var(--bg)", border: `1px solid ${PL_LINE}`, padding: 10, color: "#bcbcb8", fontFamily: "var(--m)", fontSize: 9.5, lineHeight: 1.45, overflow: "auto", maxHeight: 120, margin: 0 }}>{JSON.stringify(wizSample, null, 2)}</pre>
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <button onClick={() => setWizStep(1)} style={bG}>{LT ? "← Atgal" : "← Back"}</button>
+            <div style={{ flex: 1 }} />
+            <button onClick={runPreflight} style={bP}>{LT ? "Repeticija →" : "Rehearse →"}</button>
+          </div>
+        </div>}
+
+        {wizStep === 4 && <div>
+          {(!wizFlight || wizFlight.pending) && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#74c0fc", animation: "pulse 1s ease infinite" }} /><span style={{ color: "#8c8c88", fontFamily: "var(--m)", fontSize: 11 }}>{LT ? "Vykdoma repeticija deterministinėje smėliadėžėje…" : "Running rehearsal in the deterministic sandbox…"}</span></div>}
+          {wizFlight && wizFlight.error && <div style={{ color: "#ff6b6b", fontFamily: "var(--m)", fontSize: 11.5, marginBottom: 12 }}>✗ {wizFlight.error}</div>}
+          {wizFlight && wizFlight.findings && <div>
+            <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11.5, lineHeight: 1.55, marginBottom: 12 }}>{LT ? `Repeticija: deterministinė sėkla, suformuota kaip ${wiz.name} kroviniai, perleista per visą konvejerį — atvaizdavimas, ribos taisyklės, sutikrinimas.` : `Rehearsal: a deterministic seed shaped as ${wiz.name} payloads, run through the full pipeline — mapping, boundary rules, reconciliation.`}</div>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 12 }}>
+              {[[wizFlight.rows, LT ? "ĮRAŠAI" : "RECORDS"], [wizFlight.recon.docs, LT ? "DOKUMENTAI" : "DOCUMENTS"], ["€" + wizFlight.recon.net.toFixed(2), "NET"], ["€" + wizFlight.recon.vat.toFixed(2), "VAT"]].map(([n, l2]) => <div key={l2}><div style={{ fontFamily: "var(--m)", fontSize: 18, fontWeight: 700, color: "#fff" }}>{n}</div><div style={{ ...lbl, fontSize: 8.5 }}>{l2}</div></div>)}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+              {[["Block", "#ff6b6b"], ["Reject", "#ffd43b"], ["Warn", "#74c0fc"]].map(([sv, col2]) => { const n = wizFlight.findings.filter((f) => f.severity === sv).length; return <span key={sv} style={{ fontFamily: "var(--m)", fontSize: 10, padding: "3px 9px", border: `1px solid ${n ? col2 : PL_LINE}`, color: n ? col2 : "#555" }}>{sv.toUpperCase()} {n}</span>; })}
+              <span style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11 }}>{LT ? "— sėkloje specialiai palikta defektų, kad matytumėte variklį veikiant" : "— the seed ships with planted defects so you can watch the engine work"}</span>
+            </div>
+            <div style={{ borderTop: `1px solid ${PL_LINE}`, paddingTop: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", color: wizPilot.on ? "#69db7c" : "#8c8c88", fontFamily: "var(--m)", fontSize: 11, cursor: "pointer", letterSpacing: ".06em" }}><input type="checkbox" checked={wizPilot.on} onChange={(e) => setWizPilot({ ...wizPilot, on: e.target.checked })} />AUTOPILOT</label>
+              <select disabled={!wizPilot.on} value={wizPilot.sec} onChange={(e) => setWizPilot({ ...wizPilot, sec: +e.target.value })} style={{ ...inp, width: "auto", fontFamily: "var(--m)", fontSize: 11, opacity: wizPilot.on ? 1 : 0.45 }}>{[[60, "1 min"], [120, "2 min"], [300, "5 min"], [900, "15 min"], [3600, "1 h"]].map(([v, l2]) => <option key={v} value={v}>{l2}</option>)}</select>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setWizStep(3)} style={bG}>{LT ? "← Atgal" : "← Back"}</button>
+              <button onClick={saveConnection} style={bP}>{LT ? "Išsaugoti ir sinchronizuoti" : "Save & first sync"}</button>
+            </div>
+          </div>}
+        </div>}
+      </div>
+    </div>}
+
+    {/* ── LIVE BOARD — the bridge itself ── */}
+    {sub === "board" && <div>
+      {!connections.length ? <Section title={LT ? "Tiltas dar tuščias" : "The bridge is empty"}><div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 13.5, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}><span>{LT ? "Prijunkite pirmą sistemą — pultas atgis." : "Connect your first system — the board comes alive."}</span><button onClick={() => setSub("connect")} style={bP}>{LT ? "Prijungti →" : "Connect →"}</button></div></Section> : <div>
+
+        <div style={{ border: `1px solid ${PL_LINE}`, background: "var(--bg2)", padding: "14px 16px", marginBottom: 14, display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 120px", padding: "6px 10px" }}>
+            <div style={{ fontFamily: "var(--m)", fontSize: 22, fontWeight: 700, color: "#fff" }}>{connections.length}</div>
+            <div style={{ ...lbl, fontSize: 8.5 }}>{LT ? "ŠALTINIAI" : "SOURCES"}</div>
+            <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: pilotsOn ? "#69db7c" : "#8c8c88", marginTop: 3 }}>{pilotsOn ? pilotsOn + " autopilot" : (LT ? "rankinis" : "manual")}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center" }}><ErpRail active={!!busy} /></div>
+          <div style={{ flex: "1 1 150px", padding: "6px 10px" }}>
+            <div style={{ fontFamily: "var(--m)", fontSize: 22, fontWeight: 700, color: "#fff" }}>{totalRows}</div>
+            <div style={{ ...lbl, fontSize: 8.5 }}>{LT ? "KANONINIAI ĮRAŠAI" : "CANONICAL RECORDS"}</div>
+            <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88", marginTop: 3 }}>{erp.store._sources.join(" + ") || "—"}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center" }}><ErpRail active={!!busy} /></div>
+          <div style={{ flex: "1 1 150px", padding: "6px 10px" }}>
+            <div style={{ fontFamily: "var(--m)", fontSize: 22, fontWeight: 700, color: erp.findings.length ? (sevCount.Block ? "#ff6b6b" : sevCount.Reject ? "#ffd43b" : "#74c0fc") : "#69db7c" }}>{erp.findings.length}</div>
+            <div style={{ ...lbl, fontSize: 8.5 }}>{LT ? "RIBOS RADINIAI" : "BOUNDARY FINDINGS"}</div>
+            <div style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88", marginTop: 3 }}>B {sevCount.Block} · R {sevCount.Reject} · W {sevCount.Warn}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center" }}><ErpRail active={!!busy} /></div>
+          <div style={{ flex: "1 1 190px", padding: "6px 10px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+            <div style={{ ...lbl, fontSize: 8.5 }}>{LT ? "SAF-T VARIKLIAI" : "SAF-T ENGINES"}</div>
+            <button disabled={!totalRows} onClick={() => { audit.log("ERP_PROMOTED_TO_AUDIT", `${erp.store._sources.join("+")} · ${erp.store.invoicesAR.length} AR · ${erp.store.invoicesAP.length} AP`); onPromote(); }} style={{ ...bP, opacity: totalRows ? 1 : 0.5, padding: "8px 14px" }}>{LT ? "Siųsti į SAF-T auditą →" : "Send to SAF-T audit →"}</button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(330px,1fr))", gap: 12, marginBottom: 16 }}>
+          {connections.map((c) => { const st = erp.syncState[c.id]; const L = liveSync[c.id] || {}; const ap = c.config.autopilot || { on: false, sec: 120 };
+            const last = lastRunRef.current[c.id] || (st && st.lastSync ? new Date(st.lastSync).getTime() : 0);
+            const frac = busy === c.id ? 1 : ap.on && last ? Math.max(0, 1 - (nowT - last) / (ap.sec * 1000)) : (st && st.lastSync ? 1 : 0);
+            const nextIn = ap.on && last ? Math.max(0, Math.ceil((last + ap.sec * 1000 - nowT) / 1000)) : null;
+            const col = L.phase === "error" ? "#ff6b6b" : busy === c.id ? "#74c0fc" : ap.on ? "#69db7c" : "#8c8c88";
+            const sysRows = ENTITY_KINDS.reduce((s, k) => s + (erp.store[k] || []).filter((x) => ((x.source && x.source.system) || x.system) === c.id).length, 0);
+            return <div key={c.id} style={{ border: `1px solid ${L.phase === "error" ? "rgba(255,107,107,.5)" : PL_LINE}`, background: "var(--bg2)", padding: "14px 16px" }}>
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                <ErpRing pct={frac} color={col} label={erpInitials(c.id)} sub={busy === c.id ? "sync" : nextIn != null ? nextIn + "s" : (LT ? "ramybė" : "idle")} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: "#fff", fontFamily: "var(--s)", fontSize: 14.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.entry.name}</div>
+                  <div style={{ ...lbl, marginTop: 2, fontSize: 9 }}>{(demo || c.config.demo) ? "DEMO" : "LIVE"} · {c.entry.protocol.toUpperCase()}{st && st.demoFallback ? " · FALLBACK" : ""}</div>
+                  {busy === c.id && L.byEntity && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 5 }}>{Object.entries(L.byEntity).map(([k, v]) => <span key={k} style={{ fontFamily: "var(--m)", fontSize: 8.5, color: v === "✗" ? "#ff6b6b" : "#74c0fc", border: `1px solid ${PL_SOFT}`, padding: "1px 5px" }}>{k} {v}</span>)}</div>}
+                  {L.phase === "error" && <div style={{ color: "#ff6b6b", fontFamily: "var(--m)", fontSize: 9.5, marginTop: 4, wordBreak: "break-word" }}>✗ {L.lastErr}</div>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginTop: 12 }}>
+                <div><div style={{ fontFamily: "var(--m)", fontSize: 16, fontWeight: 700, color: "#fff" }}>{sysRows}</div><div style={{ ...lbl, fontSize: 8 }}>{LT ? "ĮRAŠAI" : "ROWS"}</div></div>
+                <div><div style={{ fontFamily: "var(--m)", fontSize: 16, fontWeight: 700, color: "#d2d2ce" }}>{st && st.lastSync ? erpAgo(st.lastSync) : "—"}</div><div style={{ ...lbl, fontSize: 8 }}>{LT ? "PRIEŠ" : "LAST"}</div></div>
+                <div><div style={{ fontFamily: "var(--m)", fontSize: 16, fontWeight: 700, color: "#d2d2ce" }}>{L.lastMs ? L.lastMs + "ms" : "—"}</div><div style={{ ...lbl, fontSize: 8 }}>SYNC</div></div>
+                <div style={{ flex: 1 }} />
+                <ErpSpark vals={L.durations || []} color={col} />
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button disabled={!!busy} onClick={() => syncNow(c)} style={{ ...bP, padding: "7px 13px", opacity: busy ? 0.5 : 1 }}>{busy === c.id ? (LT ? "Sinch…" : "Syncing…") : (LT ? "Sinchronizuoti" : "Sync now")}</button>
+                <button onClick={() => setPilot(c.id, { on: !ap.on })} style={{ ...bG, padding: "7px 12px", borderColor: ap.on ? "#69db7c" : PL_LINE, color: ap.on ? "#69db7c" : "#8c8c88" }}>{ap.on ? (LT ? "Stabdyti autopilotą" : "Pause autopilot") : (LT ? "Įjungti autopilotą" : "Resume autopilot")}</button>
+                <button onClick={() => { setMapConnId(c.id); setMapDraft(null); setSub("mapping"); }} style={{ ...bG, padding: "7px 12px" }}>{LT ? "Atvaizdavimas" : "Mapping"}</button>
+                <button onClick={() => removeConnection(c.id)} style={{ ...bG, padding: "7px 12px", color: "#ff6b6b", borderColor: "rgba(255,107,107,.4)" }}>{LT ? "Šalinti" : "Remove"}</button>
+              </div>
+            </div>; })}
+        </div>
+
+        {recons.length > 0 && <Section title={LT ? "Sutikrinimo bokštas — 4 kontroliniai skaičiai pagal šaltinį" : "Reconciliation tower — 4 control numbers per source"}>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(170px,1.4fr) 70px 100px 100px 100px 100px 100px 80px", gap: 8, fontFamily: "var(--m)", fontSize: 9.5, color: "#8c8c88", letterSpacing: ".06em", textTransform: "uppercase", paddingBottom: 6, minWidth: 860 }}><span>{LT ? "Sistema" : "System"}</span><span>{LT ? "Dok." : "Docs"}</span><span>NET €</span><span>VAT €</span><span>{LT ? "BENDRA €" : "GROSS €"}</span><span>DK D €</span><span>DK K €</span><span>Δ D−K</span></div>
+            {recons.map((r) => <div key={r.id} style={{ display: "grid", gridTemplateColumns: "minmax(170px,1.4fr) 70px 100px 100px 100px 100px 100px 80px", gap: 8, padding: "7px 0", borderTop: `1px solid ${PL_SOFT}`, fontFamily: "var(--m)", fontSize: 11, alignItems: "center", minWidth: 860 }}>
+              <span style={{ color: "#d2d2ce" }}>{r.name}</span>
+              <span style={{ color: "#fff" }}>{r.ar}+{r.ap}</span>
+              <span style={{ color: "#d2d2ce" }}>{r.net.toFixed(2)}</span>
+              <span style={{ color: "#d2d2ce" }}>{r.vat.toFixed(2)}</span>
+              <span style={{ color: "#d2d2ce" }}>{r.gross.toFixed(2)}</span>
+              <span style={{ color: "#d2d2ce" }}>{r.glD.toFixed(2)}</span>
+              <span style={{ color: "#d2d2ce" }}>{r.glK.toFixed(2)}</span>
+              <span style={{ color: r.glDelta <= 0.02 ? "#69db7c" : "#ffd43b", border: `1px solid ${r.glDelta <= 0.02 ? "rgba(105,219,124,.4)" : "rgba(255,212,59,.4)"}`, padding: "2px 7px", justifySelf: "start" }}>{r.glDelta <= 0.02 ? "OK" : r.glDelta.toFixed(2)}</span>
+            </div>)}
+          </div>
+          <div style={{ color: "#8c8c88", fontFamily: "var(--s)", fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>{LT ? "Palyginkite šiuos skaičius su ERP ataskaitomis už tą patį laikotarpį. DEMO sėkloje Δ specialiai ≠ 0 — pasodinti defektai, kad matytumėte variklį veikiant." : "Compare these numbers with the ERP's own reports for the same period. In the DEMO seed Δ ≠ 0 on purpose — planted defects so you can watch the engine work."}</div>
+        </Section>}
+
+        {conflicts.length > 0 && <Section title={`${LT ? "Konfliktai tarp sistemų" : "Cross-system conflicts"} (${conflicts.length})`} accent="#ffd43b">
+          {conflicts.slice(0, 8).map((cf, i) => <div key={i} style={{ display: "flex", gap: 12, padding: "7px 0", borderTop: i ? `1px solid ${PL_SOFT}` : "none", fontFamily: "var(--m)", fontSize: 11, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "#ffd43b" }}>{cf.kind}</span><span style={{ color: "#fff" }}>{cf.invoiceNo}</span>
+            <span style={{ color: "#8c8c88" }}>{cf.sources.join("  ·  ")}</span>
+            <span style={{ color: "#d2d2ce", marginLeft: "auto" }}>€ {cf.amounts.map((a) => a.toFixed(2)).join(" / ")}</span>
+          </div>)}
+        </Section>}
+
+        <Section title={LT ? "Įvykiai" : "Events"}>
+          {!events.length ? <div style={{ color: "#bcbcb8", fontFamily: "var(--s)", fontSize: 12.5 }}>{LT ? "Dar tylu — paleiskite sinchronizaciją." : "Quiet so far — run a sync."}</div> :
+            events.slice(0, 14).map((ev, i) => <div key={ev.t + "-" + i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "4px 0", borderTop: i ? `1px solid ${PL_SOFT}` : "none" }}>
+              <span style={{ fontFamily: "var(--m)", fontSize: 9.5, color: "#666", flexShrink: 0 }}>{new Date(ev.t).toTimeString().slice(0, 8)}</span>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, alignSelf: "center", background: ev.kind === "err" ? "#ff6b6b" : ev.kind === "ok" ? "#69db7c" : "#74c0fc" }} />
+              <span style={{ fontFamily: "var(--m)", fontSize: 10.5, color: "#bcbcb8", wordBreak: "break-word" }}>{ev.msg}</span>
+            </div>)}
+        </Section>
+      </div>}
     </div>}
 
     {/* ── MAPPING STUDIO ── */}
@@ -13236,6 +13466,8 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
         <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
           <select value={mapConn?.id || ""} onChange={(e) => { setMapConnId(e.target.value); setMapDraft(null); }} style={{ ...inp, width: "auto", minWidth: 220 }}>{connections.map((c) => <option key={c.id} value={c.id}>{c.entry.name}</option>)}</select>
           <select value={mapEntity} onChange={(e) => { setMapEntity(e.target.value); setMapDraft(null); }} style={{ ...inp, width: "auto" }}>{["invoicesAR", "invoicesAP", "customers", "suppliers"].map((k) => <option key={k} value={k}>{k}</option>)}</select>
+          <button onClick={applyAutoMap} disabled={!autoRes} style={{ ...bG, borderColor: "#74c0fc", color: "#74c0fc", opacity: autoRes ? 1 : 0.5 }}>{LT ? "⌁ Auto žemėlapis" : "⌁ Auto-map"}</button>
+          {autoRes && <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88" }}>{LT ? "aprėptis" : "coverage"} {autoRes.coverage}% · ≥70% {LT ? "priimama" : "accepted"}</span>}
           <div style={{ flex: 1 }} />
           {mapDraft && <button onClick={() => setMapDraft(null)} style={bG}>{LT ? "Atstatyti" : "Reset"}</button>}
           <button onClick={saveMapping} style={bP}>{LT ? "Išsaugoti atvaizdavimą" : "Save mapping"}</button>
@@ -13243,12 +13475,13 @@ function IntegrationsTab({ lang, t, audit, erp, setErp, demo, setDemo, onPromote
         <div style={{ ...lbl, marginBottom: 8 }}>{(FIELD_MAPS[mapEntry?.adapter] || FIELD_MAPS["generic-rest"]).label}</div>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(380px,1fr) minmax(380px,1.2fr)", gap: 16, alignItems: "start" }}>
           <div style={{ border: `1px solid ${PL_LINE}` }}>
-            <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", background: "var(--bg2)", borderBottom: `1px solid ${PL_LINE}` }}>
-              <div style={{ ...lbl, padding: "10px 12px" }}>{LT ? "Kanoninis laukas" : "Canonical field"}</div><div style={{ ...lbl, padding: "10px 12px" }}>{LT ? "Šaltinio kelias" : "Source path"}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 52px", background: "var(--bg2)", borderBottom: `1px solid ${PL_LINE}` }}>
+              <div style={{ ...lbl, padding: "10px 12px" }}>{LT ? "Kanoninis laukas" : "Canonical field"}</div><div style={{ ...lbl, padding: "10px 12px" }}>{LT ? "Šaltinio kelias" : "Source path"}</div><div style={{ ...lbl, padding: "10px 8px", textAlign: "right" }}>{LT ? "Patik." : "Conf."}</div>
             </div>
-            {flatFields(effMap).map(([k, v]) => <div key={k} style={{ display: "grid", gridTemplateColumns: "150px 1fr", borderBottom: `1px solid ${PL_SOFT}` }}>
+            {flatFields(effMap).map(([k, v]) => <div key={k} style={{ display: "grid", gridTemplateColumns: "150px 1fr 52px", borderBottom: `1px solid ${PL_SOFT}` }}>
               <div style={{ padding: "8px 12px", color: "#d2d2ce", fontFamily: "var(--m)", fontSize: 11 }}>{k}</div>
               <input value={v} onChange={(e) => setMapField(k, e.target.value)} style={{ ...inp, border: "none", borderLeft: `1px solid ${PL_SOFT}`, background: "transparent", fontFamily: "var(--m)", fontSize: 11 }} />
+              <div style={{ padding: "8px 8px", fontFamily: "var(--m)", fontSize: 9.5, textAlign: "right", color: (autoConf[k] || 0) >= 70 ? "#69db7c" : (autoConf[k] || 0) >= 45 ? "#ffd43b" : "#555" }}>{autoConf[k] != null ? autoConf[k] + "%" : "·"}</div>
             </div>)}
           </div>
           <div>
