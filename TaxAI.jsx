@@ -20192,7 +20192,375 @@ function traceConnection(twin, from, to, opts = {}) {
 }
 
 
-  return { createTwin, createInbox, AGENT_CATALOG, runAgents, eventAmount, policyFor, reviewEvent, buildReviewContext, deterministicBriefing, buildEscalationContext, createPayrollEngine, PARAMS_2026, mergeParams, closeReadiness, closePeriod, buildCockpit, dailyBriefing, buildBriefingContext, buildForecast, monthlySeries, olsFit, SCENARIOS, buildCashView, askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, buildGraphView, traceConnection, scanFraud, simulateScenario, SCENARIO_PRESETS, parseScenarioText, ACCOUNT_NAMES_LT, serializeTwin, restoreTwin, createLocalStorageAdapter, saveTwin, loadTwin, REL_TYPES, entityKey, COMPANY_KEY, round2, daysBetween, eventLabel, VERSION: "1.5.0-wave6" };
+  // ───────────────────────── auditor.js ─────────────────────────
+// =============================================================================
+// auditor.js — E-Auditor LT engine (Audit Readiness Platform)
+// -----------------------------------------------------------------------------
+// "Predict findings before they happen" — deterministically. An audit
+// simulation here is not theater: every finding is computed from the twin's
+// real entities (duplicate payments by date-proximity, vendor concentration
+// by actual share, overdue obligations by their real deadlines, Benford and
+// ghost payees via the Wave-6 fraud scan). Compliance checks score from data
+// where data exists and honestly say "manual attestation required" where it
+// does not. The LLM never produces a number — it narrates reports.
+// =============================================================================
+
+
+const SEV_PENALTY = { CRITICAL: 18, HIGH: 10, MEDIUM: 4 };
+const SEV_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
+
+const AUDIT_KINDS = [
+  { id: 'vmi', lt: 'VMI mokestinis patikrinimas', en: 'VMI Tax Audit', icon: '⛨', descLt: 'Lietuvos mokesčių inspekcijos simuliacija', descEn: 'Simulate a Lithuanian tax authority inspection' },
+  { id: 'external', lt: 'Išorinis auditas', en: 'External Audit', icon: '▤', descLt: 'Big 4 / išorinio audito simuliacija', descEn: 'Simulate a Big 4 / external audit engagement' },
+  { id: 'internal', lt: 'Vidaus auditas', en: 'Internal Audit', icon: '◎', descLt: 'Vidaus kontrolių patikra', descEn: 'Run comprehensive internal audit checks' },
+  { id: 'fraud', lt: 'Sukčiavimo tyrimas', en: 'Fraud Investigation', icon: '◐', descLt: 'Gilioji sukčiavimo analizė', descEn: 'Deep fraud detection analysis' },
+  { id: 'compliance', lt: 'Atitikties peržiūra', en: 'Compliance Review', icon: '§', descLt: 'Pilnas reguliacinės atitikties vertinimas', descEn: 'Full regulatory compliance assessment' },
+];
+
+const KIND_CATEGORIES = {
+  vmi: ['tax', 'payroll', 'fraud', 'controls'],
+  external: ['tax', 'payroll', 'fraud', 'controls', 'vendor', 'finance'],
+  internal: ['controls', 'finance', 'vendor'],
+  fraud: ['fraud'],
+  compliance: ['tax', 'payroll', 'controls'],
+};
+
+function finding(id, severity, category, lt, en, detail, amount, refs, fixLt, fixEn) {
+  return {
+    id, severity, category, status: 'open',
+    titleLt: lt, titleEn: en, detail,
+    amount: round2(amount || 0), refs: refs || [],
+    rootLt: fixLt ? fixLt.root : '', rootEn: fixEn ? fixEn.root : '',
+    recLt: fixLt ? fixLt.rec : '', recEn: fixEn ? fixEn.rec : '',
+  };
+}
+
+/** Compute every deterministic finding the data supports. */
+function deriveFindings(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const F = [];
+  const invoices = twin.listEntities('invoice');
+
+  // Duplicate payments/invoices: same counterparty + same total within 3 days
+  const sorted = [...invoices].sort((a, b) => (a.counterpartyId + a.total + a.date).localeCompare(b.counterpartyId + b.total + b.date));
+  for (let i = 1; i < sorted.length; i++) {
+    const a = sorted[i - 1], b = sorted[i];
+    if (a.counterpartyId === b.counterpartyId && Math.abs(a.total - b.total) < 0.01 && Math.abs(daysBetween(a.date, b.date)) <= 3) {
+      const party = twin.getEntity(a.kind === 'sales' ? 'customer' : 'vendor', a.counterpartyId);
+      F.push(finding(`dup_${a.id}_${b.id}`, 'CRITICAL', 'fraud',
+        `Dvigubas mokėjimas/sąskaita — ${(party && party.name) || a.counterpartyId}`,
+        `Duplicate payment/invoice — ${(party && party.name) || a.counterpartyId}`,
+        `${a.id} (${a.date}) ir ${b.id} (${b.date}) — identiška suma per ≤3 d.`, b.total, [a.id, b.id],
+        { root: 'Nėra dublikatų kontrolės registruojant SF', rec: `Pareikalauti kreditinės sąskaitos iš ${(party && party.name) || a.counterpartyId} dėl €${round2(b.total)}` },
+        { root: 'No duplicate control at posting', rec: `Request a credit note for €${round2(b.total)}` }));
+    }
+  }
+
+  // Portfolio fraud scan items map straight to findings
+  const scan = scanFraud(twin, { inbox: opts.inbox, now });
+  for (const it of scan.items) {
+    const sev = it.severity === 'Critical' ? 'CRITICAL' : it.severity === 'High' ? 'HIGH' : 'MEDIUM';
+    const cat = it.id === 'dual-pending' ? 'controls' : 'fraud';
+    F.push(finding(`scan_${it.id}`, sev, cat, it.lt, it.en, it.detail, 0, it.refs,
+      { root: 'Portfelio lygio anomalija (◐ skenavimas)', rec: it.id === 'dual-pending' ? 'Užbaigti antruosius parašus ≥ €10 000 įvykiams' : 'Ištirti susijusius įrašus ir dokumentuoti išvadas' },
+      { root: 'Portfolio-level anomaly (fraud scan)', rec: 'Investigate the referenced records and document conclusions' }));
+  }
+
+  // Overdue tax / payroll obligations at their real deadlines
+  const late = twin.listEntities('obligation').filter((o) => o.status === 'open' && daysBetween(now, o.dueDate) < 0);
+  const lateTax = late.filter((o) => o.taxType === 'VAT' || o.taxType === 'CIT');
+  const latePay = late.filter((o) => o.taxType === 'GPM' || o.taxType === 'SODRA');
+  if (lateTax.length) {
+    F.push(finding('tax_overdue', 'CRITICAL', 'tax', 'Pradelstos mokestinės prievolės (VMI)', 'Overdue tax obligations (VMI)',
+      lateTax.map((o) => `${o.taxType} ${o.period || ''} — terminas ${o.dueDate}`).join('; '),
+      lateTax.reduce((s, o) => s + (o.amount - o.settled), 0), lateTax.map((o) => `${o.taxType} ${o.period}`),
+      { root: 'Mokėjimų kalendorius nesusietas su prievolėmis', rec: 'Nedelsiant sumokėti ir įjungti terminų radarą' },
+      { root: 'Payment calendar not tied to obligations', rec: 'Pay immediately and enable the deadline radar' }));
+  }
+  if (latePay.length) {
+    F.push(finding('payroll_overdue', 'HIGH', 'payroll', 'Pradelstos DU mokesčių prievolės (GPM/Sodra)', 'Overdue payroll taxes (GPM/Sodra)',
+      latePay.map((o) => `${o.taxType} ${o.period || ''} — ${o.dueDate}`).join('; '),
+      latePay.reduce((s, o) => s + (o.amount - o.settled), 0), latePay.map((o) => `${o.taxType} ${o.period}`),
+      { root: 'DU mokesčiai nesumokėti iki kito mėn. 15 d.', rec: 'Sumokėti ir suderinti su Sodra deklaracijomis' },
+      { root: 'Payroll taxes missed the 15th deadline', rec: 'Pay and reconcile with Sodra filings' }));
+  }
+
+  // Vendor concentration (real share of purchases)
+  const vendors = twin.listEntities('vendor');
+  const vTotal = vendors.reduce((s, v) => s + v.totals.invoiced, 0);
+  const topV = [...vendors].sort((a, b) => b.totals.invoiced - a.totals.invoiced)[0];
+  if (topV && vTotal > 0) {
+    const share = round2((100 * topV.totals.invoiced) / vTotal);
+    if (share > 40) {
+      F.push(finding('vendor_conc', share > 70 ? 'HIGH' : 'MEDIUM', 'vendor',
+        `Tiekėjų koncentracija — ${topV.name}`, `Vendor concentration — ${topV.name}`,
+        `${share} % pirkimų pas vieną tiekėją (riba 40 %)`, topV.totals.invoiced, [topV.id],
+        { root: 'Nėra konkurencinio pirkimų proceso', rec: 'Parengti tiekėjų diversifikacijos planą ir RFP procesą' },
+        { root: 'No competitive procurement process', rec: 'Prepare a vendor diversification plan and RFP process' }));
+    }
+  }
+
+  // Legacy 9% VAT after 2026-01-01 (rate became 12%)
+  const legacy = invoices.filter((inv) => inv.kind === 'sales' && inv.vat != null && inv.date >= '2026-01-01' && (() => {
+    const net = inv.total - inv.vat;
+    return net > 0 && Math.abs(inv.vat / net - 0.09) < 0.005;
+  })());
+  if (legacy.length) {
+    F.push(finding('vat_legacy9', 'HIGH', 'tax', 'Taikomas nebegaliojantis 9 % PVM tarifas', 'Legacy 9% VAT rate applied',
+      `${legacy.length} SF po 2026-01-01 su 9 % (PVMĮ pakeitimas → 12 %)`,
+      legacy.reduce((s, i) => s + (i.total - i.vat) * 0.03, 0), legacy.slice(0, 5).map((i) => i.id),
+      { root: 'Kainodaros/ERP tarifų lentelės neatnaujintos', rec: 'Perskaičiuoti PVM 12 % ir pateikti patikslintas deklaracijas' },
+      { root: 'Pricing/ERP rate tables not updated', rec: 'Recompute at 12% and file corrected returns' }));
+  }
+
+  // Missing due dates (credit control)
+  const noDue = invoices.filter((i) => !i.dueDate);
+  if (invoices.length >= 5 && noDue.length / invoices.length >= 0.3) {
+    F.push(finding('no_due_dates', 'MEDIUM', 'controls', 'SF be apmokėjimo terminų', 'Invoices missing due dates',
+      `${noDue.length}/${invoices.length} dokumentų be termino — netikslus iždas ir DSO`, 0, noDue.slice(0, 5).map((i) => i.id),
+      { root: 'Terminas nėra privalomas laukas registruojant', rec: 'Padaryti terminą privalomu; užpildyti trūkstamus' },
+      { root: 'Due date not mandatory at posting', rec: 'Make it mandatory; backfill missing dates' }));
+  }
+
+  // Liquidity breach from the 13-week sheet (only when cash data exists)
+  try {
+    if (twin.listEntities('bankAccount').length) {
+      const tre = buildCashView(twin, { now, forecast: false });
+      if (tre.breachWeek) {
+        F.push(finding('liquidity', 'HIGH', 'finance', 'Likvidumo rizika 13 sav. horizonte', 'Liquidity risk within 13 weeks',
+          `Pinigai neigiami nuo ${tre.breachWeek} (min €${tre.minWeek.cum})`, Math.abs(tre.minWeek.cum), [],
+          { root: 'Įplaukų/išmokų terminai nesubalansuoti', rec: 'Paankstinti surinkimą, derėtis dėl DPO, peržiūrėti mokėjimų grafiką' },
+          { root: 'Inflow/outflow timing mismatch', rec: 'Accelerate collections, negotiate DPO, reschedule payments' }));
+      }
+    }
+  } catch (e) { /* no cash view possible */ }
+
+  // Close readiness blockers
+  const cr = closeReadiness(twin, { now, inbox: opts.inbox, external: opts.closeExternal });
+  if (cr.score < cr.target && cr.blockers.length) {
+    F.push(finding('close_gap', 'HIGH', 'controls', 'Mėnuo neparuoštas uždarymui', 'Period not ready to close',
+      cr.blockers.slice(0, 4).map((b) => `${b.lt} (${b.detail})`).join('; '), 0, [],
+      { root: 'Neužbaigti registravimai / atviri kritiniai įvykiai', rec: 'Išvalyti dėžutę ir užregistruoti pasiūlytus įrašus' },
+      { root: 'Unposted entries / open critical items', rec: 'Clear the inbox and post proposed entries' }));
+  }
+
+  F.sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.amount - a.amount);
+  return F;
+}
+
+/** Run an audit simulation of a given kind. */
+function runAuditSimulation(twin, kind = 'vmi', opts = {}) {
+  const cats = KIND_CATEGORIES[kind] || KIND_CATEGORIES.external;
+  const all = deriveFindings(twin, opts);
+  const findings = all.filter((f) => cats.includes(f.category));
+  const penalty = findings.reduce((s, f) => s + SEV_PENALTY[f.severity], 0);
+  const readiness = Math.max(5, 100 - penalty);
+  const exposure = round2(findings.reduce((s, f) => s + f.amount, 0));
+  const byCat = {};
+  const bySev = { CRITICAL: 0, HIGH: 0, MEDIUM: 0 };
+  for (const f of findings) { byCat[f.category] = (byCat[f.category] || 0) + 1; bySev[f.severity] += 1; }
+  return {
+    kind, ranAt: opts.now || new Date().toISOString().slice(0, 10),
+    readiness, exposure, findings, byCat, bySev,
+    basisLt: 'Deterministinė simuliacija iš dvynio duomenų: dublikatai pagal datų artumą, koncentracija pagal tikras dalis, prievolės pagal realius terminus, ◐ portfelio skenavimas.',
+    basisEn: 'Deterministic simulation from twin data: duplicates by date proximity, concentration by real shares, obligations by real deadlines, portfolio fraud scan.',
+  };
+}
+
+// ── Compliance checks: data-scored where data exists, attestable where not ──
+const MANUAL_CHECKS = [
+  { id: 'fs_audit', lt: 'Metinių FA auditas', en: 'Annual Financial Statements Audit', descLt: 'Ar metinės ataskaitos audituotos pagal įstatymą', descEn: 'Statements audited by certified auditors as required' },
+  { id: 'internal_controls', lt: 'Vidaus kontrolės procesai', en: 'Internal Control Processes', descLt: 'Kontrolių pakankamumas sukčiavimo prevencijai', descEn: 'Adequacy of controls to prevent fraud' },
+  { id: 'gdpr', lt: 'Duomenų apsauga (BDAR)', en: 'Data Protection (GDPR)', descLt: 'BDAR reikalavimų laikymasis', descEn: 'GDPR compliance' },
+  { id: 'health_safety', lt: 'Darbų sauga', en: 'Health and Safety', descLt: 'Darbo saugos reikalavimai', descEn: 'Occupational health & safety compliance' },
+  { id: 'environment', lt: 'Aplinkosauga', en: 'Environmental Compliance', descLt: 'Aplinkosaugos reikalavimai veiklai', descEn: 'Environmental regulations relevant to operations' },
+  { id: 'retention', lt: 'El. mokėjimų įrašų saugojimas', en: 'Retention of Electronic Payment Records', descLt: 'Saugojimo terminų laikymasis', descEn: 'Records retained per legal retention periods' },
+];
+
+function runComplianceChecks(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const attest = opts.attest || {};
+  const checks = [];
+  const add = (id, lt, en, score, findingTxt, manual) => {
+    const s = score == null ? null : Math.max(0, Math.min(100, Math.round(score)));
+    checks.push({ id, lt, en, manual: !!manual, score: s, status: s == null ? 'warn' : s >= 85 ? 'pass' : s >= 60 ? 'warn' : 'fail', finding: findingTxt });
+  };
+
+  const tb = twin.trialBalance();
+  add('gl_balanced', 'DK debetas = kreditas', 'GL debits = credits', tb.balanced ? 100 : 0, tb.balanced ? 'Subalansuota' : `Skirtumas €${tb.difference || '?'}`);
+
+  const inv = twin.listEntities('invoice');
+  add('due_dates', 'SF terminų pilnumas', 'Invoice due-date coverage', inv.length ? (100 * inv.filter((i) => i.dueDate).length) / inv.length : 100,
+    inv.length ? `${inv.filter((i) => i.dueDate).length}/${inv.length} su terminais` : 'Dokumentų nėra');
+
+  const obls = twin.listEntities('obligation');
+  const lateO = obls.filter((o) => o.status === 'open' && daysBetween(now, o.dueDate) < 0);
+  add('obligations', 'Mokestinės prievolės laiku', 'Tax obligations on time', obls.length ? (100 * (obls.length - lateO.length)) / obls.length : 100,
+    lateO.length ? `${lateO.length} pradelstos` : 'Pradelstų nėra');
+
+  if (opts.inbox) {
+    const open = opts.inbox.list().filter((i) => ['open', 'awaiting-second', 'blocked'].includes(i.status));
+    add('inbox_clear', 'Agentų dėžutė išvalyta', 'Agent inbox cleared', opts.inbox.list().length ? (100 * (opts.inbox.list().length - open.length)) / opts.inbox.list().length : 100,
+      open.length ? `${open.length} laukia sprendimo` : 'Viskas peržiūrėta');
+  }
+
+  // External engine results from the host (SAF-T XSD, i.SAF reconciliation, i.MAS gate)
+  const ext = opts.external || {};
+  if (ext.xsdOk != null) add('saft_xsd', 'SAF-T XSD struktūra', 'SAF-T XSD structure', ext.xsdOk ? 100 : 20, ext.xsdDetail || (ext.xsdOk ? 'Schema atitinka' : 'Schemos klaidos'));
+  if (ext.isafDelta != null) add('isaf_recon', 'i.SAF sutikrinimas', 'i.SAF reconciliation', Math.abs(ext.isafDelta) <= 1 ? 100 : 40, `Δ €${round2(ext.isafDelta)}`);
+  if (ext.imasOk != null) add('imas_gate', 'i.MAS priėmimo vartai', 'i.MAS acceptance gate', ext.imasOk ? 100 : 30, ext.imasDetail || '');
+
+  for (const m of MANUAL_CHECKS) {
+    const a = attest[m.id];
+    add(m.id, m.lt, m.en, a != null ? a : null, a != null ? `Patvirtinta: ${a}/100` : 'Reikalingas rankinis patvirtinimas / attestation required', true);
+  }
+
+  const totals = {
+    total: checks.length,
+    passed: checks.filter((c) => c.status === 'pass').length,
+    failed: checks.filter((c) => c.status === 'fail').length,
+    warnings: checks.filter((c) => c.status === 'warn').length,
+  };
+  return { ranAt: now, checks, totals };
+}
+
+// ── Risk register: findings + twin risks → likelihood × impact heat map ──
+function buildRiskRegister(twin, opts = {}) {
+  const findings = opts.findings || deriveFindings(twin, opts);
+  const sevImpact = { CRITICAL: 5, HIGH: 4, MEDIUM: 3 };
+  const risks = findings.map((f) => ({
+    id: `rg_${f.id}`, lt: f.titleLt, en: f.titleEn, category: f.category,
+    impact: sevImpact[f.severity],
+    likelihood: Math.max(1, Math.min(5, 2 + Math.min(3, f.refs.length))),
+    amount: f.amount, source: 'derived',
+  }));
+  for (const r of opts.custom || []) risks.push({ ...r, source: 'manual' });
+  const heat = Array.from({ length: 5 }, () => Array(5).fill(0));
+  for (const r of risks) heat[5 - r.impact][r.likelihood - 1] += 1; // row 0 = impact 5
+  return { risks, heat };
+}
+
+// ── Remediation actions from findings ──
+function generateAuditActions(findings) {
+  const prio = { CRITICAL: 'critical', HIGH: 'high', MEDIUM: 'medium' };
+  return findings.map((f, i) => ({
+    id: `act_${f.id}`, order: i,
+    titleLt: f.recLt || `Ištirti: ${f.titleLt}`, titleEn: f.recEn || `Investigate: ${f.titleEn}`,
+    descLt: f.detail, descEn: f.detail,
+    category: f.category, priority: prio[f.severity], status: 'pending', findingId: f.id,
+  }));
+}
+
+// ── Evidence the auditor will ask for ──
+function requiredEvidence(findings) {
+  const map = {
+    fraud: { lt: 'Banko išrašai ir SF kopijos', en: 'Bank statements and invoice copies' },
+    tax: { lt: 'Deklaracijos ir mokėjimo nurodymai', en: 'Tax returns and payment orders' },
+    payroll: { lt: 'DU žiniaraščiai ir Sodra pranešimai', en: 'Payroll sheets and Sodra filings' },
+    controls: { lt: 'Patvirtinimų žurnalas (audit trail)', en: 'Approval log (audit trail)' },
+    vendor: { lt: 'Sutartys ir pirkimų procedūra', en: 'Contracts and procurement procedure' },
+    finance: { lt: 'Pinigų srautų prognozė ir limitai', en: 'Cash-flow forecast and limits' },
+  };
+  return findings.map((f) => ({
+    id: `ev_${f.id}`, findingId: f.id,
+    lt: `${map[f.category].lt} — ${f.titleLt}`, en: `${map[f.category].en} — ${f.titleEn}`,
+    status: 'missing',
+  }));
+}
+
+// ── Lithuanian regulatory systems assessment ──
+function ltAssessment(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const ext = opts.external || {};
+  const sodraLate = twin.listEntities('obligation').some((o) => (o.taxType === 'SODRA' || o.taxType === 'GPM') && o.status === 'open' && daysBetween(now, o.dueDate) < 0);
+  const sim = opts.simulation || null;
+  const S = (status, detail) => ({ status, detail });
+  return {
+    vmi: sim ? S(sim.readiness >= 85 ? 'ok' : sim.readiness >= 60 ? 'warn' : 'fail', `Parengtis ${sim.readiness} % · ${sim.findings.length} radiniai`) : S('unknown', 'Paleiskite simuliaciją'),
+    imas: ext.imasOk != null ? S(ext.imasOk ? 'ok' : 'fail', ext.imasDetail || '') : S('unknown', 'Nėra i.MAS duomenų'),
+    isaf: ext.isafDelta != null ? S(Math.abs(ext.isafDelta) <= 1 ? 'ok' : 'warn', `Δ €${round2(ext.isafDelta)}`) : S('unknown', 'Nėra i.SAF sutikrinimo'),
+    ivaz: ext.ivazOk != null ? S(ext.ivazOk ? 'ok' : 'warn', '') : S('unknown', 'Neprijungta'),
+    saft: ext.xsdOk != null ? S(ext.xsdOk ? 'ok' : 'fail', ext.xsdDetail || '') : S('unknown', 'Įkelkite SAF-T'),
+    sodra: S(sodraLate ? 'warn' : 'ok', sodraLate ? 'Yra pradelstų GPM/Sodra prievolių' : 'Prievolės tvarkingos'),
+    esaskaita: ext.einvOk != null ? S(ext.einvOk ? 'ok' : 'warn', '') : S('unknown', 'Neprijungta'),
+  };
+}
+
+// ── Auditor copilot: audit-specific intents first, Wave-6 copilot as base ──
+const AUDITOR_QUESTIONS = [
+  { id: 'vmi', lt: 'Jei VMI ateitų rytoj — ką rastų?', en: 'If VMI audited us tomorrow, what would they find?' },
+  { id: 'toprisk', lt: 'Kurios operacijos šiuo metu rizikingiausios?', en: 'Which transactions are highest risk right now?' },
+  { id: 'taxrisk', lt: 'Kiek mokestinės rizikos turime dabar?', en: 'How much potential tax risk exists currently?' },
+  { id: 'controls', lt: 'Kurias kontroles gerinti pirmiausia?', en: 'Which controls should we improve first?' },
+  { id: 'fraudtop', lt: 'TOP 5 sukčiavimo indikatoriai?', en: 'What are our top 5 fraud indicators?' },
+  { id: 'saft', lt: 'Ar atitinkame SAF-T reikalavimus?', en: 'Are we compliant with SAF-T requirements?' },
+  { id: 'sodra', lt: 'Kokia mūsų SODRA būklė?', en: 'What is our SODRA compliance status?' },
+];
+
+function askAuditor(twin, question, opts = {}) {
+  const lt = (opts.lang || 'lt') === 'lt';
+  const t = String(question).toLowerCase();
+  const sim = opts.simulation || runAuditSimulation(twin, 'vmi', opts);
+  const A = (intent, answer) => ({ intent, lang: opts.lang || 'lt', answer, needsLlm: false });
+
+  if (/vmi|rytoj|tomorrow|audit/.test(t)) {
+    const top = sim.findings.slice(0, 4).map((f) => `[${f.severity}] ${lt ? f.titleLt : f.titleEn}${f.amount ? ` (€${f.amount})` : ''}`).join('; ');
+    return A('vmi-sim', lt
+      ? `Parengtis ${sim.readiness} %. VMI rastų ${sim.findings.length} radinius, rizikos suma €${sim.exposure}. Svarbiausi: ${top || 'nieko reikšmingo'}.`
+      : `Readiness ${sim.readiness}%. VMI would raise ${sim.findings.length} findings, exposure €${sim.exposure}. Top: ${top || 'nothing material'}.`);
+  }
+  if (/sukc|fraud/.test(t)) {
+    const fr = sim.findings.filter((f) => f.category === 'fraud').slice(0, 5);
+    return A('fraud-top', (lt ? 'Sukčiavimo indikatoriai: ' : 'Fraud indicators: ')
+      + (fr.length ? fr.map((f, i) => `${i + 1}) ${lt ? f.titleLt : f.titleEn}`).join('; ') : (lt ? 'reikšmingų nerasta' : 'none material')));
+  }
+  if (/mokest|tax risk|rizik.*mokes/.test(t)) {
+    const tax = sim.findings.filter((f) => f.category === 'tax' || f.category === 'payroll');
+    return A('tax-risk', lt
+      ? `Mokestinė rizika: €${round2(tax.reduce((s, f) => s + f.amount, 0))} iš ${tax.length} radinių (${tax.map((f) => f.titleLt).slice(0, 3).join('; ') || '—'}).`
+      : `Tax exposure: €${round2(tax.reduce((s, f) => s + f.amount, 0))} across ${tax.length} findings.`);
+  }
+  if (/kontrol|control/.test(t)) {
+    const c = sim.findings.filter((f) => f.category === 'controls').slice(0, 3);
+    return A('controls', (lt ? 'Pirmiausia gerinti: ' : 'Improve first: ') + (c.length ? c.map((f) => `${lt ? f.titleLt : f.titleEn} → ${lt ? f.recLt : f.recEn}`).join('; ') : (lt ? 'kontrolės tvarkingos' : 'controls look fine')));
+  }
+  if (/saf-?t/.test(t)) {
+    const ext = opts.external || {};
+    return A('saft', ext.xsdOk != null
+      ? (ext.xsdOk ? (lt ? 'SAF-T XSD struktūra atitinka schemą.' : 'SAF-T XSD structure passes.') : (lt ? `SAF-T struktūros klaidos: ${ext.xsdDetail || ''}` : `SAF-T structural errors: ${ext.xsdDetail || ''}`))
+      : (lt ? 'Įkelkite SAF-T failą — tada pasakysiu tiksliai.' : 'Load a SAF-T file and I will answer precisely.'));
+  }
+  if (/sodra/.test(t)) {
+    const o = twin.listEntities('obligation').filter((x) => x.taxType === 'SODRA' || x.taxType === 'GPM');
+    const lateN = o.filter((x) => x.status === 'open' && daysBetween(opts.now || new Date().toISOString().slice(0, 10), x.dueDate) < 0).length;
+    return A('sodra', lt ? `Sodra/GPM prievolės: ${o.length} viso, ${lateN} pradelstos.` : `Sodra/GPM obligations: ${o.length} total, ${lateN} overdue.`);
+  }
+  if (/rizikingiaus|highest risk|toprisk/.test(t)) {
+    const top = sim.findings.slice(0, 5).map((f) => `${lt ? f.titleLt : f.titleEn}${f.refs.length ? ` [${f.refs.slice(0, 2).join(', ')}]` : ''}`).join('; ');
+    return A('top-risk', (lt ? 'Rizikingiausia dabar: ' : 'Highest risk now: ') + (top || (lt ? 'nieko kritinio' : 'nothing critical')));
+  }
+  return askCopilot(twin, question, opts);
+}
+
+// ── Board report: deterministic skeleton + LLM narration context ──
+function buildBoardReport(twin, opts = {}) {
+  const sim = opts.simulation || runAuditSimulation(twin, 'external', opts);
+  const comp = opts.compliance || runComplianceChecks(twin, opts);
+  const reg = opts.register || buildRiskRegister(twin, { ...opts, findings: sim.findings });
+  const snap = twin.getSnapshot({ now: opts.now });
+  return {
+    asOf: sim.ranAt,
+    readiness: sim.readiness,
+    exposure: sim.exposure,
+    compliance: comp.totals,
+    topFindings: sim.findings.slice(0, 5),
+    riskCounts: { high: reg.risks.filter((r) => r.impact >= 4).length, total: reg.risks.length },
+    cash: snap.cash,
+    instructions: 'Tu esi audito komiteto pranešėjas. Parašyk 6–9 sakinių valdybos santrauką lietuviškai, remdamasis TIK pateiktais skaičiais: parengtis, rizikos suma, TOP radiniai su rekomendacijomis, atitikties būklė. Be formatavimo, dalykiškai.',
+  };
+}
+
+  return { createTwin, createInbox, AGENT_CATALOG, runAgents, eventAmount, policyFor, reviewEvent, buildReviewContext, deterministicBriefing, buildEscalationContext, createPayrollEngine, PARAMS_2026, mergeParams, closeReadiness, closePeriod, buildCockpit, dailyBriefing, buildBriefingContext, buildForecast, monthlySeries, olsFit, SCENARIOS, buildCashView, askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, buildGraphView, traceConnection, scanFraud, simulateScenario, SCENARIO_PRESETS, parseScenarioText, ACCOUNT_NAMES_LT, deriveFindings, runAuditSimulation, runComplianceChecks, buildRiskRegister, generateAuditActions, requiredEvidence, ltAssessment, askAuditor, buildBoardReport, AUDIT_KINDS, AUDITOR_QUESTIONS, MANUAL_CHECKS, serializeTwin, restoreTwin, createLocalStorageAdapter, saveTwin, loadTwin, REL_TYPES, entityKey, COMPANY_KEY, round2, daysBetween, eventLabel, VERSION: "1.5.0-wave6" };
 })();
 
 /* ── Twin UI · TwinExplorer (Wave reference component) ── */
@@ -21861,6 +22229,579 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
   return ScenarioLab;
 })();
 
+/* ── Twin UI · EAuditorView (Wave reference component) ── */
+const EAuditorView = (() => {
+  const { round2, createTwin, createInbox, createLocalStorageAdapter, loadTwin, saveTwin, buildCopilotContext, runAuditSimulation, deriveFindings, runComplianceChecks, buildRiskRegister, generateAuditActions, requiredEvidence, ltAssessment, askAuditor, AUDIT_KINDS, AUDITOR_QUESTIONS } = FinTwin;
+// =============================================================================
+// EAuditorView.jsx — E-Auditor LT (Audit Readiness Platform)
+// -----------------------------------------------------------------------------
+// Vertical sidebar product in the host's native design tokens. Every number
+// is engine-computed (auditor.js): simulations derive REAL findings from the
+// twin, compliance scores from data (manual items honestly say "attestation
+// required"), the heat map maps findings by severity × evidence, evidence
+// records carry SHA-256 fingerprints, and the LLM only narrates reports.
+// Props: lang, parsed, external{runResult,recon,isaf,einv}, setToast, onAi(sys,usr)
+// =============================================================================
+
+
+const LINE = (typeof EACC_LINE !== 'undefined' ? EACC_LINE : '#26261f');
+const CARD = 'var(--bg2)', GOLD = '#ffd43b', GREEN = '#22C55E', RED = '#EF4444', AMBER = '#F59E0B',
+  TXT = '#e6e6e2', DIM = '#8a8a85', MONO = 'var(--m, ui-monospace, monospace)';
+const eur = (v) => '€' + round2(v ?? 0).toLocaleString('lt-LT');
+const SEVC = { CRITICAL: RED, HIGH: AMBER, MEDIUM: GOLD };
+const STC = { ok: GREEN, pass: GREEN, warn: AMBER, fail: RED, unknown: DIM };
+
+const H = ({ t, sub, right }) => (
+  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
+    <div style={{ flex: 1 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: '#fff', fontFamily: MONO }}>{t}</div>
+      {sub && <div style={{ fontSize: 11.5, color: DIM, marginTop: 4 }}>{sub}</div>}
+    </div>
+    {right}
+  </div>
+);
+const Btn = ({ onClick, children, primary, danger, disabled }) => (
+  <button onClick={onClick} disabled={disabled} style={{
+    background: primary ? GOLD : danger ? RED : 'transparent', color: primary ? '#000' : danger ? '#fff' : '#bcbcb8',
+    border: `1px solid ${primary ? GOLD : danger ? RED : LINE}`, padding: '7px 14px', fontFamily: MONO, fontSize: 11,
+    fontWeight: 700, letterSpacing: '.05em', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
+  }}>{children}</button>
+);
+const Chip = ({ active, onClick, children }) => (
+  <button onClick={onClick} style={{
+    background: active ? '#fff' : 'transparent', color: active ? '#000' : '#bcbcb8',
+    border: `1px solid ${active ? '#fff' : LINE}`, padding: '5px 12px', fontFamily: MONO, fontSize: 10.5, cursor: 'pointer',
+  }}>{children}</button>
+);
+const Kpi = ({ l, v, c }) => (
+  <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: '13px 16px' }}>
+    <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, textTransform: 'uppercase' }}>{l}</div>
+    <div style={{ fontSize: 21, fontWeight: 800, color: c || TXT, marginTop: 5 }}>{v}</div>
+  </div>
+);
+const Sev = ({ s }) => <span style={{ border: `1px solid ${SEVC[s]}66`, color: SEVC[s], padding: '1px 8px', fontSize: 9.5, fontFamily: MONO, fontWeight: 700 }}>{s}</span>;
+const Dot = ({ c }) => <span style={{ display: 'inline-block', width: 8, height: 8, background: c, marginRight: 8 }} />;
+const inp = { background: 'transparent', border: `1px solid ${LINE}`, color: TXT, padding: '7px 10px', fontSize: 12, fontFamily: 'inherit' };
+
+function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
+  const LT = lang === 'lt';
+  const [view, setView] = useState('dash');
+  const [, force] = useState(0);
+
+  // ── One live twin, shared with E-Accountant via the same storage key ──
+  const clientId = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || 'default';
+  const twin = useMemo(() => {
+    const a = createLocalStorageAdapter(clientId);
+    try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
+    return createTwin({ clientId });
+  }, [clientId]);
+  const inbox = useMemo(() => createInbox(twin), [twin]);
+  useEffect(() => {
+    let tm = null;
+    const u = twin.subscribe(() => { force((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { saveTwin(twin, createLocalStorageAdapter(clientId)); } catch (e) {} }, 800); });
+    if (parsed && typeof ftIngestSaft === 'function') { try { ftIngestSaft(twin, parsed); } catch (e) {} }
+    return () => { clearTimeout(tm); u(); inbox.destroy && inbox.destroy(); };
+  }, [twin, inbox, clientId, parsed]);
+
+  // ── Persisted auditor state per client ──
+  const SKEY = `eaud_${clientId}`;
+  const [st, setSt] = useState(() => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { return {}; } });
+  const up = (patch) => setSt((p) => { const n = { ...p, ...patch }; try { localStorage.setItem(SKEY, JSON.stringify(n)); } catch (e) {} return n; });
+
+  // ── Host engine results mapped honestly (unknowns stay unknown) ──
+  const ext = useMemo(() => {
+    const e = {};
+    const rr = external && external.runResult;
+    if (rr) {
+      const errs = rr.errors || rr.schemaErrors || rr.xsdErrors;
+      const ok = rr.ok != null ? !!rr.ok : Array.isArray(errs) ? errs.length === 0 : rr.errorCount != null ? rr.errorCount === 0 : null;
+      if (ok != null) { e.xsdOk = ok; e.xsdDetail = ok ? 'Schema atitinka' : `${(Array.isArray(errs) ? errs.length : rr.errorCount) || ''} klaidos`; }
+    }
+    const rc = external && external.recon;
+    if (rc) { const d = rc.delta != null ? rc.delta : rc.netDelta != null ? rc.netDelta : rc.diff; if (typeof d === 'number') e.isafDelta = d; }
+    return e;
+  }, [external]);
+
+  // ── Live computations ──
+  const tickDep = twin.eventCount();
+  const liveFindings = useMemo(() => { try { return deriveFindings(twin, { inbox }); } catch (e) { return []; } }, [twin, inbox, tickDep]);
+  const sim = st.sim || null;
+  const simLive = useMemo(() => { try { return runAuditSimulation(twin, 'vmi', { inbox }); } catch (e) { return null; } }, [twin, inbox, tickDep]);
+  const fstat = st.fraudStatus || {};
+  const setFs = (id, s) => up({ fraudStatus: { ...fstat, [id]: s } });
+
+  const runSim = (kind) => { const r = runAuditSimulation(twin, kind, { inbox }); up({ sim: r }); setToast && setToast(LT ? `Simuliacija: ${r.findings.length} radiniai, parengtis ${r.readiness} %` : `Simulation: ${r.findings.length} findings, readiness ${r.readiness}%`); };
+  const runComp = (attest) => up({ comp: runComplianceChecks(twin, { inbox, external: ext, attest: attest || st.attest || {} }) });
+
+  // ════════════════════════════ VIEWS ════════════════════════════
+  const Dash = () => {
+    const s = sim || simLive;
+    const open = (st.tasks || []).filter((t) => t.status !== 'completed').length;
+    const evMissing = requiredEvidence(liveFindings).filter((e) => !(st.evidence || []).some((r) => r.findingId === e.findingId)).length;
+    return <>
+      <H t={LT ? 'Apžvalga' : 'Dashboard'} sub={LT ? 'Audito parengties būklė realiu laiku — iš gyvojo dvynio' : 'Live audit readiness — from the event twin'}
+        right={<Btn primary onClick={() => setView('sim')}>{LT ? '⛨ Simuliuoti auditą' : '⛨ Simulate audit'}</Btn>} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+        <Kpi l={LT ? 'Parengtis' : 'Readiness'} v={s ? `${s.readiness} %` : '—'} c={s && s.readiness >= 85 ? GREEN : s && s.readiness >= 60 ? AMBER : RED} />
+        <Kpi l={LT ? 'Radiniai' : 'Findings'} v={liveFindings.length} c={liveFindings.length ? AMBER : GREEN} />
+        <Kpi l="Critical" v={liveFindings.filter((f) => f.severity === 'CRITICAL').length} c={RED} />
+        <Kpi l={LT ? 'Rizikos suma' : 'Est. exposure'} v={eur(liveFindings.reduce((a, f) => a + f.amount, 0))} />
+        <Kpi l={LT ? 'Atitiktis' : 'Compliance'} v={st.comp ? `${st.comp.totals.passed}/${st.comp.totals.total}` : '—'} c={GREEN} />
+        <Kpi l={LT ? 'Atviri veiksmai' : 'Open actions'} v={open} />
+        <Kpi l={LT ? 'Trūksta įrodymų' : 'Evidence missing'} v={evMissing} c={evMissing ? AMBER : GREEN} />
+      </div>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>{LT ? 'TOP RADINIAI' : 'TOP FINDINGS'}</div>
+        {liveFindings.slice(0, 5).map((f) => (
+          <div key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5 }}>
+            <Sev s={f.severity} /><span style={{ flex: 1 }}>{LT ? f.titleLt : f.titleEn}</span>
+            <span style={{ color: RED, fontFamily: MONO, fontSize: 11.5 }}>{f.amount ? eur(f.amount) : ''}</span>
+          </div>
+        ))}
+        {!liveFindings.length && <div style={{ color: DIM, fontSize: 12, padding: '10px 0' }}>{LT ? 'Radinių nėra — knygos švarios.' : 'No findings — clean books.'}</div>}
+      </div>
+    </>;
+  };
+
+  const SimView = () => {
+    const [kind, setKind] = useState((sim && sim.kind) || 'vmi');
+    const k = AUDIT_KINDS.find((x) => x.id === kind);
+    return <>
+      <H t={LT ? 'Audito simuliacijos variklis' : 'Audit Simulation Engine'} sub={LT ? 'Prognozuokite radinius prieš jiems įvykstant — deterministiškai iš dvynio' : 'Predict findings before they happen — deterministically from the twin'} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
+        {AUDIT_KINDS.map((x) => (
+          <button key={x.id} onClick={() => setKind(x.id)} style={{ background: CARD, border: `1px solid ${kind === x.id ? GOLD : LINE}`, padding: '14px 14px', textAlign: 'left', cursor: 'pointer', color: TXT }}>
+            <div style={{ color: kind === x.id ? GOLD : DIM, fontSize: 15 }}>{x.icon}</div>
+            <div style={{ fontWeight: 700, fontSize: 13, marginTop: 6 }}>{LT ? x.lt : x.en}</div>
+            <div style={{ fontSize: 11, color: DIM, marginTop: 3 }}>{LT ? x.descLt : x.descEn}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ marginTop: 12 }}><Btn primary onClick={() => runSim(kind)}>▷ {LT ? 'Simuliuoti' : 'Simulate'}: {k && (LT ? k.lt : k.en)}</Btn></div>
+      {sim && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 14 }}>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'baseline' }}>
+          <span style={{ fontSize: 26, fontWeight: 800, color: sim.readiness >= 85 ? GREEN : sim.readiness >= 60 ? AMBER : RED }}>{sim.readiness} %</span>
+          <span style={{ color: DIM, fontSize: 11.5, fontFamily: MONO }}>{LT ? 'parengtis' : 'readiness'} · {sim.kind.toUpperCase()} · {sim.ranAt}</span>
+          <span style={{ color: RED, fontFamily: MONO }}>{LT ? 'rizika' : 'exposure'} {eur(sim.exposure)}</span>
+          <span style={{ fontFamily: MONO, fontSize: 11 }}>{sim.bySev.CRITICAL}×CRIT · {sim.bySev.HIGH}×HIGH · {sim.bySev.MEDIUM}×MED</span>
+        </div>
+        {sim.findings.map((f) => (
+          <div key={f.id} style={{ borderTop: `1px solid ${LINE}`, padding: '10px 0', fontSize: 12.5 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><Sev s={f.severity} /><b style={{ flex: 1 }}>{LT ? f.titleLt : f.titleEn}</b><span style={{ color: RED, fontFamily: MONO }}>{f.amount ? eur(f.amount) : ''}</span></div>
+            <div style={{ color: DIM, marginTop: 4 }}>{f.detail}</div>
+          </div>
+        ))}
+        <div style={{ color: DIM, fontSize: 10.5, marginTop: 10, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>{LT ? sim.basisLt : sim.basisEn}</div>
+      </div>}
+    </>;
+  };
+
+  const Fraud = () => {
+    const FAMS = [
+      ['all', LT ? 'Visi tipai' : 'All Types', () => true],
+      ['dup', LT ? 'Dvigubos SF' : 'Duplicate Invoices', (f) => f.id.startsWith('dup_')],
+      ['ghost', LT ? 'Mokėjimai be gavėjo' : 'Ghost Payments', (f) => f.id === 'scan_ghost-payments'],
+      ['shared', LT ? 'Bendri rekvizitai' : 'Shared Details', (f) => f.id === 'scan_shared-details'],
+      ['round', 'Benford', (f) => f.id === 'scan_benford'],
+      ['wknd', LT ? 'Savaitgaliai' : 'Weekend Pattern', (f) => f.id === 'scan_weekend-pattern'],
+      ['dual', LT ? 'Be antro parašo' : 'Dual Pending', (f) => f.id === 'scan_dual-pending'],
+    ];
+    const [fam, setFam] = useState('all');
+    const all = liveFindings.filter((f) => f.category === 'fraud' || f.id === 'scan_dual-pending');
+    const alerts = all.filter(FAMS.find((x) => x[0] === fam)[2]).filter((f) => fstat[f.id] !== 'dismissed');
+    const stOf = (f) => fstat[f.id] || 'new';
+    return <>
+      <H t={LT ? 'Sukčiavimo tyrimo variklis' : 'Fraud Investigation Engine'} sub={LT ? 'Deterministinė anomalijų ir įtartinų operacijų aptiktis' : 'Deterministic detection of fraudulent patterns and anomalies'}
+        right={<Btn danger onClick={() => { force((n) => n + 1); setToast && setToast(LT ? `Skenuota: ${all.length} signalai` : `Scanned: ${all.length} alerts`); }}>◐ {LT ? 'Skenuoti' : 'Run Fraud Scan'}</Btn>} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+        <Kpi l={LT ? 'Signalai' : 'Total alerts'} v={all.length} />
+        <Kpi l="Critical" v={all.filter((f) => f.severity === 'CRITICAL').length} c={RED} />
+        <Kpi l={LT ? 'Tiriama' : 'Investigating'} v={all.filter((f) => stOf(f) === 'investigating').length} c={AMBER} />
+        <Kpi l={LT ? 'Rizikos suma' : 'Est. exposure'} v={eur(all.reduce((s, f) => s + f.amount, 0))} />
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '12px 0' }}>
+        {FAMS.map(([id, l]) => <Chip key={id} active={fam === id} onClick={() => setFam(id)}>{l}</Chip>)}
+      </div>
+      {alerts.map((f) => (
+        <div key={f.id} style={{ background: CARD, border: `1px solid ${f.severity === 'CRITICAL' ? RED + '55' : LINE}`, padding: '13px 16px', marginBottom: 10, fontSize: 12.5 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ color: RED }}>◐</span><b style={{ flex: 1 }}>{LT ? f.titleLt : f.titleEn}</b>
+            <span style={{ fontSize: 10, fontFamily: MONO, color: stOf(f) === 'investigating' ? AMBER : stOf(f) === 'confirmed' ? RED : stOf(f) === 'resolved' ? GREEN : DIM, border: `1px solid ${LINE}`, padding: '2px 8px' }}>{stOf(f)}</span>
+            {stOf(f) === 'new' && <><Btn onClick={() => setFs(f.id, 'investigating')}>👁 {LT ? 'Tirti' : 'Investigate'}</Btn><Btn onClick={() => setFs(f.id, 'dismissed')}>{LT ? 'Atmesti' : 'Dismiss'}</Btn></>}
+            {stOf(f) === 'investigating' && <><Btn danger onClick={() => setFs(f.id, 'confirmed')}>{LT ? 'Patvirtinti' : 'Confirm'}</Btn><Btn onClick={() => setFs(f.id, 'resolved')}>✓ {LT ? 'Išspręsti' : 'Resolve'}</Btn></>}
+          </div>
+          <div style={{ marginTop: 6, color: DIM }}>{f.detail}</div>
+          <div style={{ marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap', fontFamily: MONO, fontSize: 11 }}>
+            <Sev s={f.severity} />{f.amount > 0 && <span style={{ color: RED }}>{eur(f.amount)}</span>}
+            {f.refs.length > 0 && <span style={{ color: DIM }}>{LT ? 'Įrodymai' : 'Evidence'}: {f.refs.join(', ')}</span>}
+          </div>
+        </div>
+      ))}
+      {!alerts.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Signalų nėra.' : 'No alerts.'}</div>}
+    </>;
+  };
+
+  const Findings = () => {
+    const [sev, setSev] = useState('all');
+    const [cat, setCat] = useState('all');
+    const [openId, setOpenId] = useState(null);
+    const rows = liveFindings.filter((f) => (sev === 'all' || f.severity === sev) && (cat === 'all' || f.category === cat));
+    return <>
+      <H t={LT ? 'Radiniai' : 'Findings'} sub={LT ? 'Visi audito radiniai su priežasčių analize' : 'All audit findings with root cause analysis'} />
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        {['all', 'CRITICAL', 'HIGH', 'MEDIUM'].map((s) => <Chip key={s} active={sev === s} onClick={() => setSev(s)}>{s === 'all' ? (LT ? 'Visi lygiai' : 'All severity') : s}</Chip>)}
+        <span style={{ width: 10 }} />
+        {['all', 'tax', 'fraud', 'controls', 'payroll', 'vendor', 'finance'].map((c) => <Chip key={c} active={cat === c} onClick={() => setCat(c)}>{c === 'all' ? (LT ? 'Visos kategorijos' : 'All categories') : c}</Chip>)}
+        <span style={{ marginLeft: 'auto', color: DIM, fontSize: 11, fontFamily: MONO }}>{rows.length} {LT ? 'radinių' : 'findings'}</span>
+      </div>
+      {rows.map((f) => (
+        <div key={f.id} style={{ background: CARD, border: `1px solid ${LINE}`, marginBottom: 10 }}>
+          <div onClick={() => setOpenId(openId === f.id ? null : f.id)} style={{ padding: '12px 16px', cursor: 'pointer', fontSize: 12.5 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><Dot c={SEVC[f.severity]} /><b style={{ flex: 1 }}>{LT ? f.titleLt : f.titleEn}</b><span style={{ color: DIM }}>{openId === f.id ? '▾' : '▸'}</span></div>
+            <div style={{ color: DIM, margin: '5px 0 7px 16px' }}>{f.detail}</div>
+            <div style={{ display: 'flex', gap: 10, marginLeft: 16, alignItems: 'center', fontFamily: MONO, fontSize: 10.5 }}>
+              <Sev s={f.severity} /><span style={{ color: DIM }}>{f.category}</span>
+              <span style={{ border: `1px solid ${LINE}`, padding: '1px 8px' }}>open</span>
+              {f.amount > 0 && <span style={{ color: RED }}>{eur(f.amount)}</span>}
+            </div>
+          </div>
+          {openId === f.id && <div style={{ borderTop: `1px solid ${LINE}`, padding: '11px 16px', fontSize: 12, display: 'grid', gap: 6 }}>
+            <div><span style={{ color: DIM, fontFamily: MONO, fontSize: 10 }}>{LT ? 'PRIEŽASTIS' : 'ROOT CAUSE'}</span><div>{LT ? f.rootLt : f.rootEn}</div></div>
+            <div><span style={{ color: DIM, fontFamily: MONO, fontSize: 10 }}>{LT ? 'REKOMENDACIJA' : 'RECOMMENDATION'}</span><div>{LT ? f.recLt : f.recEn}</div></div>
+            {f.refs.length > 0 && <div style={{ color: DIM, fontFamily: MONO, fontSize: 11 }}>refs: {f.refs.join(', ')}</div>}
+            <div><Btn onClick={() => { const t = generateAuditActions([f])[0]; up({ tasks: [...(st.tasks || []).filter((x) => x.id !== t.id), t] }); setToast && setToast(LT ? 'Veiksmas sukurtas' : 'Action created'); }}>＋ {LT ? 'Sukurti veiksmą' : 'Create action'}</Btn></div>
+          </div>}
+        </div>
+      ))}
+      {!rows.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Radinių pagal filtrus nėra.' : 'No findings match the filters.'}</div>}
+    </>;
+  };
+
+  const Risks = () => {
+    const [form, setForm] = useState(null);
+    const reg = useMemo(() => buildRiskRegister(twin, { findings: liveFindings, custom: st.customRisks || [] }), [liveFindings, st.customRisks]);
+    const cellColor = (imp5row, lk) => {
+      const impact = 5 - imp5row, score = impact * (lk + 1);
+      return score >= 16 ? '#b04a4a' : score >= 10 ? '#b07a2e' : score >= 6 ? '#8f7a23' : '#2e6b4f';
+    };
+    return <>
+      <H t={LT ? 'Rizikų registras' : 'Risk Register'} sub={LT ? 'Tikimybė × poveikis — iš radinių ir rankinių įrašų' : 'Likelihood × impact — from findings and manual entries'}
+        right={<span style={{ display: 'flex', gap: 8 }}><Btn onClick={() => { force((n) => n + 1); setToast && setToast(LT ? `Skenuota: ${reg.risks.length} rizikos` : `Scanned: ${reg.risks.length} risks`); }}>◐ {LT ? 'Skenuoti' : 'AI Risk Scan'}</Btn><Btn primary onClick={() => setForm({ lt: '', impact: 3, likelihood: 3 })}>＋ {LT ? 'Pridėti' : 'Add Risk'}</Btn></span>} />
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16 }}>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 10 }}>{LT ? 'RIZIKŲ ŽEMĖLAPIS' : 'RISK HEAT MAP'}</div>
+        <div style={{ display: 'grid', gap: 5 }}>
+          {reg.heat.map((row, ri) => (
+            <div key={ri} style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 5 }}>
+              {row.map((n, ci) => (
+                <div key={ci} style={{ background: cellColor(ri, ci), height: 36, display: 'grid', placeItems: 'center', fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#0b0b0b' }}>{n || ''}</div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', color: DIM, fontSize: 10, fontFamily: MONO, marginTop: 6 }}><span>← {LT ? 'Reta' : 'Rare'}</span><span>{LT ? 'Tikimybė' : 'Likelihood'} →</span></div>
+      </div>
+      {form && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 14, marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+        <input placeholder={LT ? 'Rizikos pavadinimas' : 'Risk title'} value={form.lt} onChange={(e) => setForm({ ...form, lt: e.target.value })} style={{ ...inp, width: 280 }} />
+        <label style={{ color: DIM }}>{LT ? 'Poveikis' : 'Impact'} <input type="number" min="1" max="5" value={form.impact} onChange={(e) => setForm({ ...form, impact: +e.target.value })} style={{ ...inp, width: 56 }} /></label>
+        <label style={{ color: DIM }}>{LT ? 'Tikimybė' : 'Likelihood'} <input type="number" min="1" max="5" value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: +e.target.value })} style={{ ...inp, width: 56 }} /></label>
+        <Btn primary onClick={() => { if (!form.lt) return; up({ customRisks: [...(st.customRisks || []), { id: `man_${Date.now()}`, lt: form.lt, en: form.lt, impact: Math.min(5, Math.max(1, form.impact)), likelihood: Math.min(5, Math.max(1, form.likelihood)), category: 'manual' }] }); setForm(null); }}>{LT ? 'Saugoti' : 'Save'}</Btn>
+        <Btn onClick={() => setForm(null)}>✕</Btn>
+      </div>}
+      <div style={{ marginTop: 10 }}>
+        {reg.risks.map((r) => (
+          <div key={r.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderBottom: `1px solid ${LINE}`, padding: '9px 2px', fontSize: 12.5 }}>
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: DIM }}>I{r.impact}·L{r.likelihood}</span>
+            <span style={{ flex: 1 }}>{LT ? r.lt : r.en}</span>
+            <span style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{r.category} · {r.source}</span>
+            {r.amount > 0 && <span style={{ color: RED, fontFamily: MONO, fontSize: 11.5 }}>{eur(r.amount)}</span>}
+          </div>
+        ))}
+        {!reg.risks.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Rizikų nėra — skenuokite arba pridėkite.' : 'No risks — scan or add manually.'}</div>}
+      </div>
+    </>;
+  };
+
+  const Compliance = () => {
+    const comp = st.comp;
+    const [att, setAtt] = useState(st.attest || {});
+    return <>
+      <H t={LT ? 'Atitikties patikros' : 'Compliance Checks'} sub={LT ? 'Nuolatinis reguliacinės atitikties stebėjimas' : 'Continuous monitoring of regulatory compliance'}
+        right={<Btn primary onClick={() => runComp(att)}>⟳ {LT ? 'Vykdyti patikras' : 'Run Compliance Checks'}</Btn>} />
+      {comp && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
+        <Kpi l={LT ? 'Viso patikrų' : 'Total checks'} v={comp.totals.total} />
+        <Kpi l={LT ? 'Praeita' : 'Passed'} v={comp.totals.passed} c={GREEN} />
+        <Kpi l={LT ? 'Nepraeita' : 'Failed'} v={comp.totals.failed} c={RED} />
+        <Kpi l={LT ? 'Įspėjimai' : 'Warnings'} v={comp.totals.warnings} c={AMBER} />
+      </div>}
+      {!comp && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Paleiskite patikras — automatinės vertinamos iš dvynio, rankinės žymimos sąžiningai.' : 'Run the checks — automatic ones score from the twin, manual ones are honestly flagged.'}</div>}
+      {comp && <div style={{ background: CARD, border: `1px solid ${LINE}` }}>
+        {comp.checks.map((c) => (
+          <div key={c.id} style={{ display: 'flex', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${LINE}`, fontSize: 12.5, alignItems: 'center' }}>
+            <span style={{ color: STC[c.status], fontSize: 14 }}>{c.status === 'pass' ? '◉' : c.status === 'fail' ? '⊗' : '△'}</span>
+            <span style={{ flex: 1 }}>
+              <b>{LT ? c.lt : c.en}</b>
+              <div style={{ color: DIM, fontStyle: 'italic', marginTop: 3, fontSize: 11.5 }}>{c.finding}</div>
+            </span>
+            {c.manual && <input type="number" min="0" max="100" placeholder="0–100" value={att[c.id] != null ? att[c.id] : ''}
+              onChange={(e) => { const v = e.target.value === '' ? undefined : Math.min(100, Math.max(0, +e.target.value)); const n = { ...att }; if (v == null) delete n[c.id]; else n[c.id] = v; setAtt(n); up({ attest: n }); }}
+              style={{ ...inp, width: 70, fontFamily: MONO }} title={LT ? 'Rankinis patvirtinimas' : 'Attestation'} />}
+            <span style={{ color: STC[c.status], fontFamily: MONO, fontWeight: 700 }}>{c.score == null ? '—' : `${c.score}/100`}</span>
+          </div>
+        ))}
+      </div>}
+    </>;
+  };
+
+  const LtModule = () => {
+    const a = ltAssessment(twin, { simulation: sim || simLive, external: ext });
+    const SYS = [
+      ['vmi', 'VMI', 'Valstybinė mokesčių inspekcija'], ['imas', 'i.MAS', 'Elektroninės sąskaitos'],
+      ['isaf', 'i.SAF', 'Standartinė audito byla'], ['ivaz', 'i.VAZ', 'Elektroniniai važtaraščiai'],
+      ['saft', 'SAF-T', 'Standard Audit File for Tax'], ['sodra', 'SODRA', 'Socialinis draudimas'],
+      ['esaskaita', 'eSąskaita', 'Elektroninės sąskaitos faktūros'],
+    ];
+    return <>
+      <H t={LT ? 'Lietuvos modulis' : 'Lithuania Module'} sub={LT ? 'Lietuvos reguliacinių sistemų būklė' : 'Lithuanian regulatory systems status'}
+        right={<Btn primary onClick={() => runSim('vmi')}>⛨ {LT ? 'Vykdyti LT vertinimą' : 'Run LT Assessment'}</Btn>} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+        {SYS.map(([id, name, desc]) => (
+          <div key={id} style={{ background: CARD, border: `1px solid ${LINE}`, padding: '14px 16px' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><Dot c={STC[a[id].status]} /><b style={{ fontSize: 13 }}>{name}</b></div>
+            <div style={{ color: DIM, fontSize: 11.5, margin: '4px 0 6px 16px' }}>{desc}</div>
+            <div style={{ marginLeft: 16, fontSize: 11, fontFamily: MONO, color: STC[a[id].status] }}>{a[id].status === 'unknown' ? (LT ? a[id].detail : 'No data connected') : a[id].detail || a[id].status.toUpperCase()}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: '14px 16px', marginTop: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 10 }}>{LT ? 'SUDERINAMOS APSKAITOS SISTEMOS' : 'COMPATIBLE ACCOUNTING SYSTEMS'}</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['Rivile', 'Finvalda', 'B1.lt', 'Directo', 'Agnum', 'Registrų Centras'].map((s) => (
+            <span key={s} style={{ border: `1px solid ${LINE}`, padding: '7px 14px', fontSize: 12 }}><span style={{ color: GREEN }}>◉ </span>{s}</span>
+          ))}
+        </div>
+      </div>
+    </>;
+  };
+
+  const Evidence = () => {
+    const fileRef = useRef(null);
+    const recs = st.evidence || [];
+    const req = requiredEvidence(liveFindings).map((e) => ({ ...e, status: recs.some((r) => r.findingId === e.findingId) ? 'collected' : 'missing' }));
+    const stats = {
+      total: recs.length + req.filter((r) => r.status === 'missing').length,
+      collected: recs.filter((r) => r.status !== 'verified').length,
+      verified: recs.filter((r) => r.status === 'verified').length,
+      missing: req.filter((r) => r.status === 'missing').length,
+    };
+    const onFile = async (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      let sha = null;
+      try { if (window.crypto && crypto.subtle) { const buf = await f.arrayBuffer(); const h = await crypto.subtle.digest('SHA-256', buf); sha = [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 24) + '…'; } } catch (e) {}
+      up({ evidence: [...recs, { id: `ev_${Date.now()}`, name: f.name, size: f.size, sha256: sha, ts: new Date().toISOString().slice(0, 16).replace('T', ' '), status: 'collected', findingId: null }] });
+      setToast && setToast(LT ? `Įrodymas užfiksuotas${sha ? ' · SHA-256 ✓' : ''}` : `Evidence recorded${sha ? ' · SHA-256 ✓' : ''}`);
+      ev.target.value = '';
+    };
+    return <>
+      <H t={LT ? 'Įrodymų saugykla' : 'Evidence Vault'} sub={LT ? 'Įrodymų rinkimas su nuolatiniu audito pėdsaku (SHA-256 atspaudai)' : 'Evidence collection with a permanent audit trail (SHA-256 fingerprints)'}
+        right={<span style={{ display: 'flex', gap: 8 }}>
+          <Btn onClick={() => fileRef.current && fileRef.current.click()}>⇪ {LT ? 'Įkelti failą' : 'Upload File'}</Btn>
+          <Btn primary onClick={() => up({ evidence: [...recs, { id: `ev_${Date.now()}`, name: LT ? 'Rankinis įrašas' : 'Manual record', size: 0, sha256: null, ts: new Date().toISOString().slice(0, 16).replace('T', ' '), status: 'collected', findingId: null }] })}>＋ {LT ? 'Pridėti įrodymą' : 'Add Evidence'}</Btn>
+        </span>} />
+      <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={onFile} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
+        <Kpi l={LT ? 'Viso' : 'Total'} v={stats.total} /><Kpi l={LT ? 'Surinkta' : 'Collected'} v={stats.collected} c={GREEN} />
+        <Kpi l={LT ? 'Patikrinta' : 'Verified'} v={stats.verified} c={GOLD} /><Kpi l={LT ? 'Trūksta' : 'Missing'} v={stats.missing} c={AMBER} />
+      </div>
+      {req.filter((r) => r.status === 'missing').map((r) => (
+        <div key={r.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderBottom: `1px solid ${LINE}`, padding: '9px 2px', fontSize: 12.5 }}>
+          <Dot c={AMBER} /><span style={{ flex: 1 }}>{LT ? r.lt : r.en}</span><span style={{ color: AMBER, fontFamily: MONO, fontSize: 10.5 }}>missing</span>
+        </div>
+      ))}
+      {recs.map((r) => (
+        <div key={r.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderBottom: `1px solid ${LINE}`, padding: '9px 2px', fontSize: 12.5 }}>
+          <Dot c={r.status === 'verified' ? GOLD : GREEN} /><span style={{ flex: 1 }}>{r.name} {r.size ? <span style={{ color: DIM }}>({Math.round(r.size / 1024)} KB)</span> : null}</span>
+          {r.sha256 && <span style={{ color: DIM, fontFamily: MONO, fontSize: 10 }}>{r.sha256}</span>}
+          <span style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{r.ts}</span>
+          {r.status !== 'verified' && <Btn onClick={() => up({ evidence: recs.map((x) => x.id === r.id ? { ...x, status: 'verified' } : x) })}>✓ {LT ? 'Patikrinti' : 'Verify'}</Btn>}
+        </div>
+      ))}
+      {!recs.length && !req.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Įrodymų dar nėra.' : 'No evidence yet.'}</div>}
+    </>;
+  };
+
+  const Reports = () => {
+    const [rep, setRep] = useState(null);
+    const [aiText, setAiText] = useState(st.reportAi || null);
+    const [busy, setBusy] = useState(false);
+    const gen = () => setRep(buildBoardReport(twin, { simulation: sim || simLive, compliance: st.comp, inbox }));
+    return <>
+      <H t={LT ? 'Valdybos ataskaitos' : 'Board Reports'} sub={LT ? 'Vadovybės lygio audito parengties ataskaita' : 'Executive-level audit readiness report'}
+        right={<Btn primary onClick={gen}>▤ {LT ? 'Generuoti ataskaitą' : 'Generate Board Report'}</Btn>} />
+      {!rep && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 40, textAlign: 'center', color: DIM, fontSize: 12.5 }}>
+        {LT ? 'Ataskaita negeneruota. Skaičiai bus deterministiniai; AI tik parašys naratyvą.' : 'No report generated. Numbers will be deterministic; the AI only writes the narrative.'}
+      </div>}
+      {rep && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, fontSize: 12.5 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+          <Kpi l={LT ? 'Parengtis' : 'Readiness'} v={`${rep.readiness} %`} c={rep.readiness >= 85 ? GREEN : AMBER} />
+          <Kpi l={LT ? 'Rizikos suma' : 'Exposure'} v={eur(rep.exposure)} c={RED} />
+          <Kpi l={LT ? 'Atitiktis' : 'Compliance'} v={rep.compliance ? `${rep.compliance.passed}✓ ${rep.compliance.failed}✗ ${rep.compliance.warnings}△` : '—'} />
+          <Kpi l={LT ? 'Pinigai' : 'Cash'} v={eur(rep.cash)} />
+        </div>
+        <div style={{ margin: '14px 0 6px', fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>{LT ? 'TOP RADINIAI' : 'TOP FINDINGS'}</div>
+        {rep.topFindings.map((f) => (
+          <div key={f.id} style={{ padding: '7px 0', borderBottom: `1px solid ${LINE}` }}>
+            <Sev s={f.severity} /> <b>{LT ? f.titleLt : f.titleEn}</b>{f.amount ? <span style={{ color: RED, fontFamily: MONO }}> {eur(f.amount)}</span> : null}
+            <div style={{ color: DIM, fontSize: 11.5, marginTop: 3 }}>→ {LT ? f.recLt : f.recEn}</div>
+          </div>
+        ))}
+        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+          {onAi && <Btn primary disabled={busy} onClick={async () => {
+            setBusy(true);
+            try { const text = await onAi(rep.instructions, 'FAKTAI (JSON):\n' + JSON.stringify(rep).slice(0, 26000)); setAiText(text); up({ reportAi: text }); }
+            catch (e) { setToast && setToast('AI: ' + e.message); }
+            setBusy(false);
+          }}>◆ {busy ? (LT ? 'Rašoma…' : 'Writing…') : (LT ? 'AI naratyvas' : 'AI narrative')}</Btn>}
+          {aiText && <Btn onClick={() => { try { navigator.clipboard.writeText(aiText); setToast && setToast(LT ? 'Nukopijuota' : 'Copied'); } catch (e) {} }}>⧉ {LT ? 'Kopijuoti' : 'Copy'}</Btn>}
+        </div>
+        {aiText && <div style={{ marginTop: 10, borderTop: `1px solid ${LINE}`, paddingTop: 10, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{aiText}</div>}
+      </div>}
+    </>;
+  };
+
+  const Actions = () => {
+    const [chip, setChip] = useState('all');
+    const [form, setForm] = useState(null);
+    const tasks = st.tasks || [];
+    const flt = tasks.filter((t) => chip === 'all' || t.status === chip);
+    const PR = { critical: RED, high: AMBER, medium: GOLD };
+    const setTask = (id, status) => up({ tasks: tasks.map((t) => t.id === id ? { ...t, status } : t) });
+    return <>
+      <H t={LT ? 'Veiksmų sąrašas' : 'Action Items'} sub={LT ? 'Taisymo užduotys audito parengčiai gerinti' : 'Remediation tasks to improve audit readiness'}
+        right={<span style={{ display: 'flex', gap: 8 }}>
+          <Btn onClick={() => { const gen = generateAuditActions(liveFindings); const merged = [...tasks]; for (const g of gen) if (!merged.some((t) => t.id === g.id)) merged.push(g); up({ tasks: merged }); setToast && setToast(LT ? `Sugeneruota iš ${liveFindings.length} radinių` : `Generated from ${liveFindings.length} findings`); }}>☰ {LT ? 'Generuoti iš radinių' : 'AI Generate Actions'}</Btn>
+          <Btn primary onClick={() => setForm({ title: '' })}>＋ {LT ? 'Nauja užduotis' : 'Add Task'}</Btn>
+        </span>} />
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        {[['all', LT ? 'Visos' : 'All'], ['pending', 'Pending'], ['in-progress', 'In Progress'], ['completed', 'Completed']].map(([id, l]) => (
+          <Chip key={id} active={chip === id} onClick={() => setChip(id)}>{l} ({id === 'all' ? tasks.length : tasks.filter((t) => t.status === id).length})</Chip>
+        ))}
+      </div>
+      {form && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 12, marginBottom: 10, display: 'flex', gap: 10 }}>
+        <input placeholder={LT ? 'Užduotis…' : 'Task…'} value={form.title} onChange={(e) => setForm({ title: e.target.value })} style={{ ...inp, flex: 1 }} />
+        <Btn primary onClick={() => { if (!form.title) return; up({ tasks: [{ id: `man_${Date.now()}`, titleLt: form.title, titleEn: form.title, descLt: '', descEn: '', category: 'manual', priority: 'medium', status: 'pending' }, ...tasks] }); setForm(null); }}>{LT ? 'Saugoti' : 'Save'}</Btn>
+      </div>}
+      {flt.map((t) => (
+        <div key={t.id} style={{ background: CARD, border: `1px solid ${LINE}`, padding: '13px 16px', marginBottom: 10, fontSize: 12.5 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <Dot c={PR[t.priority] || GOLD} /><b style={{ flex: 1 }}>{LT ? t.titleLt : t.titleEn}</b>
+            <span style={{ border: `1px solid ${LINE}`, padding: '2px 9px', fontFamily: MONO, fontSize: 10, color: t.status === 'completed' ? GREEN : t.status === 'in-progress' ? AMBER : DIM }}>{t.status}</span>
+          </div>
+          {t.descLt && <div style={{ color: DIM, margin: '5px 0 0 16px' }}>{t.descLt}</div>}
+          <div style={{ display: 'flex', gap: 12, margin: '7px 0 0 16px', alignItems: 'center' }}>
+            <span style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{t.category} · {t.priority} priority</span>
+            {t.status === 'pending' && <Btn onClick={() => setTask(t.id, 'in-progress')}>◷ {LT ? 'Pradėti' : 'Start'}</Btn>}
+            {t.status === 'in-progress' && <Btn primary onClick={() => setTask(t.id, 'completed')}>✓ {LT ? 'Užbaigti' : 'Complete'}</Btn>}
+          </div>
+        </div>
+      ))}
+      {!flt.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Užduočių nėra — generuokite iš radinių.' : 'No tasks — generate from findings.'}</div>}
+    </>;
+  };
+
+  const Copilot = () => {
+    const [q, setQ] = useState('');
+    const [thread, setThread] = useState([]);
+    const ask = (question) => {
+      if (!question.trim()) return;
+      const r = askAuditor(twin, question, { inbox, simulation: sim || simLive, external: ext, lang });
+      setThread((th) => [{ q: question, r }, ...th]);
+      setQ('');
+    };
+    return <>
+      <H t={LT ? 'AI Kopilotas' : 'AI Copilot'} sub={LT ? 'Jūsų 24/7 audito patarėjas — klausimai apie rizikos būklę' : 'Your 24/7 audit advisor — ask anything about your risk posture'} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8, marginBottom: 12 }}>
+        {AUDITOR_QUESTIONS.map((s) => (
+          <button key={s.id} onClick={() => ask(LT ? s.lt : s.en)} style={{ background: CARD, border: `1px solid ${LINE}`, color: TXT, padding: '11px 14px', fontSize: 12.5, textAlign: 'left', cursor: 'pointer' }}>{LT ? s.lt : s.en}</button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask(q)}
+          placeholder={LT ? 'Klauskite apie parengtį, rizikas, atitiktį…' : 'Ask about audit readiness, risks, compliance…'} style={{ ...inp, flex: 1, padding: '10px 12px' }} />
+        <Btn primary onClick={() => ask(q)}>→</Btn>
+      </div>
+      <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+        {thread.map(({ q: qq, r }, i) => (
+          <div key={i} style={{ background: CARD, border: `1px solid ${LINE}`, padding: '12px 14px', fontSize: 12.5 }}>
+            <div style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{qq} · {r.needsLlm ? (LT ? 'intentas nerastas' : 'no intent') : r.intent}</div>
+            <div style={{ marginTop: 6, lineHeight: 1.65 }}>{r.answer}</div>
+            {r.needsLlm && onAi && <div style={{ marginTop: 8 }}><Btn onClick={async () => {
+              try { const text = await onAi('Tu esi audito patarėjas. Naudok TIK pateiktus faktus.', JSON.stringify(buildCopilotContext(twin, qq, { inbox })).slice(0, 26000));
+                setThread((th) => th.map((x, j) => j === i ? { q: qq, r: { ...r, answer: text, needsLlm: false, intent: 'AI' } } : x)); }
+              catch (e) { setToast && setToast('AI: ' + e.message); }
+            }}>◆ {LT ? 'Klausti AI (su faktais)' : 'Ask AI (with facts)'}</Btn></div>}
+          </div>
+        ))}
+      </div>
+    </>;
+  };
+
+  // ════════════════════════════ SHELL ════════════════════════════
+  const NAVI = [
+    ['dash', LT ? 'Apžvalga' : 'Dashboard', '▦'], ['sim', LT ? 'Audito simuliacija' : 'Audit Simulation', '⛨'],
+    ['fraud', LT ? 'Sukčiavimo tyrimas' : 'Fraud Detection', '◐'], ['find', LT ? 'Radiniai' : 'Findings', '△'],
+    ['risk', LT ? 'Rizikos' : 'Risks', '◉'], ['comp', LT ? 'Atitiktis' : 'Compliance', '§'],
+    ['lt', LT ? 'Lietuvos modulis' : 'Lithuania Module', '⌂'], ['tx', LT ? 'Operacijos' : 'Transactions', '❖'],
+    ['ev', LT ? 'Įrodymų saugykla' : 'Evidence Vault', '▣'], ['rep', LT ? 'Valdybos ataskaitos' : 'Board Reports', '▤'],
+    ['act', LT ? 'Veiksmai' : 'Actions', '☰'], ['ai', 'AI Copilot', '◈'],
+  ];
+  return (
+    <div style={{ display: 'flex', border: `1px solid ${LINE}`, minHeight: '78vh', color: TXT, background: 'transparent' }}>
+      <aside style={{ width: 212, background: CARD, borderRight: `1px solid ${LINE}`, padding: '14px 8px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 14px' }}>
+          <span style={{ width: 30, height: 30, border: `1px solid ${GOLD}`, color: GOLD, display: 'grid', placeItems: 'center', fontSize: 14, fontWeight: 800 }}>⛨</span>
+          <span>
+            <div style={{ fontWeight: 800, fontSize: 13, letterSpacing: '.04em' }}>E-AUDITOR LT</div>
+            <div style={{ fontSize: 8.5, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>AUDIT READINESS PLATFORM</div>
+          </span>
+        </div>
+        {NAVI.map(([id, l, ic]) => (
+          <button key={id} onClick={() => setView(id)} style={{
+            display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+            background: view === id ? '#fff' : 'transparent', color: view === id ? '#000' : '#bcbcb8',
+            border: `1px solid ${view === id ? '#fff' : 'transparent'}`, padding: '8px 11px', fontSize: 12,
+            fontFamily: MONO, fontWeight: view === id ? 700 : 500, letterSpacing: '.03em', cursor: 'pointer', marginBottom: 2,
+          }}>
+            <span style={{ width: 15, textAlign: 'center' }}>{ic}</span>{l}
+          </button>
+        ))}
+        <div style={{ padding: '12px 11px 0', fontSize: 9.5, color: DIM, fontFamily: MONO }}>
+          ● {clientId} · {twin.eventCount()} {LT ? 'įvykių' : 'events'}
+        </div>
+      </aside>
+      <main style={{ flex: 1, minWidth: 0, padding: '18px 22px', overflowX: 'hidden' }}>
+        {view === 'dash' && <Dash />}
+        {view === 'sim' && <SimView />}
+        {view === 'fraud' && <Fraud />}
+        {view === 'find' && <Findings />}
+        {view === 'risk' && <Risks />}
+        {view === 'comp' && <Compliance />}
+        {view === 'lt' && <LtModule />}
+        {view === 'tx' && (typeof TransactionsDesk === 'function'
+          ? <TransactionsDesk twin={twin} inbox={inbox} lang={lang} actor="auditorius" />
+          : <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Operacijų vaizdas pasiekiamas integruotoje versijoje.' : 'Transactions view available in the integrated build.'}</div>)}
+        {view === 'ev' && <Evidence />}
+        {view === 'rep' && <Reports />}
+        {view === 'act' && <Actions />}
+        {view === 'ai' && <Copilot />}
+      </main>
+    </div>
+  );
+}
+
+  return EAuditorView;
+})();
+
 /* ── SAF-T → Twin bridge: feed the app's parsed file into the event log.
       Deterministic event ids make re-importing the same file a no-op. ── */
 function ftIngestSaft(twin, parsed) {
@@ -22581,6 +23522,7 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "einvoicing", lbl: lang === "lt" ? "E. sąskaitų centras" : "E-Invoicing hub", hint: "view", run: () => setView("einvoicing") },
           { k: "eaccountant", lbl: lang === "lt" ? "E. buhalteris (Finance OS)" : "E-Accountant (Finance OS)", hint: "view", run: () => setView("eaccountant") },
           { k: "ftsim", lbl: lang === "lt" ? "Simuliacijos (E. buhalteris)" : "Scenarios (E-Accountant)", hint: "view", run: () => { setEacc(s => ({ ...s, tab: "ftsim" })); setView("eaccountant"); } },
+          { k: "eauditor", lbl: lang === "lt" ? "E. auditorius (Audito parengtis)" : "E-Auditor (Audit Readiness)", hint: "view", run: () => setView("eauditor") },
           { k: "arch", lbl: lang === "lt" ? "Architektūra" : "Architecture", hint: "view", run: () => setView("arch") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
           { k: "logs", lbl: lang === "lt" ? "Audito žurnalas" : "Audit log", hint: "view", run: () => setView("logs") },
@@ -22620,7 +23562,7 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>
         <div style={{ flex: 1, padding: "8px 10px", overflowY: "auto" }}>
           <div style={{ ...lbl, fontSize: 9, padding: "10px 10px 8px", letterSpacing: ".2em" }}>Navigation</div>
-          {NAV.map(n => { const active = (view === n.id || (n.id === "eauditor" && view === "agent" && selectedAgent?.id === "eauditor")); return <button key={n.id} onClick={() => { if (n.id === "eauditor") { const ea = AGENTS.find(a => a.id === "eauditor"); if (ea) openAgent(ea); } else { setView(n.id); } }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", border: "none", borderLeft: `2px solid ${active ? "#fff" : "transparent"}`, cursor: "pointer", background: active ? "rgba(255,255,255,0.06)" : "transparent", color: active ? "#fff" : "#8c8c88", marginBottom: 1, fontFamily: "var(--s)", fontWeight: active ? 700 : 500, fontSize: 13.5, letterSpacing: ".02em", transition: "all .2s" }} onMouseEnter={e => { if (!active) e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { if (!active) e.currentTarget.style.color = "#8c8c88"; }}><span style={{ fontSize: 14, width: 16, textAlign: "center" }}>{n.ic}</span><span>{n.l}</span></button>; })}
+          {NAV.map(n => { const active = (view === n.id || (n.id === "eauditor" && view === "agent" && selectedAgent?.id === "eauditor")); return <button key={n.id} onClick={() => setView(n.id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", border: "none", borderLeft: `2px solid ${active ? "#fff" : "transparent"}`, cursor: "pointer", background: active ? "rgba(255,255,255,0.06)" : "transparent", color: active ? "#fff" : "#8c8c88", marginBottom: 1, fontFamily: "var(--s)", fontWeight: active ? 700 : 500, fontSize: 13.5, letterSpacing: ".02em", transition: "all .2s" }} onMouseEnter={e => { if (!active) e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { if (!active) e.currentTarget.style.color = "#8c8c88"; }}><span style={{ fontSize: 14, width: 16, textAlign: "center" }}>{n.ic}</span><span>{n.l}</span></button>; })}
         </div>
         <div style={{ padding: "14px", borderTop: `1px solid ${PL_LINE}` }}>
           <div style={{ border: `1px dashed ${fileData ? "#fff" : PL_LINE}`, padding: 14, textAlign: "center", cursor: "pointer", transition: "border-color .2s" }} onClick={() => fileRef.current?.click()}>
@@ -24009,6 +24951,11 @@ function TAXAI({ onExit, initialView } = {}) {
 
         {view === "eaccountant" && <div key="eaccountant" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <EAccountantTab lang={lang} t={t} audit={audit} parsed={fileData?.parsed} fileName={fileName} runResult={runResult} findings={findings} recon={reconResult} isaf={isafData} erp={erp} einv={einv} eacc={eacc} setEacc={setEacc} setToast={setToast} openView={setView} />
+        </div>}
+
+        {view === "eauditor" && <div key="eauditor" style={{ flex: 1, overflow: "auto", padding: "26px 32px", animation: "fadeUp .4s ease" }}>
+          <EAuditorView lang={lang} parsed={fileData?.parsed} external={{ runResult, recon: reconResult, isaf: isafData, einv }} setToast={setToast}
+            onAi={(s, u) => callAI(s, u, [], [])} />
         </div>}
 
         {view === "kb" && <div key="kb" style={{ flex: 1, overflow: "hidden", animation: "fadeUp .4s ease" }}>
