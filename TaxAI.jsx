@@ -15652,11 +15652,35 @@ function EAccountantTab({ lang, t, audit, parsed, fileName, runResult, findings,
       return { twin, fc, tre, events, closeR, fraud, ck, allInv, parsed: effParsed };
     } catch (e) { return { error: String(e && e.message || e) }; }
   }, [effParsed, erp, einv, isaf, runResult, recon, findings, eacc.approvals, eacc.scen]);
+
+  // ── Live Twin (event-sourced engine), auto-synced from the loaded SAF-T ──
+  const ftClient = (effParsed && effParsed.header && effParsed.header.company && effParsed.header.company.name) || "default";
+  const ftTwin = useMemo(() => {
+    const a = FinTwin.createLocalStorageAdapter(ftClient);
+    try { const l = FinTwin.loadTwin(a, FinTwin.createTwin); if (l) return l; } catch (e) {}
+    return FinTwin.createTwin({ clientId: ftClient });
+  }, [ftClient]);
+  const ftInbox = useMemo(() => FinTwin.createInbox(ftTwin, { forecast: (t) => { try { return FinTwin.buildForecast(t); } catch (e) { return null; } } }), [ftTwin]);
+  const [ftTick, ftForce] = useState(0);
+  useEffect(() => {
+    let tm = null;
+    const u = ftTwin.subscribe(() => { ftForce((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { FinTwin.saveTwin(ftTwin, FinTwin.createLocalStorageAdapter(ftClient)); } catch (e) {} }, 800); });
+    return () => { clearTimeout(tm); u(); ftInbox.destroy && ftInbox.destroy(); };
+  }, [ftTwin, ftInbox, ftClient]);
+  useEffect(() => {
+    if (!effParsed) return;
+    const r = ftIngestSaft(ftTwin, effParsed);
+    if (r.sales + r.purchases > 0 && setToast) setToast(LT ? `Gyvasis dvynys sinchronizuotas: +${r.sales + r.purchases} SF` : `Live twin synced: +${r.sales + r.purchases} invoices`);
+  }, [ftTwin, effParsed]);
+  const ftFc = useMemo(() => { try { return FinTwin.buildForecast(ftTwin); } catch (e) { return null; } }, [ftTwin, ftTick]);
+  const ftTre = useMemo(() => { try { return FinTwin.buildCashView(ftTwin, { forecast: ftFc }); } catch (e) { return null; } }, [ftTwin, ftFc, ftTick]);
+  const [ftAsk, setFtAsk] = useState("");
+  const [ftAskR, setFtAskR] = useState(null);
   const tabs = [
     ["cockpit", LT ? "Kokpitas" : "Cockpit", "◆"], ["inbox", LT ? "Įvykiai" : "Inbox", "▣"], ["twin", LT ? "Dvynys" : "Twin", "⬡"],
     ["payroll", LT ? "DU" : "Payroll", "◰"], ["treasury", LT ? "Iždas" : "Treasury", "◖"], ["close", LT ? "Uždarymas" : "Close", "◎"],
     ["forecast", LT ? "Prognozės" : "Forecast", "▱"], ["graph", LT ? "Grafas" : "Graph", "✦"], ["copilot", "CFO Copilot", "◈"],
-    ["livetwin", LT ? "Gyvasis dvynys" : "Live Twin", "⬢"],
+    ["ftinv", LT ? "Sąskaitos" : "Invoices", "▤"], ["fttx", LT ? "Operacijos" : "Ledger", "❖"], ["ftsim", LT ? "Simuliacijos" : "Scenarios", "∿"],
   ];
   const tab = eacc.tab || "cockpit";
   const openCnt = B && B.events ? B.events.filter((e) => e.status === "open" || e.status === "approved-1").length : 0;
@@ -15683,10 +15707,38 @@ function EAccountantTab({ lang, t, audit, parsed, fileName, runResult, findings,
           <span style={{ fontSize: 11 }}>{ic}</span>{l}{id === "inbox" && openCnt > 0 && <span style={{ background: tab === id ? "#000" : "#ffd43b", color: tab === id ? "#fff" : "#000", fontSize: 9, padding: "1px 6px", fontWeight: 700 }}>{openCnt}</span>}
         </button>)}
       </div>
+      {/* ── Live Twin: ask anything (deterministic copilot over the synced twin) ── */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", margin: "2px 0 14px" }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 9, background: "var(--bg2)", border: `1px solid ${EACC_LINE}`, padding: "9px 14px" }}>
+          <span style={{ color: "#8a8a85" }}>◎</span>
+          <input value={ftAsk} onChange={(e) => setFtAsk(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && ftAsk.trim()) setFtAskR({ q: ftAsk, r: FinTwin.askCopilot(ftTwin, ftAsk, { inbox: ftInbox, forecast: ftFc, treasury: ftTre }) }); }}
+            placeholder={LT ? "Klauskite bet ko apie savo finansus…" : "Ask anything about your finances…"}
+            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "#e6e6e2", fontSize: 12.5, fontFamily: "var(--m)" }} />
+        </div>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "1px solid #22C55E55", color: "#22C55E", padding: "8px 13px", fontSize: 10, fontFamily: "var(--m)", letterSpacing: ".08em" }}>● LIVE · {ftTwin.eventCount()}</span>
+      </div>
+      {ftAskR && <div style={{ border: `1px solid ${EACC_LINE}`, background: "var(--bg2)", padding: "11px 14px", margin: "0 0 14px", fontSize: 12.5 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <span style={{ color: "#8a8a85", fontFamily: "var(--m)", fontSize: 10.5 }}>{ftAskR.q} · {ftAskR.r.needsLlm ? (LT ? "intentas nerastas" : "no intent") : ftAskR.r.intent}</span>
+          <button onClick={() => setFtAskR(null)} style={{ background: "transparent", border: "none", color: "#8a8a85", cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ marginTop: 6, lineHeight: 1.65, color: "#e6e6e2" }}>{ftAskR.r.answer}</div>
+        {ftAskR.r.needsLlm && <div style={{ marginTop: 8 }}><EaccBtn small accent onClick={async () => {
+          try {
+            const text = await callAI("Tu esi CFO copilot. Atsakyk glaustai, naudok TIK pateiktus faktus.",
+              JSON.stringify(FinTwin.buildCopilotContext(ftTwin, ftAskR.q, { inbox: ftInbox, forecast: ftFc, treasury: ftTre })).slice(0, 28000), [], []);
+            setFtAskR({ q: ftAskR.q, r: { ...ftAskR.r, answer: text, needsLlm: false, intent: "AI" } });
+          } catch (e) { setToast && setToast("AI: " + e.message); }
+        }}>◆ {LT ? "Klausti AI (su faktais)" : "Ask AI (with facts)"}</EaccBtn></div>}
+      </div>}
       {tab === "cockpit" && <EaccCockpitView B={B} lang={lang} openView={openView} />}
       {tab === "inbox" && <EaccInboxView B={B} lang={lang} eacc={eacc} setEacc={setEacc} audit={audit} setToast={setToast} />}
       {tab === "twin" && <EaccTwinView B={B} lang={lang} />}
-      {tab === "livetwin" && <FinancialTwinView lang={lang} parsed={effParsed} setToast={setToast} />}
+      {tab === "ftinv" && <InvoiceDesk twin={ftTwin} inbox={ftInbox} lang={lang} />}
+      {tab === "fttx" && <TransactionsDesk twin={ftTwin} inbox={ftInbox} lang={lang} actor="buhalterė" />}
+      {tab === "ftsim" && <ScenarioLab twin={ftTwin} lang={lang}
+        onAiTranslate={(txt) => callAI('Konvertuok verslo scenarijų į JSON parametrus. Atsakyk TIK grynu JSON be jokio kito teksto: {"revMul":skaicius,"costMul":skaicius,"wageMul":skaicius,"hires":sveikas,"hireGross":skaicius,"vatRate":skaicius(pvz 0.22),"loseTop":sveikas,"monthlyCostDelta":skaicius}. Praleisk neminimus raktus.', "SCENARIJUS: " + txt, [], [])} />}
       {tab === "payroll" && <EaccPayrollView B={B} lang={lang} eacc={eacc} setEacc={setEacc} setToast={setToast} />}
       {tab === "treasury" && <EaccTreasuryView B={B} lang={lang} eacc={eacc} setEacc={setEacc} setToast={setToast} audit={audit} />}
       {tab === "close" && <EaccCloseView B={B} lang={lang} openView={openView} />}
@@ -21233,8 +21285,10 @@ const InvoiceDesk = (() => {
 // =============================================================================
 
 
-const BG = '#0A0F1E', CARD = '#0E1528', LINE = '#1C2740', BLUE = '#3B82F6', GREEN = '#22C55E',
-  RED = '#EF4444', AMBER = '#F59E0B', TXT = '#E2E8F0', DIM = '#64748B';
+// Native E-Accountant tokens when embedded; sane fallbacks standalone.
+const LINE = (typeof EACC_LINE !== 'undefined' ? EACC_LINE : '#26261f');
+const BG = 'transparent', CARD = 'var(--bg2)', BLUE = '#ffd43b', GREEN = '#22C55E',
+  RED = '#EF4444', AMBER = '#F59E0B', TXT = '#e6e6e2', DIM = '#8a8a85';
 const eur = (v) => '€' + round2(v ?? 0).toLocaleString('lt-LT');
 const PILL = {
   paid:    { bg: 'rgba(34,197,94,.12)',  c: GREEN, lt: 'apmokėta', en: 'paid' },
@@ -21245,7 +21299,7 @@ const PILL = {
 };
 const Pill = ({ k, lang }) => {
   const p = PILL[k] || PILL.open;
-  return <span style={{ background: p.bg, color: p.c, border: `1px solid ${p.c}33`, borderRadius: 6, padding: '2px 10px', fontSize: 11, fontFamily: 'ui-monospace, monospace' }}>{lang === 'lt' ? p.lt : p.en}</span>;
+  return <span style={{ background: p.bg, color: p.c, border: `1px solid ${p.c}33`, borderRadius: 0, padding: '2px 10px', fontSize: 11, fontFamily: "var(--m, ui-monospace, monospace)" }}>{lang === 'lt' ? p.lt : p.en}</span>;
 };
 
 function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
@@ -21310,22 +21364,22 @@ function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
     setForm({ kind: 'sales', name: '', net: '', date: today, dueDate: '' });
   };
 
-  const inp = { background: '#0A1020', border: `1px solid ${LINE}`, color: TXT, borderRadius: 8, padding: '8px 12px', fontSize: 13 };
+  const inp = { background: '#0A1020', border: `1px solid ${LINE}`, color: TXT, borderRadius: 0, padding: '8px 12px', fontSize: 13 };
 
   return (
-    <div style={{ background: BG, color: TXT, minHeight: '100%', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 28px' }}>
+    <div style={{ background: BG, color: TXT, minHeight: '100%', fontFamily: 'inherit', padding: '14px 2px 28px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 800 }}>{LT ? 'Sąskaitų apdorojimas' : 'Invoice Processing'}</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#fff", fontFamily: "var(--m, ui-monospace, monospace)" }}>{LT ? 'Sąskaitų apdorojimas' : 'Invoice Processing'}</div>
           <div style={{ fontSize: 12, color: DIM, marginTop: 4 }}>{LT ? 'agentų patikrinta · auto-susieta su mokėjimais · įvykių žurnale' : 'agent-checked · auto-matched to payments · event-sourced'}</div>
         </div>
-        <button onClick={() => setShowNew((v) => !v)} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+        <button onClick={() => setShowNew((v) => !v)} style={{ background: BLUE, color: '#000', border: 'none', borderRadius: 0, padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
           + {LT ? 'Nauja sąskaita' : 'New Invoice'}
         </button>
       </div>
 
       {showNew && (
-        <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: 16, marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} style={inp}>
             <option value="sales">{LT ? 'Pardavimo (gautina)' : 'Sales (receivable)'}</option>
             <option value="purchase">{LT ? 'Pirkimo (mokėtina)' : 'Purchase (payable)'}</option>
@@ -21335,31 +21389,31 @@ function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
           <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inp} />
           <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} style={inp} title={LT ? 'Terminas' : 'Due'} />
           <span style={{ fontSize: 11, color: DIM }}>PVM 21 % {LT ? 'pridedamas automatiškai · praeis per 9 agentus' : 'auto · will pass the 9 agents'}</span>
-          <button onClick={submit} style={{ background: GREEN, color: '#04210F', border: 'none', borderRadius: 8, padding: '9px 16px', fontWeight: 700, cursor: 'pointer' }}>{LT ? 'Registruoti' : 'Create'}</button>
+          <button onClick={submit} style={{ background: GREEN, color: '#04210F', border: 'none', borderRadius: 0, padding: '9px 16px', fontWeight: 700, cursor: 'pointer' }}>{LT ? 'Registruoti' : 'Create'}</button>
         </div>
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 16 }}>
         {KPIS.map(([l, v, c]) => (
-          <div key={l} style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 18px' }}>
-            <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{l}</div>
+          <div key={l} style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: '14px 18px' }}>
+            <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)" }}>{l}</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: c, marginTop: 6 }}>{v}</div>
           </div>
         ))}
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
-        <input placeholder={LT ? '🔍 Ieškoti sąskaitų…' : '🔍 Search invoices…'} value={q} onChange={(e) => setQ(e.target.value)} style={{ ...inp, width: 240, borderRadius: 10 }} />
+        <input placeholder={LT ? '🔍 Ieškoti sąskaitų…' : '🔍 Search invoices…'} value={q} onChange={(e) => setQ(e.target.value)} style={{ ...inp, width: 240, borderRadius: 0 }} />
         {CHIPS.map(([id, l]) => (
           <button key={id} onClick={() => setChip(id)} style={{
-            background: chip === id ? BLUE : 'transparent', color: chip === id ? '#fff' : DIM,
-            border: `1px solid ${chip === id ? BLUE : LINE}`, borderRadius: 999, padding: '5px 14px', fontSize: 12, cursor: 'pointer',
+            background: chip === id ? BLUE : 'transparent', color: chip === id ? '#000' : DIM,
+            border: `1px solid ${chip === id ? BLUE : LINE}`, borderRadius: 0, padding: '5px 14px', fontSize: 12, cursor: 'pointer',
           }}>{l}</button>
         ))}
       </div>
 
-      <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, marginTop: 14, overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '150px 1.4fr 110px 110px 110px 110px 90px 50px', gap: 8, padding: '10px 16px', fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace', borderBottom: `1px solid ${LINE}` }}>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, marginTop: 14, overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '150px 1.4fr 110px 110px 110px 110px 90px 50px', gap: 8, padding: '10px 16px', fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)", borderBottom: `1px solid ${LINE}` }}>
           <div>{LT ? 'SĄSKAITA #' : 'INVOICE #'}</div><div>{LT ? 'KONTRAHENTAS' : 'COUNTERPARTY'}</div><div>{LT ? 'TIPAS' : 'TYPE'}</div>
           <div style={{ textAlign: 'right' }}>{LT ? 'SUMA' : 'TOTAL'}</div><div>{LT ? 'TERMINAS' : 'DUE'}</div><div>{LT ? 'BŪSENA' : 'STATUS'}</div><div>AI</div><div />
         </div>
@@ -21367,11 +21421,11 @@ function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
         {flt.map((r) => (
           <div key={r.id}>
             <div onClick={() => setOpenRow(openRow === r.id ? null : r.id)} style={{ display: 'grid', gridTemplateColumns: '150px 1.4fr 110px 110px 110px 110px 90px 50px', gap: 8, padding: '12px 16px', fontSize: 13, borderBottom: `1px solid ${LINE}`, cursor: 'pointer', alignItems: 'center' }}>
-              <div style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{r.id}</div>
+              <div style={{ fontFamily: "var(--m, ui-monospace, monospace)", fontWeight: 700 }}>{r.id}</div>
               <div>{r.name}</div>
-              <div style={{ fontSize: 11, fontFamily: 'ui-monospace, monospace', color: r.kind === 'sales' ? GREEN : DIM }}>{r.kind === 'sales' ? (LT ? 'gautina' : 'receivable') : (LT ? 'mokėtina' : 'payable')}</div>
+              <div style={{ fontSize: 11, fontFamily: "var(--m, ui-monospace, monospace)", color: r.kind === 'sales' ? GREEN : DIM }}>{r.kind === 'sales' ? (LT ? 'gautina' : 'receivable') : (LT ? 'mokėtina' : 'payable')}</div>
               <div style={{ textAlign: 'right', fontWeight: 700 }}>{eur(r.total)}</div>
-              <div style={{ color: r.overdue ? RED : DIM, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{r.dueDate || '—'}</div>
+              <div style={{ color: r.overdue ? RED : DIM, fontFamily: "var(--m, ui-monospace, monospace)", fontSize: 12 }}>{r.dueDate || '—'}</div>
               <div><Pill k={r.status} lang={lang} /></div>
               <div style={{ fontSize: 12, color: r.item ? (r.item.review.verdict === 'auto' ? GREEN : r.item.review.verdict === 'block' ? RED : AMBER) : DIM }}>
                 {r.item ? `${r.item.review.confidence} %` : '—'}
@@ -21425,8 +21479,10 @@ const TransactionsDesk = (() => {
 // =============================================================================
 
 
-const BG = '#0A0F1E', CARD = '#0E1528', LINE = '#1C2740', BLUE = '#3B82F6', GREEN = '#22C55E',
-  RED = '#EF4444', AMBER = '#F59E0B', TXT = '#E2E8F0', DIM = '#64748B';
+// Native E-Accountant tokens when embedded; sane fallbacks standalone.
+const LINE = (typeof EACC_LINE !== 'undefined' ? EACC_LINE : '#26261f');
+const BG = 'transparent', CARD = 'var(--bg2)', BLUE = '#ffd43b', GREEN = '#22C55E',
+  RED = '#EF4444', AMBER = '#F59E0B', TXT = '#e6e6e2', DIM = '#8a8a85';
 const eur = (v) => '€' + Math.abs(round2(v ?? 0)).toLocaleString('lt-LT');
 const SKIP = new Set(['inbox.item.decided', 'period.closed', 'twin.created']);
 const NEG = new Set(['purchase.invoice.received', 'payment.sent', 'payroll.run.completed', 'tax.obligation.created', 'asset.acquired']);
@@ -21505,22 +21561,22 @@ function TransactionsDesk({ twin, inbox, lang = 'lt', now, actor = 'buhalterė' 
     });
     setShowAdd(false); setForm({ dir: 'in', amount: '', date: today, ref: '' });
   };
-  const inp = { background: '#0A1020', border: `1px solid ${LINE}`, color: TXT, borderRadius: 8, padding: '8px 12px', fontSize: 13 };
+  const inp = { background: '#0A1020', border: `1px solid ${LINE}`, color: TXT, borderRadius: 0, padding: '8px 12px', fontSize: 13 };
 
   return (
-    <div style={{ background: BG, color: TXT, minHeight: '100%', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 28px' }}>
+    <div style={{ background: BG, color: TXT, minHeight: '100%', fontFamily: 'inherit', padding: '14px 2px 28px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 800 }}>{LT ? 'Operacijos' : 'Transactions'}</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#fff", fontFamily: "var(--m, ui-monospace, monospace)" }}>{LT ? 'Operacijos' : 'Transactions'}</div>
           <div style={{ fontSize: 12, color: DIM, marginTop: 4 }}>{LT ? 'agentų kategorizuota · auto-sudengta · rizikos stebimos' : 'agent-categorized · auto-reconciled · fraud-monitored'}</div>
         </div>
-        <button onClick={() => setShowAdd((v) => !v)} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+        <button onClick={() => setShowAdd((v) => !v)} style={{ background: BLUE, color: '#000', border: 'none', borderRadius: 0, padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
           + {LT ? 'Nauja operacija' : 'Add Transaction'}
         </button>
       </div>
 
       {showAdd && (
-        <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: 16, marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={form.dir} onChange={(e) => setForm({ ...form, dir: e.target.value })} style={inp}>
             <option value="in">{LT ? 'Įplauka (gauta)' : 'Money in'}</option>
             <option value="out">{LT ? 'Išmoka (sumokėta)' : 'Money out'}</option>
@@ -21528,31 +21584,31 @@ function TransactionsDesk({ twin, inbox, lang = 'lt', now, actor = 'buhalterė' 
           <input placeholder="€" type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} style={{ ...inp, width: 110 }} />
           <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inp} />
           <input placeholder={LT ? 'Sąskaitos # (nebūtina)' : 'Invoice # (optional)'} value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} style={{ ...inp, width: 180 }} />
-          <button onClick={addTx} style={{ background: GREEN, color: '#04210F', border: 'none', borderRadius: 8, padding: '9px 16px', fontWeight: 700, cursor: 'pointer' }}>{LT ? 'Registruoti' : 'Add'}</button>
+          <button onClick={addTx} style={{ background: GREEN, color: '#04210F', border: 'none', borderRadius: 0, padding: '9px 16px', fontWeight: 700, cursor: 'pointer' }}>{LT ? 'Registruoti' : 'Add'}</button>
         </div>
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 16 }}>
         {KPIS.map(([v, l, c]) => (
-          <div key={l} style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 18px', textAlign: 'center' }}>
+          <div key={l} style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: '14px 18px', textAlign: 'center' }}>
             <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{v}</div>
-            <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace', marginTop: 4 }}>{l}</div>
+            <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)", marginTop: 4 }}>{l}</div>
           </div>
         ))}
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
-        <input placeholder={LT ? '🔍 Ieškoti operacijų…' : '🔍 Search transactions…'} value={q} onChange={(e) => setQ(e.target.value)} style={{ ...inp, width: 240, borderRadius: 10 }} />
+        <input placeholder={LT ? '🔍 Ieškoti operacijų…' : '🔍 Search transactions…'} value={q} onChange={(e) => setQ(e.target.value)} style={{ ...inp, width: 240, borderRadius: 0 }} />
         {CHIPS.map(([id, l]) => (
           <button key={id} onClick={() => setChip(id)} style={{
-            background: chip === id ? BLUE : 'transparent', color: chip === id ? '#fff' : DIM,
-            border: `1px solid ${chip === id ? BLUE : LINE}`, borderRadius: 999, padding: '5px 14px', fontSize: 12, cursor: 'pointer',
+            background: chip === id ? BLUE : 'transparent', color: chip === id ? '#000' : DIM,
+            border: `1px solid ${chip === id ? BLUE : LINE}`, borderRadius: 0, padding: '5px 14px', fontSize: 12, cursor: 'pointer',
           }}>{l}</button>
         ))}
       </div>
 
-      <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, marginTop: 14, overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '100px 1.6fr 1fr 130px 1.1fr 120px 70px 90px', gap: 8, padding: '10px 16px', fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace', borderBottom: `1px solid ${LINE}` }}>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, marginTop: 14, overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '100px 1.6fr 1fr 130px 1.1fr 120px 70px 90px', gap: 8, padding: '10px 16px', fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)", borderBottom: `1px solid ${LINE}` }}>
           <div>{LT ? 'DATA' : 'DATE'}</div><div>{LT ? 'APRAŠYMAS' : 'DESCRIPTION'}</div><div>{LT ? 'KONTRAHENTAS' : 'COUNTERPARTY'}</div>
           <div style={{ textAlign: 'right' }}>{LT ? 'SUMA' : 'AMOUNT'}</div><div>{LT ? 'KATEGORIJA (DK)' : 'CATEGORY (GL)'}</div><div>{LT ? 'BŪSENA' : 'STATUS'}</div><div>AI%</div><div />
         </div>
@@ -21561,20 +21617,20 @@ function TransactionsDesk({ twin, inbox, lang = 'lt', now, actor = 'buhalterė' 
           const pill = PILLS[r.status] || PILLS.info;
           return (
             <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '100px 1.6fr 1fr 130px 1.1fr 120px 70px 90px', gap: 8, padding: '12px 16px', fontSize: 13, borderBottom: `1px solid ${LINE}`, alignItems: 'center' }}>
-              <div style={{ color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{r.date}</div>
+              <div style={{ color: DIM, fontFamily: "var(--m, ui-monospace, monospace)", fontSize: 12 }}>{r.date}</div>
               <div style={{ fontWeight: 600 }}>{r.flagged && <span style={{ color: RED }}>⚠ </span>}{r.desc}</div>
               <div style={{ color: DIM }}>{r.party}</div>
               <div style={{ textAlign: 'right', fontWeight: 700, color: r.flagged ? RED : r.sign > 0 ? GREEN : TXT }}>
                 {r.amt ? `${r.sign > 0 ? '+' : '−'}${eur(r.amt)}` : '—'}
               </div>
               <div style={{ color: DIM, fontSize: 12 }}>{r.category}</div>
-              <div><span style={{ background: `${pill.c}1F`, color: pill.c, border: `1px solid ${pill.c}33`, borderRadius: 6, padding: '2px 10px', fontSize: 11, fontFamily: 'ui-monospace, monospace' }}>{LT ? pill.lt : pill.en}</span></div>
+              <div><span style={{ background: `${pill.c}1F`, color: pill.c, border: `1px solid ${pill.c}33`, borderRadius: 0, padding: '2px 10px', fontSize: 11, fontFamily: "var(--m, ui-monospace, monospace)" }}>{LT ? pill.lt : pill.en}</span></div>
               <div style={{ fontSize: 12, color: r.conf == null ? DIM : r.conf >= 80 ? GREEN : r.conf >= 60 ? AMBER : RED }}>{r.conf == null ? '—' : `${r.conf}%`}</div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {r.status === 'pending' ? (
                   <>
-                    <button onClick={() => decide(r, 'approve')} title={LT ? 'Tvirtinti' : 'Approve'} style={{ background: 'rgba(34,197,94,.15)', border: `1px solid ${GREEN}55`, borderRadius: 6, cursor: 'pointer', padding: '3px 8px' }}>👍</button>
-                    <button onClick={() => decide(r, 'dismiss')} title={LT ? 'Atmesti' : 'Dismiss'} style={{ background: 'rgba(239,68,68,.15)', border: `1px solid ${RED}55`, borderRadius: 6, cursor: 'pointer', padding: '3px 8px' }}>👎</button>
+                    <button onClick={() => decide(r, 'approve')} title={LT ? 'Tvirtinti' : 'Approve'} style={{ background: 'rgba(34,197,94,.15)', border: `1px solid ${GREEN}55`, borderRadius: 0, cursor: 'pointer', padding: '3px 8px' }}>👍</button>
+                    <button onClick={() => decide(r, 'dismiss')} title={LT ? 'Atmesti' : 'Dismiss'} style={{ background: 'rgba(239,68,68,.15)', border: `1px solid ${RED}55`, borderRadius: 0, cursor: 'pointer', padding: '3px 8px' }}>👎</button>
                   </>
                 ) : r.status === 'posted' ? <span style={{ color: GREEN }}>✓</span> : null}
               </div>
@@ -21607,8 +21663,10 @@ const ScenarioLab = (() => {
 // =============================================================================
 
 
-const BG = '#0A0F1E', CARD = '#0E1528', LINE = '#1C2740', BLUE = '#3B82F6', GREEN = '#22C55E',
-  RED = '#EF4444', AMBER = '#F59E0B', TXT = '#E2E8F0', DIM = '#64748B';
+// Native E-Accountant tokens when embedded; sane fallbacks standalone.
+const LINE = (typeof EACC_LINE !== 'undefined' ? EACC_LINE : '#26261f');
+const BG = 'transparent', CARD = 'var(--bg2)', BLUE = '#ffd43b', GREEN = '#22C55E',
+  RED = '#EF4444', AMBER = '#F59E0B', TXT = '#e6e6e2', DIM = '#8a8a85';
 const eur = (v) => '€' + round2(v ?? 0).toLocaleString('lt-LT');
 const sgn = (v, unit = '€') => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${unit === '€' ? eur(Math.abs(v)) : Math.abs(v) + ' ' + unit}`);
 const TAG_ICON = { REVENUE: '↘', EXPENSE: '↗', HEADCOUNT: '＋', VAT: '§', MARKET: '⚡', EXPANSION: '◇' };
@@ -21668,18 +21726,18 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
 
   const sim = result && result.sim;
   const maxBar = sim ? Math.max(1, ...sim.base.rows.map((r) => Math.abs(r.net)), ...sim.scen.rows.map((r) => Math.abs(r.net))) : 1;
-  const inp = { background: '#0A1020', border: `1px solid ${LINE}`, color: TXT, borderRadius: 8, padding: '10px 12px', fontSize: 13, width: '100%' };
+  const inp = { background: '#0A1020', border: `1px solid ${LINE}`, color: TXT, borderRadius: 0, padding: '10px 12px', fontSize: 13, width: '100%' };
 
   return (
-    <div style={{ background: BG, color: TXT, minHeight: '100%', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 28px' }}>
+    <div style={{ background: BG, color: TXT, minHeight: '100%', fontFamily: 'inherit', padding: '14px 2px 28px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 800 }}>{LT ? 'Finansų skaitmeninis dvynys' : 'Financial Digital Twin'}</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#fff", fontFamily: "var(--m, ui-monospace, monospace)" }}>{LT ? 'Finansų skaitmeninis dvynys' : 'Financial Digital Twin'}</div>
           <div style={{ fontSize: 12, color: DIM, marginTop: 4 }}>{LT ? 'scenarijų simuliacija — patikrinkite sprendimą prieš jį priimdami' : 'scenario simulation — test any decision before making it'}</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <span style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: DIM }}>🕘 {LT ? 'Išsaugota' : 'Saved'} ({saved.length})</span>
-          <span style={{ background: 'rgba(59,130,246,.12)', border: `1px solid ${BLUE}55`, borderRadius: 8, padding: '8px 14px', fontSize: 11, color: BLUE, fontFamily: 'ui-monospace, monospace' }}>
+          <span style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: '8px 14px', fontSize: 12, color: DIM }}>🕘 {LT ? 'Išsaugota' : 'Saved'} ({saved.length})</span>
+          <span style={{ background: 'rgba(59,130,246,.12)', border: `1px solid ${BLUE}55`, borderRadius: 0, padding: '8px 14px', fontSize: 11, color: BLUE, fontFamily: "var(--m, ui-monospace, monospace)" }}>
             TWIN: {LT ? 'SINCHRONIZUOTA' : 'SYNCHRONIZED'} · {twin.eventCount()}
           </span>
         </div>
@@ -21687,8 +21745,8 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 16 }}>
         {KPIS.map(([l, v, c]) => (
-          <div key={l} style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 18px' }}>
-            <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{l}</div>
+          <div key={l} style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: '14px 18px' }}>
+            <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)" }}>{l}</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: c, marginTop: 6 }}>{v}</div>
           </div>
         ))}
@@ -21700,23 +21758,23 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
           <div style={{ fontSize: 13, fontWeight: 700 }}>{LT ? 'Paruošti scenarijai' : 'Preset Scenarios'}</div>
           {SCENARIO_PRESETS.map((p) => (
             <button key={p.id} onClick={() => run(LT ? p.lt : p.en, p.params)} style={{
-              background: CARD, border: `1px solid ${result && result.title === (LT ? p.lt : p.en) ? BLUE : LINE}`, borderRadius: 12,
+              background: CARD, border: `1px solid ${result && result.title === (LT ? p.lt : p.en) ? BLUE : LINE}`, borderRadius: 0,
               padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', color: TXT, textAlign: 'left',
             }}>
-              <span style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(59,130,246,.12)', color: BLUE, display: 'grid', placeItems: 'center', fontSize: 15 }}>{TAG_ICON[p.tag] || '▷'}</span>
+              <span style={{ width: 34, height: 34, borderRadius: 0, background: 'rgba(59,130,246,.12)', color: BLUE, display: 'grid', placeItems: 'center', fontSize: 15 }}>{TAG_ICON[p.tag] || '▷'}</span>
               <span style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{LT ? p.lt : p.en}</div>
-                <div style={{ fontSize: 9, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>{p.tag}</div>
+                <div style={{ fontSize: 9, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)", marginTop: 2 }}>{p.tag}</div>
               </span>
               <span style={{ color: DIM }}>▷</span>
             </button>
           ))}
-          <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: 14 }}>
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{LT ? 'Savas scenarijus' : 'Custom Scenario'}</div>
             <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)}
               placeholder={LT ? 'pvz. Pajamos -15%, samdom 4 programuotojus alga 3500, PVM 22%…' : 'e.g. Revenue -15%, hire 4 devs gross 3500, VAT 22%…'}
               style={{ ...inp, resize: 'vertical' }} />
-            <button onClick={runCustom} disabled={busy} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 0', width: '100%', fontWeight: 700, marginTop: 10, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={runCustom} disabled={busy} style={{ background: BLUE, color: '#000', border: 'none', borderRadius: 0, padding: '10px 0', width: '100%', fontWeight: 700, marginTop: 10, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               ▷ {busy ? (LT ? 'Skaičiuoju…' : 'Running…') : (LT ? 'Vykdyti simuliaciją' : 'Run Simulation')}
             </button>
             <div style={{ fontSize: 10, color: DIM, marginTop: 8 }}>{LT ? 'Pirma — deterministinis analizatorius; AI tik verčia tekstą į parametrus.' : 'Deterministic parser first; AI only translates text → params.'}</div>
@@ -21724,14 +21782,14 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
           {saved.length > 0 && (
             <div style={{ display: 'grid', gap: 6 }}>
               {saved.map((s, i) => (
-                <button key={i} onClick={() => run(s.title, s.params)} style={{ background: 'transparent', border: `1px dashed ${LINE}`, borderRadius: 8, padding: '8px 12px', color: DIM, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>🕘 {s.title}</button>
+                <button key={i} onClick={() => run(s.title, s.params)} style={{ background: 'transparent', border: `1px dashed ${LINE}`, borderRadius: 0, padding: '8px 12px', color: DIM, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>🕘 {s.title}</button>
               ))}
             </div>
           )}
         </div>
 
         {/* Right: results */}
-        <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 12, padding: 20, minHeight: 420 }}>
+        <div style={{ background: CARD, border: `1px solid ${LINE}`, borderRadius: 0, padding: 20, minHeight: 420 }}>
           {!result && (
             <div style={{ display: 'grid', placeItems: 'center', height: 380, color: DIM, textAlign: 'center' }}>
               <div>
@@ -21749,8 +21807,8 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <div style={{ fontWeight: 800 }}>{result.title}</div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <span style={{ fontSize: 11, color: DIM, fontFamily: 'ui-monospace, monospace' }}>rev ×{sim.applied.revMul} · cost ×{sim.applied.costMul}{sim.applied.extraMonthlyCost ? ` · ${sgn(sim.applied.extraMonthlyCost)}/mėn.` : ''}</span>
-                  <button onClick={save} style={{ background: 'transparent', border: `1px solid ${LINE}`, color: DIM, borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}>💾 {LT ? 'Saugoti' : 'Save'}</button>
+                  <span style={{ fontSize: 11, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)" }}>rev ×{sim.applied.revMul} · cost ×{sim.applied.costMul}{sim.applied.extraMonthlyCost ? ` · ${sgn(sim.applied.extraMonthlyCost)}/mėn.` : ''}</span>
+                  <button onClick={save} style={{ background: 'transparent', border: `1px solid ${LINE}`, color: DIM, borderRadius: 0, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}>💾 {LT ? 'Saugoti' : 'Save'}</button>
                 </div>
               </div>
 
@@ -21764,21 +21822,21 @@ function ScenarioLab({ twin, lang = 'lt', now, onAiTranslate }) {
                   [LT ? 'Pinigai pabaigoje' : 'Cash end', sim.delta.cashEnd],
                   [LT ? 'PVM (kitas mėn.)' : 'Next VAT', sim.delta.nextVat, true],
                 ].map(([l, v, inverse, unit]) => (
-                  <div key={l} style={{ background: '#0A1020', border: `1px solid ${LINE}`, borderRadius: 10, padding: '10px 14px' }}>
-                    <div style={{ fontSize: 10, letterSpacing: 1, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{l} Δ</div>
+                  <div key={l} style={{ background: '#0A1020', border: `1px solid ${LINE}`, borderRadius: 0, padding: '10px 14px' }}>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)" }}>{l} Δ</div>
                     <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4, color: v == null || v === 0 ? TXT : (inverse ? v < 0 : v > 0) ? GREEN : RED }}>{sgn(v, unit || '€')}</div>
                   </div>
                 ))}
               </div>
 
               <div>
-                <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: 'ui-monospace, monospace', marginBottom: 8 }}>{LT ? 'MĖNESIO REZULTATAS: BAZĖ vs SCENARIJUS' : 'MONTHLY NET: BASE vs SCENARIO'}</div>
+                <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, fontFamily: "var(--m, ui-monospace, monospace)", marginBottom: 8 }}>{LT ? 'MĖNESIO REZULTATAS: BAZĖ vs SCENARIJUS' : 'MONTHLY NET: BASE vs SCENARIO'}</div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', height: 120 }}>
                   {sim.base.rows.map((r, i) => (
                     <div key={r.ym} style={{ flex: 1, display: 'grid', gap: 3, justifyItems: 'center', alignContent: 'end' }}>
                       <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', height: 96 }}>
-                        <div title={`${LT ? 'bazė' : 'base'} ${eur(r.net)}`} style={{ width: 14, height: Math.max(3, Math.abs(r.net) / maxBar * 92), background: '#334155', borderRadius: 3, alignSelf: r.net < 0 ? 'start' : 'end' }} />
-                        <div title={`${LT ? 'scen.' : 'scen'} ${eur(sim.scen.rows[i].net)}`} style={{ width: 14, height: Math.max(3, Math.abs(sim.scen.rows[i].net) / maxBar * 92), background: sim.scen.rows[i].net < 0 ? RED : BLUE, borderRadius: 3, alignSelf: sim.scen.rows[i].net < 0 ? 'start' : 'end' }} />
+                        <div title={`${LT ? 'bazė' : 'base'} ${eur(r.net)}`} style={{ width: 14, height: Math.max(3, Math.abs(r.net) / maxBar * 92), background: '#334155', borderRadius: 0, alignSelf: r.net < 0 ? 'start' : 'end' }} />
+                        <div title={`${LT ? 'scen.' : 'scen'} ${eur(sim.scen.rows[i].net)}`} style={{ width: 14, height: Math.max(3, Math.abs(sim.scen.rows[i].net) / maxBar * 92), background: sim.scen.rows[i].net < 0 ? RED : BLUE, borderRadius: 0, alignSelf: sim.scen.rows[i].net < 0 ? 'start' : 'end' }} />
                       </div>
                       <div style={{ fontSize: 9, color: DIM }}>{r.ym.slice(5)}</div>
                     </div>
@@ -21835,191 +21893,6 @@ function ftIngestSaft(twin, parsed) {
   run(parsed.sales && parsed.sales.items, "sales");
   run(parsed.purchases && parsed.purchases.items, "purchases");
   return out;
-}
-
-/* ── FinancialTwinView — AFOS-style Finance OS shell: left sidebar, an
-      "Ask anything" bar wired to the deterministic copilot, LIVE badge,
-      one twin per client persisted in localStorage. ── */
-function FinancialTwinView({ lang, parsed, setToast }) {
-  const LT = lang === "lt";
-  const C = { bg: "#0A0F1E", side: "#0B1222", card: "#0E1528", line: "#1C2740", blue: "#3B82F6", green: "#22C55E", red: "#EF4444", txt: "#E2E8F0", dim: "#64748B" };
-  const [clientId, setClientId] = useState(() => { try { return localStorage.getItem("ft_client") || "default"; } catch { return "default"; } });
-  const [autopilot, setAutopilot] = useState(false);
-  const [tab, setTab] = useState("cockpit");
-  const [showSettings, setShowSettings] = useState(false);
-  const [ask, setAsk] = useState("");
-  const [askR, setAskR] = useState(null);
-  const [aiPanel, setAiPanel] = useState(null);
-  const [, force] = useState(0);
-
-  const twin = useMemo(() => {
-    const adapter = FinTwin.createLocalStorageAdapter(clientId);
-    try { const loaded = FinTwin.loadTwin(adapter, FinTwin.createTwin); if (loaded) return loaded; } catch (e) {}
-    return FinTwin.createTwin({ clientId });
-  }, [clientId]);
-
-  const inbox = useMemo(
-    () => FinTwin.createInbox(twin, { autopilot, forecast: (t) => { try { return FinTwin.buildForecast(t); } catch { return null; } } }),
-    [twin, autopilot]
-  );
-
-  useEffect(() => {
-    try { localStorage.setItem("ft_client", clientId); } catch {}
-    let timer = null;
-    const unsub = twin.subscribe(() => {
-      force((n) => n + 1);
-      clearTimeout(timer);
-      timer = setTimeout(() => { try { FinTwin.saveTwin(twin, FinTwin.createLocalStorageAdapter(clientId)); } catch {} }, 800);
-    });
-    return () => { clearTimeout(timer); unsub(); inbox.destroy && inbox.destroy(); };
-  }, [twin, inbox, clientId]);
-
-  const fc = useMemo(() => { try { return FinTwin.buildForecast(twin); } catch { return null; } }, [twin, twin.eventCount()]);
-  const tre = useMemo(() => { try { return FinTwin.buildCashView(twin, { forecast: fc }); } catch { return null; } }, [twin, fc]);
-
-  const narrate = async (title, ctx) => {
-    setAiPanel({ title, text: "", busy: true });
-    try {
-      const text = await callAI(
-        (ctx && ctx.instructions) || "Tu esi finansų direktorius (CFO). Atsakyk glaustai lietuviškai, naudok TIK pateiktus faktus.",
-        "FAKTAI (JSON):\n" + JSON.stringify(ctx).slice(0, 28000), [], []
-      );
-      setAiPanel({ title, text, busy: false });
-    } catch (e) { setAiPanel({ title, text: (LT ? "AI klaida: " : "AI error: ") + e.message, busy: false }); }
-  };
-
-  const importSaft = () => {
-    if (!parsed) { setToast && setToast(LT ? "Pirmiausia įkelkite SAF-T failą." : "Upload a SAF-T file first."); return; }
-    const r = ftIngestSaft(twin, parsed);
-    setToast && setToast(LT
-      ? `Dvynys: +${r.sales} pardavimo, +${r.purchases} pirkimo SF · praleista ${r.skipped} · klaidų ${r.errors}`
-      : `Twin: +${r.sales} sales, +${r.purchases} purchase invoices · skipped ${r.skipped} · errors ${r.errors}`);
-  };
-
-  const doAsk = () => {
-    if (!ask.trim()) return;
-    setAskR({ q: ask, r: FinTwin.askCopilot(twin, ask, { inbox, forecast: fc, treasury: tre }) });
-  };
-
-  const NAVI = [
-    ["cockpit", LT ? "Valdymo centras" : "Command Center", "▦"],
-    ["inbox", LT ? "AI agentai" : "AI Agents", "◉"],
-    ["txns", LT ? "Operacijos" : "Transactions", "❖"],
-    ["invoices", LT ? "Sąskaitos" : "Invoices", "▤"],
-    ["graph", LT ? "Žinių grafas" : "Knowledge Graph", "☍"],
-    ["scenarios", LT ? "Skaitm. dvynys" : "Digital Twin", "∿"],
-    ["payroll", LT ? "Darbo užmokestis" : "Payroll", "◰"],
-    ["treasury", LT ? "Iždas" : "Treasury", "◖"],
-    ["copilot", LT ? "AI patarėjas" : "AI Advisor", "◈"],
-    ["explorer", LT ? "Įvykių žurnalas" : "Event Log", "≣"],
-  ];
-
-  return (
-    <div style={{ display: "flex", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", minHeight: "80vh", color: C.txt, fontFamily: "Inter, system-ui, sans-serif" }}>
-      {/* Sidebar */}
-      <aside style={{ width: 218, background: C.side, borderRight: `1px solid ${C.line}`, display: "flex", flexDirection: "column", padding: "16px 10px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "2px 8px 14px" }}>
-          <span style={{ width: 34, height: 34, borderRadius: 10, background: C.blue, color: "#fff", display: "grid", placeItems: "center", fontSize: 17, fontWeight: 800 }}>◬</span>
-          <span>
-            <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 0.5 }}>TWIN</div>
-            <div style={{ fontSize: 9, letterSpacing: 1.5, color: C.dim, fontFamily: "ui-monospace, monospace" }}>FINANCE OS · v{FinTwin.VERSION.split("-")[0]}</div>
-          </span>
-        </div>
-        {NAVI.map(([id, l, ic]) => (
-          <button key={id} onClick={() => setTab(id)} style={{
-            display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
-            background: tab === id ? "rgba(59,130,246,.10)" : "transparent",
-            color: tab === id ? C.blue : "#94A3B8", border: "none", borderRadius: 9,
-            padding: "9px 12px", fontSize: 13, fontWeight: tab === id ? 700 : 500, cursor: "pointer",
-          }}>
-            <span style={{ width: 16, textAlign: "center" }}>{ic}</span>{l}
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <button onClick={importSaft} style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", color: "#94A3B8", border: `1px dashed ${C.line}`, borderRadius: 9, padding: "9px 12px", fontSize: 13, cursor: "pointer" }}>
-          <span style={{ width: 16, textAlign: "center" }}>▥</span>{LT ? "SAF-T importas" : "SAF-T Import"}
-        </button>
-        <button onClick={() => setShowSettings((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", color: "#94A3B8", border: "none", borderRadius: 9, padding: "9px 12px", fontSize: 13, cursor: "pointer" }}>
-          <span style={{ width: 16, textAlign: "center" }}>⚙</span>{LT ? "Nustatymai" : "Settings"}
-        </button>
-        {showSettings && (
-          <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, fontSize: 12, display: "grid", gap: 8 }}>
-            <label style={{ color: C.dim }}>{LT ? "Klientas (biuro režimas)" : "Client (bureau mode)"}
-              <input value={clientId} onChange={(e) => setClientId(e.target.value.trim() || "default")}
-                style={{ width: "100%", marginTop: 4, background: "#0A1020", border: `1px solid ${C.line}`, color: C.txt, borderRadius: 7, padding: "7px 9px", fontSize: 12 }} />
-            </label>
-            <label style={{ display: "flex", gap: 8, alignItems: "center", color: C.dim, cursor: "pointer" }}>
-              <input type="checkbox" checked={autopilot} onChange={(e) => setAutopilot(e.target.checked)} />
-              {LT ? "Autopilotas" : "Autopilot"}
-            </label>
-            <div style={{ color: C.dim }}>{twin.eventCount()} {LT ? "įvykių žurnale" : "events in the log"}</div>
-          </div>
-        )}
-      </aside>
-
-      {/* Main */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 18px", borderBottom: `1px solid ${C.line}` }}>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "#0A1020", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 14px" }}>
-            <span style={{ color: C.dim }}>🔍</span>
-            <input value={ask} onChange={(e) => setAsk(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doAsk()}
-              placeholder={LT ? "Klauskite bet ko apie savo finansus…" : "Ask anything about your finances…"}
-              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.txt, fontSize: 13 }} />
-          </div>
-          <span style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(34,197,94,.10)", border: `1px solid ${C.green}44`, color: C.green, borderRadius: 999, padding: "6px 14px", fontSize: 11, fontWeight: 700 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 4, background: C.green }} /> LIVE
-          </span>
-          <span style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 14px", fontSize: 11, color: C.dim }}>◬ {clientId}</span>
-        </div>
-
-        {askR && (
-          <div style={{ margin: "12px 18px 0", background: C.card, border: `1px solid ${C.blue}55`, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ color: C.dim }}>{askR.q}</span>
-              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 10, color: askR.r.needsLlm ? "#F59E0B" : C.green, fontFamily: "ui-monospace, monospace" }}>{askR.r.needsLlm ? (LT ? "INTENTAS NERASTAS" : "NO INTENT") : `◆ ${askR.r.intent}`}</span>
-                <button onClick={() => setAskR(null)} style={{ background: "transparent", border: "none", color: C.dim, cursor: "pointer" }}>✕</button>
-              </span>
-            </div>
-            <div style={{ marginTop: 6, lineHeight: 1.6 }}>{askR.r.answer}</div>
-            {askR.r.needsLlm && (
-              <button onClick={() => narrate("AI Advisor", FinTwin.buildCopilotContext(twin, askR.q, { inbox, forecast: fc, treasury: tre }))}
-                style={{ marginTop: 8, background: "transparent", color: C.blue, border: `1px solid ${C.blue}`, borderRadius: 7, padding: "5px 12px", fontSize: 12, cursor: "pointer" }}>
-                ◆ {LT ? "Klausti AI (su faktais)" : "Ask AI (with facts)"}
-              </button>
-            )}
-          </div>
-        )}
-
-        {aiPanel && (
-          <div style={{ margin: "12px 18px 0", background: C.card, border: `1px solid ${C.blue}`, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <b style={{ color: C.blue }}>◆ {aiPanel.title}</b>
-              <button onClick={() => setAiPanel(null)} style={{ background: "transparent", border: "none", color: C.dim, cursor: "pointer" }}>✕</button>
-            </div>
-            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{aiPanel.busy ? (LT ? "Galvoju…" : "Thinking…") : aiPanel.text}</div>
-          </div>
-        )}
-
-        <div style={{ flex: 1, overflow: "auto" }}>
-          {tab === "cockpit" && <ExecutiveCockpit twin={twin} inbox={inbox} lang={lang} forecast={fc} treasury={tre}
-            onAiMemo={(ctx) => narrate(LT ? "Rytinis AI memo" : "AI morning memo", ctx)} />}
-          {tab === "inbox" && <AgentInbox twin={twin} inbox={inbox} lang={lang} actor="buhalterė"
-            onEscalate={(item) => narrate(LT ? "CFO komentaras" : "CFO narrative", FinTwin.buildEscalationContext(twin, item))} />}
-          {tab === "invoices" && <InvoiceDesk twin={twin} inbox={inbox} lang={lang} />}
-          {tab === "txns" && <TransactionsDesk twin={twin} inbox={inbox} lang={lang} actor="buhalterė" />}
-          {tab === "explorer" && <TwinExplorer twin={twin} lang={lang} />}
-          {tab === "payroll" && <PayrollRunner twin={twin} lang={lang} company={{ name: (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || clientId }} />}
-          {tab === "treasury" && <TreasuryDesk twin={twin} lang={lang} />}
-          {tab === "scenarios" && <ScenarioLab twin={twin} lang={lang}
-            onAiTranslate={(txt) => callAI('Konvertuok verslo scenarijų į JSON parametrus. Atsakyk TIK grynu JSON be jokio kito teksto: {"revMul":skaicius,"costMul":skaicius,"wageMul":skaicius,"hires":sveikas,"hireGross":skaicius,"vatRate":skaicius(pvz 0.22),"loseTop":sveikas,"monthlyCostDelta":skaicius}. Praleisk neminimus raktus.', "SCENARIJUS: " + txt, [], [])} />}
-          {tab === "copilot" && <CfoCopilot twin={twin} inbox={inbox} forecast={fc} treasury={tre} lang={lang}
-            onAskLlm={(ctx) => narrate("CFO Copilot · AI", ctx)} />}
-          {tab === "graph" && <KnowledgeGraph twin={twin} lang={lang} />}
-        </div>
-      </main>
-    </div>
-  );
 }
 
 function TAXAI({ onExit, initialView } = {}) {
@@ -22707,7 +22580,7 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "integrations", lbl: lang === "lt" ? "ERP integracijos" : "ERP integrations", hint: "view", run: () => setView("integrations") },
           { k: "einvoicing", lbl: lang === "lt" ? "E. sąskaitų centras" : "E-Invoicing hub", hint: "view", run: () => setView("einvoicing") },
           { k: "eaccountant", lbl: lang === "lt" ? "E. buhalteris (Finance OS)" : "E-Accountant (Finance OS)", hint: "view", run: () => setView("eaccountant") },
-          { k: "livetwin", lbl: lang === "lt" ? "Gyvasis dvynys (E. buhalteris)" : "Live Twin (E-Accountant)", hint: "view", run: () => { setEacc(s => ({ ...s, tab: "livetwin" })); setView("eaccountant"); } },
+          { k: "ftsim", lbl: lang === "lt" ? "Simuliacijos (E. buhalteris)" : "Scenarios (E-Accountant)", hint: "view", run: () => { setEacc(s => ({ ...s, tab: "ftsim" })); setView("eaccountant"); } },
           { k: "arch", lbl: lang === "lt" ? "Architektūra" : "Architecture", hint: "view", run: () => setView("arch") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
           { k: "logs", lbl: lang === "lt" ? "Audito žurnalas" : "Audit log", hint: "view", run: () => setView("logs") },
