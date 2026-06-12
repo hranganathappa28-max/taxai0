@@ -15656,6 +15656,7 @@ function EAccountantTab({ lang, t, audit, parsed, fileName, runResult, findings,
     ["cockpit", LT ? "Kokpitas" : "Cockpit", "◆"], ["inbox", LT ? "Įvykiai" : "Inbox", "▣"], ["twin", LT ? "Dvynys" : "Twin", "⬡"],
     ["payroll", LT ? "DU" : "Payroll", "◰"], ["treasury", LT ? "Iždas" : "Treasury", "◖"], ["close", LT ? "Uždarymas" : "Close", "◎"],
     ["forecast", LT ? "Prognozės" : "Forecast", "▱"], ["graph", LT ? "Grafas" : "Graph", "✦"], ["copilot", "CFO Copilot", "◈"],
+    ["livetwin", LT ? "Gyvasis dvynys" : "Live Twin", "⬢"],
   ];
   const tab = eacc.tab || "cockpit";
   const openCnt = B && B.events ? B.events.filter((e) => e.status === "open" || e.status === "approved-1").length : 0;
@@ -15685,6 +15686,7 @@ function EAccountantTab({ lang, t, audit, parsed, fileName, runResult, findings,
       {tab === "cockpit" && <EaccCockpitView B={B} lang={lang} openView={openView} />}
       {tab === "inbox" && <EaccInboxView B={B} lang={lang} eacc={eacc} setEacc={setEacc} audit={audit} setToast={setToast} />}
       {tab === "twin" && <EaccTwinView B={B} lang={lang} />}
+      {tab === "livetwin" && <FinancialTwinView lang={lang} parsed={effParsed} setToast={setToast} />}
       {tab === "payroll" && <EaccPayrollView B={B} lang={lang} eacc={eacc} setEacc={setEacc} setToast={setToast} />}
       {tab === "treasury" && <EaccTreasuryView B={B} lang={lang} eacc={eacc} setEacc={setEacc} setToast={setToast} audit={audit} />}
       {tab === "close" && <EaccCloseView B={B} lang={lang} openView={openView} />}
@@ -20569,12 +20571,12 @@ function fmt(v, kind, lt) {
   return String(v);
 }
 
-function ExecutiveCockpit({ twin, inbox, lang = 'lt', now, external, onAiMemo, actor = 'direktorius' }) {
+function ExecutiveCockpit({ twin, inbox, lang = 'lt', now, external, forecast, treasury, onAiMemo, actor = 'direktorius' }) {
   const [tick, force] = useState(0);
   useEffect(() => twin.subscribe(() => force((n) => n + 1)), [twin]);
   const lt = lang === 'lt';
 
-  const ck = useMemo(() => buildCockpit(twin, { now, inbox, external }), [twin, inbox, now, external, tick]);
+  const ck = useMemo(() => buildCockpit(twin, { now, inbox, external, forecast, treasury }), [twin, inbox, now, external, forecast, treasury, tick]);
   const briefing = useMemo(() => dailyBriefing(ck, lang), [ck, lang]);
   const close = ck.close;
   const ring = close.score >= close.target ? GREEN : close.score >= 70 ? AMBER : RED;
@@ -20603,7 +20605,7 @@ function ExecutiveCockpit({ twin, inbox, lang = 'lt', now, external, onAiMemo, a
       <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderLeft: `3px solid ${GOLD}`, borderRadius: 8, padding: 16, margin: '16px 0', fontSize: 13, lineHeight: 1.7 }}>
         {briefing}
         {onAiMemo && (
-          <button onClick={() => onAiMemo(buildBriefingContext(twin, { now, inbox, cockpit: ck }))} style={{
+          <button onClick={() => onAiMemo(buildBriefingContext(twin, { now, inbox, forecast, treasury, cockpit: ck }))} style={{
             display: 'block', marginTop: 10, background: 'transparent', color: GOLD,
             border: `1px solid ${GOLD}`, borderRadius: 4, padding: '4px 12px', fontSize: 11, cursor: 'pointer',
           }}>{lt ? '◆ Rytinis AI memo' : '◆ AI morning memo'}</button>
@@ -21167,7 +21169,7 @@ function FinancialTwinView({ lang, parsed, setToast }) {
       )}
 
       <div style={{ flex: 1, overflow: "auto" }}>
-        {tab === "cockpit" && <ExecutiveCockpit twin={twin} inbox={inbox} lang={lang}
+        {tab === "cockpit" && <ExecutiveCockpit twin={twin} inbox={inbox} lang={lang} forecast={fc} treasury={tre}
           onAiMemo={(ctx) => narrate(LT ? "Rytinis AI memo" : "AI morning memo", ctx)} />}
         {tab === "inbox" && <AgentInbox twin={twin} inbox={inbox} lang={lang} actor="buhalterė"
           onEscalate={(item) => narrate(LT ? "CFO komentaras" : "CFO narrative", FinTwin.buildEscalationContext(twin, item))} />}
@@ -21736,7 +21738,6 @@ function TAXAI({ onExit, initialView } = {}) {
     { id: "integrations", l: lang === "lt" ? "Integracijos" : "Integrations", ic: "⇄" },
     { id: "einvoicing", l: lang === "lt" ? "E. sąskaitos" : "E-Invoicing", ic: "✉" },
     { id: "eaccountant", l: lang === "lt" ? "E. buhalteris" : "E-Accountant", ic: "⬡" },
-    { id: "twin", l: lang === "lt" ? "Fin. dvynys" : "Fin. Twin", ic: "◬" },
     { id: "kb", l: lang === "lt" ? "Žinių bankas" : "Knowledge Bank", ic: "▤" },
     { id: "eauditor", l: lang === "lt" ? "E-Auditorius" : "E-Auditor", ic: "◉" },
     { id: "agents", l: `${t.agents} (${AGENTS.length})`, ic: "◎" },
@@ -21868,7 +21869,7 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "integrations", lbl: lang === "lt" ? "ERP integracijos" : "ERP integrations", hint: "view", run: () => setView("integrations") },
           { k: "einvoicing", lbl: lang === "lt" ? "E. sąskaitų centras" : "E-Invoicing hub", hint: "view", run: () => setView("einvoicing") },
           { k: "eaccountant", lbl: lang === "lt" ? "E. buhalteris (Finance OS)" : "E-Accountant (Finance OS)", hint: "view", run: () => setView("eaccountant") },
-          { k: "twin", lbl: lang === "lt" ? "Finansų dvynys (Waves 1–6)" : "Financial Twin (Waves 1–6)", hint: "view", run: () => setView("twin") },
+          { k: "livetwin", lbl: lang === "lt" ? "Gyvasis dvynys (E. buhalteris)" : "Live Twin (E-Accountant)", hint: "view", run: () => { setEacc(s => ({ ...s, tab: "livetwin" })); setView("eaccountant"); } },
           { k: "arch", lbl: lang === "lt" ? "Architektūra" : "Architecture", hint: "view", run: () => setView("arch") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
           { k: "logs", lbl: lang === "lt" ? "Audito žurnalas" : "Audit log", hint: "view", run: () => setView("logs") },
@@ -23297,10 +23298,6 @@ function TAXAI({ onExit, initialView } = {}) {
 
         {view === "eaccountant" && <div key="eaccountant" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <EAccountantTab lang={lang} t={t} audit={audit} parsed={fileData?.parsed} fileName={fileName} runResult={runResult} findings={findings} recon={reconResult} isaf={isafData} erp={erp} einv={einv} eacc={eacc} setEacc={setEacc} setToast={setToast} openView={setView} />
-        </div>}
-
-        {view === "twin" && <div key="twin" style={{ flex: 1, display: "flex", overflow: "hidden", animation: "fadeUp .4s ease" }}>
-          <FinancialTwinView lang={lang} parsed={fileData?.parsed} setToast={setToast} />
         </div>}
 
         {view === "kb" && <div key="kb" style={{ flex: 1, overflow: "hidden", animation: "fadeUp .4s ease" }}>
