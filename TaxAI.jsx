@@ -15695,6 +15695,5493 @@ function EAccountantTab({ lang, t, audit, parsed, fileName, runResult, findings,
   </div>;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FINANCIAL DIGITAL TWIN — FinanceOS LT Waves 1–6 (event-sourced engine)
+   Generated from the financial-twin module package (249/249 tests green).
+   Namespaced in FinTwin to avoid any collision with the host app.
+   ═══════════════════════════════════════════════════════════════════════ */
+const FinTwin = (() => {
+  // ───────────────────────── events.js ─────────────────────────
+// =============================================================================
+// events.js — Event catalog + creation + shared utilities
+// -----------------------------------------------------------------------------
+// Philosophy (FinanceOS LT, Wave 1):
+//   Reality creates events. Events are the ONLY way information enters the twin.
+//   Everything else (entities, ledger, reports) is derived and replayable.
+// =============================================================================
+
+/**
+ * Catalog of all event types the twin understands in Wave 1.
+ * `required` supports dotted paths (e.g. "customer.name").
+ * Labels are bilingual (LT first — primary jurisdiction is Lithuania).
+ */
+const EVENT_TYPES = {
+  'bank.account.opened': {
+    lt: 'Atidaryta banko sąskaita',
+    en: 'Bank account opened',
+    required: ['accountId', 'iban', 'currency'],
+  },
+  'bank.transaction.imported': {
+    lt: 'Importuota banko operacija',
+    en: 'Bank transaction imported',
+    required: ['accountId', 'amount', 'date'],
+  },
+  'sales.invoice.issued': {
+    lt: 'Išrašyta pardavimo sąskaita',
+    en: 'Sales invoice issued',
+    required: ['invoiceId', 'customer.name', 'net', 'vat', 'total', 'date'],
+  },
+  'purchase.invoice.received': {
+    lt: 'Gauta pirkimo sąskaita',
+    en: 'Purchase invoice received',
+    required: ['invoiceId', 'vendor.name', 'net', 'vat', 'total', 'date'],
+  },
+  'payment.received': {
+    lt: 'Gautas mokėjimas',
+    en: 'Payment received',
+    required: ['paymentId', 'amount', 'date'],
+  },
+  'payment.sent': {
+    lt: 'Atliktas mokėjimas',
+    en: 'Payment sent',
+    required: ['paymentId', 'amount', 'date'],
+  },
+  'employee.hired': {
+    lt: 'Įdarbintas darbuotojas',
+    en: 'Employee hired',
+    required: ['employeeId', 'name', 'grossSalary', 'startDate'],
+  },
+  'employee.terminated': {
+    lt: 'Nutraukta darbo sutartis',
+    en: 'Employee terminated',
+    required: ['employeeId', 'endDate'],
+  },
+  'payroll.run.completed': {
+    lt: 'Įvykdytas darbo užmokesčio skaičiavimas',
+    en: 'Payroll run completed',
+    required: ['runId', 'period', 'lines'],
+  },
+  'asset.acquired': {
+    lt: 'Įsigytas ilgalaikis turtas',
+    en: 'Fixed asset acquired',
+    required: ['assetId', 'name', 'cost', 'usefulLifeMonths', 'date'],
+  },
+  'asset.depreciation.recorded': {
+    lt: 'Apskaitytas nusidėvėjimas',
+    en: 'Depreciation recorded',
+    required: ['assetId', 'amount', 'period'],
+  },
+  'contract.signed': {
+    lt: 'Pasirašyta sutartis',
+    en: 'Contract signed',
+    required: ['contractId', 'counterparty', 'value', 'startDate'],
+  },
+  'tax.obligation.created': {
+    lt: 'Sukurta mokestinė prievolė',
+    en: 'Tax obligation created',
+    required: ['obligationId', 'taxType', 'amount', 'dueDate'],
+  },
+  'tax.obligation.settled': {
+    lt: 'Įvykdyta mokestinė prievolė',
+    en: 'Tax obligation settled',
+    required: ['obligationId', 'date'],
+  },
+  // Ledger lifecycle is ALSO events — approvals survive replay and stay auditable.
+  'ledger.entry.approved': {
+    lt: 'Patvirtintas žurnalo įrašas',
+    en: 'Journal entry approved',
+    required: ['entryId', 'actor'],
+  },
+  'ledger.entry.posted': {
+    lt: 'Užregistruotas žurnalo įrašas',
+    en: 'Journal entry posted',
+    required: ['entryId', 'actor'],
+  },
+  // Wave 2: inbox decisions are events too — approvals, dismissals and
+  // overrides replay deterministically and stay auditable.
+  'inbox.item.decided': {
+    lt: 'Inbox sprendimas',
+    en: 'Inbox decision',
+    required: ['itemId', 'decision', 'actor'],
+  },
+  // Wave 4: closing a period is an auditable record, not a financial fact.
+  'period.closed': {
+    lt: 'Uždarytas laikotarpis',
+    en: 'Period closed',
+    required: ['period', 'actor', 'score'],
+  },
+};
+
+// Entity types the twin models in Wave 1. (inventory / project / forecast are
+// registered for Wave 5+, with no projector yet — documented, not hidden.)
+const ENTITY_TYPES = [
+  'customer', 'vendor', 'employee', 'asset', 'bankAccount',
+  'invoice', 'payment', 'contract', 'obligation', 'taxPosition',
+  'inventory', 'project', 'forecast',
+];
+
+// ----------------------------------------------------------------------------
+// Small shared utilities
+// ----------------------------------------------------------------------------
+
+/** Round to 2 decimals (money). Keep all money math going through this. */
+function round2(v) {
+  return Math.round((v + Number.EPSILON) * 100) / 100;
+}
+
+/** 'YYYY-MM-DD' -> 'YYYY-MM' */
+function monthOf(isoDate) {
+  return String(isoDate).slice(0, 7);
+}
+
+/** Whole days between two ISO dates (b - a). ISO date-only parses as UTC. */
+function daysBetween(aIso, bIso) {
+  return Math.round((Date.parse(bIso) - Date.parse(aIso)) / 86400000);
+}
+
+/** Given 'YYYY-MM', return ISO date of `day` in the FOLLOWING month. */
+function nextMonthDate(period, day) {
+  const [y, m] = period.split('-').map(Number);
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** URL-ish slug for deterministic entity ids when no id is supplied. */
+function slug(text) {
+  return String(text).toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Canonical JSON: stable key ordering, undefined keys dropped.
+ * Used for hashing so the same data always hashes the same.
+ */
+function canonical(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map((v) => canonical(v === undefined ? null : v)).join(',') + ']';
+  const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonical(value[k])).join(',') + '}';
+}
+
+/**
+ * FNV-1a 64-bit hash (hex string).
+ * NOTE (honesty): this is a TAMPER-EVIDENT chain, not a cryptographic one.
+ * It reliably detects accidental edits / corruption of the event log.
+ * If you later need cryptographic guarantees, swap this for WebCrypto SHA-256
+ * (async) — the chain structure stays identical.
+ */
+function fnv1a64(str) {
+  let h = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  for (let i = 0; i < str.length; i++) {
+    h ^= BigInt(str.charCodeAt(i));
+    h = (h * prime) & mask;
+  }
+  return h.toString(16).padStart(16, '0');
+}
+
+function getPath(obj, dotted) {
+  return dotted.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+let eventCounter = 0;
+
+/**
+ * Create (and validate) an event. Throws on unknown type / missing fields.
+ * @param {string} type - one of EVENT_TYPES
+ * @param {object} payload - event data
+ * @param {object} [meta] - { id?, ts?, source?, actor? }
+ */
+function createEvent(type, payload, meta = {}) {
+  const def = EVENT_TYPES[type];
+  if (!def) throw new Error(`Unknown event type: ${type}`);
+  if (payload == null || typeof payload !== 'object') {
+    throw new Error(`Event payload must be an object (type ${type})`);
+  }
+  for (const field of def.required) {
+    const v = getPath(payload, field);
+    if (v === undefined || v === null || v === '') {
+      throw new Error(`Missing required field "${field}" for event type ${type}`);
+    }
+  }
+  const id = meta.id || `evt_${Date.now().toString(36)}_${(++eventCounter).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  return {
+    id,
+    type,
+    ts: meta.ts || new Date().toISOString(),
+    source: meta.source || 'manual',
+    actor: meta.actor || 'system',
+    payload,
+  };
+}
+
+/** Bilingual label for an event type. */
+function eventLabel(type, lang = 'lt') {
+  const def = EVENT_TYPES[type];
+  if (!def) return type;
+  return lang === 'en' ? def.en : def.lt;
+}
+
+  // ───────────────────────── eventStore.js ─────────────────────────
+// =============================================================================
+// eventStore.js — Append-only, hash-chained event log
+// -----------------------------------------------------------------------------
+// The event log is the single source of truth. Each event stores the hash of
+// the previous one, so any edit anywhere in the history breaks the chain and
+// verifyIntegrity() reports exactly where.
+// =============================================================================
+
+
+const GENESIS = 'GENESIS';
+
+function computeHash(prevHash, event) {
+  return fnv1a64(
+    prevHash + canonical({ id: event.id, type: event.type, ts: event.ts, payload: event.payload })
+  );
+}
+
+function createEventStore() {
+  /** @type {Array<object>} */
+  const events = [];
+  const byId = new Map();
+  const listeners = new Set();
+
+  function append(event) {
+    if (byId.has(event.id)) throw new Error(`Duplicate event id: ${event.id}`);
+    const prevHash = events.length ? events[events.length - 1].hash : GENESIS;
+    const stored = {
+      ...event,
+      seq: events.length + 1,
+      prevHash,
+      hash: computeHash(prevHash, event),
+    };
+    events.push(stored);
+    byId.set(stored.id, stored);
+    for (const l of listeners) l(stored);
+    return stored;
+  }
+
+  /**
+   * Re-append an event coming from a serialized log. Verifies the stored
+   * prevHash/hash against a fresh recomputation — a tampered log refuses to load.
+   */
+  function loadAppend(storedEvent) {
+    if (byId.has(storedEvent.id)) throw new Error(`Duplicate event id: ${storedEvent.id}`);
+    const expectedPrev = events.length ? events[events.length - 1].hash : GENESIS;
+    if (storedEvent.prevHash !== expectedPrev) {
+      throw new Error(`Event chain broken at seq ${events.length + 1}: prevHash mismatch (log was modified or reordered)`);
+    }
+    const recomputed = computeHash(expectedPrev, storedEvent);
+    if (storedEvent.hash !== recomputed) {
+      throw new Error(`Event chain broken at seq ${events.length + 1}: hash mismatch (event data was modified)`);
+    }
+    const stored = { ...storedEvent, seq: events.length + 1 };
+    events.push(stored);
+    byId.set(stored.id, stored);
+    for (const l of listeners) l(stored);
+    return stored;
+  }
+
+  function verifyIntegrity() {
+    let prev = GENESIS;
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      if (e.prevHash !== prev) return { valid: false, brokenAtSeq: i + 1, reason: 'prevHash mismatch' };
+      const recomputed = computeHash(prev, e);
+      if (e.hash !== recomputed) return { valid: false, brokenAtSeq: i + 1, reason: 'hash mismatch' };
+      prev = e.hash;
+    }
+    return { valid: true, count: events.length };
+  }
+
+  return {
+    append,
+    loadAppend,
+    verifyIntegrity,
+    getAll: () => events.slice(),
+    getById: (id) => byId.get(id),
+    getByType: (type) => events.filter((e) => e.type === type),
+    count: () => events.length,
+    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    toJSON: () => events.map((e) => ({ ...e })),
+  };
+}
+
+  // ───────────────────────── relationships.js ─────────────────────────
+// =============================================================================
+// relationships.js — Typed relationship index between twin entities
+// -----------------------------------------------------------------------------
+// Every projection registers edges here ("this payment PAYS that invoice").
+// This is the data backbone for the Knowledge Graph wave: neighbors, path
+// tracing and a {nodes, edges} export for a graph UI.
+// =============================================================================
+
+const REL_TYPES = {
+  ISSUED_TO:     { lt: 'Išrašyta',        en: 'Issued to' },        // invoice -> customer
+  RECEIVED_FROM: { lt: 'Gauta iš',        en: 'Received from' },    // invoice -> vendor
+  PAYS:          { lt: 'Apmoka',          en: 'Pays' },             // payment -> invoice
+  INTO_ACCOUNT:  { lt: 'Į sąskaitą',      en: 'Into account' },     // payment -> bankAccount
+  FROM_ACCOUNT:  { lt: 'Iš sąskaitos',    en: 'From account' },     // payment -> bankAccount
+  EMPLOYS:       { lt: 'Įdarbina',        en: 'Employs' },          // company -> employee
+  OWNS:          { lt: 'Valdo',           en: 'Owns' },             // company -> asset
+  OWES:          { lt: 'Privalo sumokėti', en: 'Owes' },            // company -> obligation
+  PARTY_TO:      { lt: 'Sutarties šalis', en: 'Party to' },         // company -> contract
+  SETTLES:       { lt: 'Padengia',        en: 'Settles' },          // payment -> obligation
+  SUPPLIED_BY:   { lt: 'Tiekėjas',        en: 'Supplied by' },      // asset -> vendor
+};
+
+const COMPANY_KEY = 'company:self';
+
+function entityKey(type, id) {
+  return `${type}:${id}`;
+}
+
+function createRelIndex() {
+  /** @type {Array<{from:string,to:string,type:string,eventId:string}>} */
+  const edges = [];
+  /** adjacency: key -> edges touching it */
+  const adj = new Map();
+
+  function touch(key, edge) {
+    if (!adj.has(key)) adj.set(key, []);
+    adj.get(key).push(edge);
+  }
+
+  function add(fromKey, toKey, type, eventId) {
+    if (!REL_TYPES[type]) throw new Error(`Unknown relationship type: ${type}`);
+    const edge = { from: fromKey, to: toKey, type, eventId };
+    edges.push(edge);
+    touch(fromKey, edge);
+    touch(toKey, edge);
+    return edge;
+  }
+
+  /** All edges touching an entity, with direction from its point of view. */
+  function neighbors(key) {
+    return (adj.get(key) || []).map((e) => ({
+      key: e.from === key ? e.to : e.from,
+      type: e.type,
+      direction: e.from === key ? 'out' : 'in',
+      eventId: e.eventId,
+    }));
+  }
+
+  /**
+   * BFS shortest path between two entities. Returns the chain of keys and the
+   * relationships travelled — "trace relationships / trace evidence" from the spec.
+   */
+  function tracePath(fromKey, toKey) {
+    if (fromKey === toKey) return { found: true, path: [fromKey], hops: [] };
+    const visited = new Set([fromKey]);
+    const queue = [[fromKey, [], []]];
+    while (queue.length) {
+      const [key, path, hops] = queue.shift();
+      for (const n of neighbors(key)) {
+        if (visited.has(n.key)) continue;
+        const nextPath = [...path, key];
+        const nextHops = [...hops, { from: key, to: n.key, type: n.type, eventId: n.eventId }];
+        if (n.key === toKey) return { found: true, path: [...nextPath, n.key], hops: nextHops };
+        visited.add(n.key);
+        queue.push([n.key, nextPath, nextHops]);
+      }
+    }
+    return { found: false, path: [], hops: [] };
+  }
+
+  /** Export for a graph UI (Knowledge Graph wave). */
+  function toGraph() {
+    const nodeSet = new Set([COMPANY_KEY]);
+    for (const e of edges) { nodeSet.add(e.from); nodeSet.add(e.to); }
+    const nodes = [...nodeSet].map((key) => {
+      const [type, ...rest] = key.split(':');
+      return { key, type, id: rest.join(':') };
+    });
+    return { nodes, edges: edges.slice() };
+  }
+
+  return { add, neighbors, tracePath, toGraph, edgeCount: () => edges.length, allEdges: () => edges.slice() };
+}
+
+  // ───────────────────────── projectors.js ─────────────────────────
+// =============================================================================
+// projectors.js — Build the Digital Twin state from events
+// -----------------------------------------------------------------------------
+// Projectors are deterministic: replaying the same event log always rebuilds
+// the exact same twin. They never invent data — only reshape what events say.
+// =============================================================================
+
+
+function createTwinState(config = {}) {
+  return {
+    config: {
+      vatDueDay: 25,           // PVM deklaracija ir mokėjimas — iki kito mėn. 25 d.
+      payrollTaxDueDay: 15,    // GPM ir Sodra — iki kito mėn. 15 d. (numatytasis)
+      ...config,
+    },
+    /** entities: Map<type, Map<id, entity>> */
+    entities: new Map(),
+    /** VAT position per period: Map<'YYYY-MM', {output, input}> */
+    vat: new Map(),
+  };
+}
+
+function ensureEntity(state, type, id, init = {}) {
+  if (!state.entities.has(type)) state.entities.set(type, new Map());
+  const bucket = state.entities.get(type);
+  if (!bucket.has(id)) {
+    bucket.set(id, { id, type, eventIds: [], ...init });
+  }
+  return bucket.get(id);
+}
+
+function getEntity(state, type, id) {
+  return state.entities.get(type)?.get(id);
+}
+
+function listEntities(state, type) {
+  return [...(state.entities.get(type)?.values() || [])];
+}
+
+function vatBucket(state, period) {
+  if (!state.vat.has(period)) state.vat.set(period, { output: 0, input: 0 });
+  return state.vat.get(period);
+}
+
+function touchEvent(entity, event) {
+  if (!entity.eventIds.includes(event.id)) entity.eventIds.push(event.id);
+}
+
+function counterpartyId(obj, prefix) {
+  return obj.id || `${prefix}_${slug(obj.name)}`;
+}
+
+// ----------------------------------------------------------------------------
+// Individual projections
+// ----------------------------------------------------------------------------
+
+function projectBankAccountOpened(state, event, rel) {
+  const p = event.payload;
+  const acc = ensureEntity(state, 'bankAccount', p.accountId, {
+    iban: p.iban,
+    bank: p.bank || '',
+    currency: p.currency,
+    balance: 0,
+    transactions: [],
+    openedAt: p.date || event.ts.slice(0, 10),
+  });
+  acc.balance = round2(acc.balance + (p.openingBalance || 0));
+  if (p.openingBalance) {
+    acc.transactions.push({ id: `open_${p.accountId}`, amount: round2(p.openingBalance), date: acc.openedAt, kind: 'opening' });
+  }
+  touchEvent(acc, event);
+}
+
+function projectBankTransactionImported(state, event) {
+  const p = event.payload;
+  const acc = ensureEntity(state, 'bankAccount', p.accountId, { iban: '', currency: 'EUR', balance: 0, transactions: [] });
+  acc.balance = round2(acc.balance + p.amount);
+  acc.transactions.push({
+    id: p.transactionId || event.id,
+    amount: round2(p.amount),
+    date: p.date,
+    counterparty: p.counterparty || '',
+    description: p.description || '',
+    kind: 'import',
+    allocated: false,
+  });
+  touchEvent(acc, event);
+}
+
+function projectSalesInvoiceIssued(state, event, rel) {
+  const p = event.payload;
+  const custId = counterpartyId(p.customer, 'c');
+  const customer = ensureEntity(state, 'customer', custId, {
+    name: p.customer.name,
+    code: p.customer.code || '',
+    vatCode: p.customer.vatCode || '',
+    totals: { invoiced: 0, paid: 0 },
+    invoiceIds: [],
+  });
+  customer.totals.invoiced = round2(customer.totals.invoiced + p.total);
+  customer.invoiceIds.push(p.invoiceId);
+  touchEvent(customer, event);
+
+  const invoice = ensureEntity(state, 'invoice', p.invoiceId, {
+    kind: 'sales',
+    counterpartyType: 'customer',
+    counterpartyId: custId,
+    net: round2(p.net),
+    vat: round2(p.vat),
+    total: round2(p.total),
+    paid: 0,
+    status: 'open', // open | partial | paid
+    date: p.date,
+    dueDate: p.dueDate,
+    payments: [],
+  });
+  touchEvent(invoice, event);
+
+  vatBucket(state, monthOf(p.date)).output = round2(vatBucket(state, monthOf(p.date)).output + p.vat);
+
+  rel.add(entityKey('invoice', p.invoiceId), entityKey('customer', custId), 'ISSUED_TO', event.id);
+}
+
+function projectPurchaseInvoiceReceived(state, event, rel) {
+  const p = event.payload;
+  const vendId = counterpartyId(p.vendor, 'v');
+  const vendor = ensureEntity(state, 'vendor', vendId, {
+    name: p.vendor.name,
+    code: p.vendor.code || '',
+    vatCode: p.vendor.vatCode || '',
+    totals: { invoiced: 0, paid: 0 },
+    invoiceIds: [],
+  });
+  vendor.totals.invoiced = round2(vendor.totals.invoiced + p.total);
+  vendor.invoiceIds.push(p.invoiceId);
+  touchEvent(vendor, event);
+
+  const invoice = ensureEntity(state, 'invoice', p.invoiceId, {
+    kind: 'purchase',
+    counterpartyType: 'vendor',
+    counterpartyId: vendId,
+    net: round2(p.net),
+    vat: round2(p.vat),
+    total: round2(p.total),
+    paid: 0,
+    status: 'open',
+    date: p.date,
+    dueDate: p.dueDate,
+    payments: [],
+  });
+  touchEvent(invoice, event);
+
+  vatBucket(state, monthOf(p.date)).input = round2(vatBucket(state, monthOf(p.date)).input + p.vat);
+
+  rel.add(entityKey('invoice', p.invoiceId), entityKey('vendor', vendId), 'RECEIVED_FROM', event.id);
+}
+
+function allocatePayment(state, event, rel, payment, direction) {
+  const p = event.payload;
+  let remaining = payment.amount;
+  const targetIds = p.invoiceIds && p.invoiceIds.length
+    ? p.invoiceIds
+    : []; // explicit allocation only in Wave 1; auto-matching stays with TAXAI autopilot
+  for (const invId of targetIds) {
+    if (remaining <= 0) break;
+    const inv = getEntity(state, 'invoice', invId);
+    if (!inv) continue;
+    const open = round2(inv.total - inv.paid);
+    if (open <= 0) continue;
+    const alloc = round2(Math.min(open, remaining));
+    inv.paid = round2(inv.paid + alloc);
+    inv.status = inv.paid >= inv.total - 0.005 ? 'paid' : 'partial';
+    inv.payments.push({ paymentId: payment.id, amount: alloc, date: p.date });
+    remaining = round2(remaining - alloc);
+    touchEvent(inv, event);
+    rel.add(entityKey('payment', payment.id), entityKey('invoice', invId), 'PAYS', event.id);
+    const cp = getEntity(state, inv.counterpartyType, inv.counterpartyId);
+    if (cp) {
+      cp.totals.paid = round2(cp.totals.paid + alloc);
+      touchEvent(cp, event);
+    }
+  }
+  payment.unallocated = round2(remaining);
+}
+
+function projectPaymentReceived(state, event, rel) {
+  const p = event.payload;
+  const payment = ensureEntity(state, 'payment', p.paymentId, {
+    direction: 'in',
+    amount: round2(p.amount),
+    date: p.date,
+    unallocated: round2(p.amount),
+  });
+  touchEvent(payment, event);
+  allocatePayment(state, event, rel, payment, 'in');
+  if (p.accountId) {
+    const acc = ensureEntity(state, 'bankAccount', p.accountId, { iban: '', currency: 'EUR', balance: 0, transactions: [] });
+    acc.balance = round2(acc.balance + p.amount);
+    acc.transactions.push({ id: p.paymentId, amount: round2(p.amount), date: p.date, kind: 'payment' });
+    touchEvent(acc, event);
+    rel.add(entityKey('payment', p.paymentId), entityKey('bankAccount', p.accountId), 'INTO_ACCOUNT', event.id);
+  }
+}
+
+function projectPaymentSent(state, event, rel) {
+  const p = event.payload;
+  const payment = ensureEntity(state, 'payment', p.paymentId, {
+    direction: 'out',
+    amount: round2(p.amount),
+    date: p.date,
+    unallocated: round2(p.amount),
+  });
+  touchEvent(payment, event);
+  allocatePayment(state, event, rel, payment, 'out');
+
+  if (p.obligationId) {
+    const obl = getEntity(state, 'obligation', p.obligationId);
+    if (obl) {
+      obl.settled = round2(obl.settled + p.amount);
+      if (obl.settled >= obl.amount - 0.005) obl.status = 'settled';
+      touchEvent(obl, event);
+      rel.add(entityKey('payment', p.paymentId), entityKey('obligation', p.obligationId), 'SETTLES', event.id);
+      payment.unallocated = 0;
+    }
+  }
+
+  if (p.accountId) {
+    const acc = ensureEntity(state, 'bankAccount', p.accountId, { iban: '', currency: 'EUR', balance: 0, transactions: [] });
+    acc.balance = round2(acc.balance - p.amount);
+    acc.transactions.push({ id: p.paymentId, amount: round2(-p.amount), date: p.date, kind: 'payment' });
+    touchEvent(acc, event);
+    rel.add(entityKey('payment', p.paymentId), entityKey('bankAccount', p.accountId), 'FROM_ACCOUNT', event.id);
+  }
+}
+
+function projectEmployeeHired(state, event, rel) {
+  const p = event.payload;
+  const emp = ensureEntity(state, 'employee', p.employeeId, {
+    name: p.name,
+    position: p.position || '',
+    grossSalary: round2(p.grossSalary),
+    startDate: p.startDate,
+    status: 'active',
+    cost: { ytdGross: 0, ytdEmployerSodra: 0, periods: {} },
+  });
+  touchEvent(emp, event);
+  rel.add(COMPANY_KEY, entityKey('employee', p.employeeId), 'EMPLOYS', event.id);
+}
+
+function projectEmployeeTerminated(state, event) {
+  const p = event.payload;
+  const emp = ensureEntity(state, 'employee', p.employeeId, {
+    name: p.name || p.employeeId, grossSalary: 0, startDate: '', status: 'active',
+    cost: { ytdGross: 0, ytdEmployerSodra: 0, periods: {} },
+  });
+  emp.status = 'terminated';
+  emp.endDate = p.endDate;
+  touchEvent(emp, event);
+}
+
+function projectPayrollRunCompleted(state, event, rel) {
+  const p = event.payload;
+  let gpmSum = 0;
+  let sodraSum = 0; // employee + employer
+  for (const line of p.lines) {
+    const emp = ensureEntity(state, 'employee', line.employeeId, {
+      name: line.name || line.employeeId, grossSalary: round2(line.gross), startDate: '', status: 'active',
+      cost: { ytdGross: 0, ytdEmployerSodra: 0, periods: {} },
+    });
+    emp.cost.ytdGross = round2(emp.cost.ytdGross + line.gross);
+    emp.cost.ytdEmployerSodra = round2(emp.cost.ytdEmployerSodra + (line.sodraEmployer || 0));
+    emp.cost.periods[p.period] = round2((emp.cost.periods[p.period] || 0) + line.gross + (line.sodraEmployer || 0));
+    touchEvent(emp, event);
+    gpmSum = round2(gpmSum + (line.gpm || 0));
+    sodraSum = round2(sodraSum + (line.sodraEmployee || 0) + (line.sodraEmployer || 0));
+  }
+
+  // Compliance obligations arise from payroll automatically (deterministic ids,
+  // amounts accumulate if several runs land in the same period).
+  const due = nextMonthDate(p.period, state.config.payrollTaxDueDay);
+  if (gpmSum > 0) {
+    const obl = ensureEntity(state, 'obligation', `obl_gpm_${p.period}`, {
+      taxType: 'GPM', period: p.period, amount: 0, settled: 0, status: 'open', dueDate: due, source: 'payroll',
+    });
+    obl.amount = round2(obl.amount + gpmSum);
+    touchEvent(obl, event);
+    rel.add(COMPANY_KEY, entityKey('obligation', obl.id), 'OWES', event.id);
+  }
+  if (sodraSum > 0) {
+    const obl = ensureEntity(state, 'obligation', `obl_sodra_${p.period}`, {
+      taxType: 'SODRA', period: p.period, amount: 0, settled: 0, status: 'open', dueDate: due, source: 'payroll',
+    });
+    obl.amount = round2(obl.amount + sodraSum);
+    touchEvent(obl, event);
+    rel.add(COMPANY_KEY, entityKey('obligation', obl.id), 'OWES', event.id);
+  }
+}
+
+function projectAssetAcquired(state, event, rel) {
+  const p = event.payload;
+  const asset = ensureEntity(state, 'asset', p.assetId, {
+    name: p.name,
+    cost: round2(p.cost),
+    usefulLifeMonths: p.usefulLifeMonths,
+    monthlyDepreciation: round2(p.cost / p.usefulLifeMonths),
+    accumulatedDepreciation: 0,
+    nbv: round2(p.cost),
+    acquiredAt: p.date,
+    status: 'active',
+  });
+  touchEvent(asset, event);
+  rel.add(COMPANY_KEY, entityKey('asset', p.assetId), 'OWNS', event.id);
+
+  if (p.vendor) {
+    const vendId = counterpartyId(p.vendor, 'v');
+    const vendor = ensureEntity(state, 'vendor', vendId, {
+      name: p.vendor.name, code: p.vendor.code || '', vatCode: p.vendor.vatCode || '',
+      totals: { invoiced: 0, paid: 0 }, invoiceIds: [],
+    });
+    touchEvent(vendor, event);
+    rel.add(entityKey('asset', p.assetId), entityKey('vendor', vendId), 'SUPPLIED_BY', event.id);
+  }
+  if (p.vat) {
+    vatBucket(state, monthOf(p.date)).input = round2(vatBucket(state, monthOf(p.date)).input + p.vat);
+  }
+}
+
+function projectDepreciationRecorded(state, event) {
+  const p = event.payload;
+  const asset = getEntity(state, 'asset', p.assetId);
+  if (!asset) return;
+  const amount = round2(Math.min(p.amount, asset.nbv));
+  asset.accumulatedDepreciation = round2(asset.accumulatedDepreciation + amount);
+  asset.nbv = round2(asset.cost - asset.accumulatedDepreciation);
+  if (asset.nbv <= 0.005) asset.status = 'fullyDepreciated';
+  touchEvent(asset, event);
+}
+
+function projectContractSigned(state, event, rel) {
+  const p = event.payload;
+  const contract = ensureEntity(state, 'contract', p.contractId, {
+    counterparty: p.counterparty,
+    value: round2(p.value),
+    startDate: p.startDate,
+    endDate: p.endDate || null,
+    status: 'active',
+  });
+  touchEvent(contract, event);
+  rel.add(COMPANY_KEY, entityKey('contract', p.contractId), 'PARTY_TO', event.id);
+}
+
+function projectTaxObligationCreated(state, event, rel) {
+  const p = event.payload;
+  const obl = ensureEntity(state, 'obligation', p.obligationId, {
+    taxType: p.taxType,
+    period: p.period || null,
+    amount: round2(p.amount),
+    settled: 0,
+    status: 'open',
+    dueDate: p.dueDate,
+    source: p.source || 'manual',
+  });
+  touchEvent(obl, event);
+  rel.add(COMPANY_KEY, entityKey('obligation', p.obligationId), 'OWES', event.id);
+}
+
+function projectTaxObligationSettled(state, event) {
+  const p = event.payload;
+  const obl = getEntity(state, 'obligation', p.obligationId);
+  if (!obl) return;
+  obl.settled = obl.amount;
+  obl.status = 'settled';
+  obl.settledAt = p.date;
+  touchEvent(obl, event);
+}
+
+// ----------------------------------------------------------------------------
+// Router
+// ----------------------------------------------------------------------------
+
+const PROJECTORS = {
+  'bank.account.opened': projectBankAccountOpened,
+  'bank.transaction.imported': projectBankTransactionImported,
+  'sales.invoice.issued': projectSalesInvoiceIssued,
+  'purchase.invoice.received': projectPurchaseInvoiceReceived,
+  'payment.received': projectPaymentReceived,
+  'payment.sent': projectPaymentSent,
+  'employee.hired': projectEmployeeHired,
+  'employee.terminated': projectEmployeeTerminated,
+  'payroll.run.completed': projectPayrollRunCompleted,
+  'asset.acquired': projectAssetAcquired,
+  'asset.depreciation.recorded': projectDepreciationRecorded,
+  'contract.signed': projectContractSigned,
+  'tax.obligation.created': projectTaxObligationCreated,
+  'tax.obligation.settled': projectTaxObligationSettled,
+  // ledger.entry.approved / posted are handled by the ledger, not by projectors
+};
+
+function projectEvent(state, event, rel) {
+  const fn = PROJECTORS[event.type];
+  if (fn) fn(state, event, rel);
+  return state;
+}
+
+  // ───────────────────────── ledger.js ─────────────────────────
+// =============================================================================
+// ledger.js — "The Ledger is generated from the Twin"
+// -----------------------------------------------------------------------------
+// Every relevant event produces a PROPOSED journal entry: balanced lines,
+// evidence (the source event), bilingual reasoning, and a confidence score.
+// Nothing books itself — the system thinks before it books. Approvals and
+// postings are events too, so the full lifecycle survives replay.
+// =============================================================================
+
+
+/**
+ * Default account codes, aligned with the common Lithuanian model chart of
+ * accounts (pavyzdinis sąskaitų planas) layout.
+ * IMPORTANT: these are sensible DEFAULTS. When merging into TaxAI_v17, pass an
+ * `accounts` override so codes match the chart of accounts E-Accountant uses.
+ */
+const DEFAULT_ACCOUNTS = {
+  FIXED_ASSETS: '1200',        // Ilgalaikis materialusis turtas
+  ACC_DEPRECIATION: '1208',    // Sukauptas nusidėvėjimas (-)
+  AR: '2410',                  // Pirkėjų skolos
+  VAT_RECEIVABLE: '2441',      // Gautinas PVM
+  BANK: '2710',                // Pinigai banke
+  OPENING_EQUITY: '3900',      // Likučių perkėlimas / pradiniai likučiai
+  AP: '4430',                  // Skolos tiekėjams
+  WAGES_PAYABLE: '4460',       // Mokėtinas darbo užmokestis
+  VAT_PAYABLE: '4480',         // Mokėtinas PVM
+  GPM_PAYABLE: '4483',         // Mokėtinas GPM
+  SODRA_PAYABLE: '4484',       // Mokėtinos Sodros įmokos
+  REVENUE: '5000',             // Pardavimo pajamos
+  PURCHASES: '6001',           // Pirkimų / veiklos sąnaudos
+  WAGE_EXPENSE: '6304',        // Darbo užmokesčio sąnaudos
+  SODRA_EXPENSE: '6305',       // Darbdavio Sodros sąnaudos
+  DEPRECIATION_EXPENSE: '6306',// Nusidėvėjimo sąnaudos
+};
+
+const ACCOUNT_NAMES_LT = {
+  '1200': 'Ilgalaikis materialusis turtas',
+  '1208': 'Sukauptas nusidėvėjimas',
+  '2410': 'Pirkėjų skolos',
+  '2441': 'Gautinas PVM',
+  '2710': 'Pinigai banke',
+  '3900': 'Likučių perkėlimas',
+  '4430': 'Skolos tiekėjams',
+  '4460': 'Mokėtinas darbo užmokestis',
+  '4480': 'Mokėtinas PVM',
+  '4483': 'Mokėtinas GPM',
+  '4484': 'Mokėtinos Sodros įmokos',
+  '5000': 'Pardavimo pajamos',
+  '6001': 'Pirkimų / veiklos sąnaudos',
+  '6304': 'Darbo užmokesčio sąnaudos',
+  '6305': 'Darbdavio Sodros sąnaudos',
+  '6306': 'Nusidėvėjimo sąnaudos',
+};
+
+const VAT_RATES = [0.21, 0.12, 0.09, 0.05, 0]; // 2026: standartinis 21, lengvatiniai 12/5, 0%; 9% legacy (iki 2026-01-01)
+
+function vatLooksStandard(net, vat) {
+  return VAT_RATES.some((r) => Math.abs(round2(net * r) - round2(vat)) <= 0.02);
+}
+
+function line(account, debit, credit) {
+  return { account, debit: round2(debit), credit: round2(credit) };
+}
+
+function sum(lines, side) {
+  return round2(lines.reduce((s, l) => s + l[side], 0));
+}
+
+function makeEntry({ event, index, date, lines, lt, en, confidence, notes }) {
+  const debit = sum(lines, 'debit');
+  const credit = sum(lines, 'credit');
+  if (Math.abs(debit - credit) > 0.005) {
+    throw new Error(`Internal error: unbalanced entry generated for event ${event.id} (D ${debit} / C ${credit})`);
+  }
+  return {
+    id: `je_${event.id}_${index}`,
+    sourceEventId: event.id,        // evidence: every entry traces to its event
+    date,
+    descriptionLt: lt,
+    descriptionEn: en,
+    lines,
+    confidence: round2(confidence),
+    notes,                          // human-readable reasoning details
+    status: 'proposed',             // proposed -> approved -> posted
+    approvals: [],
+    createdAt: event.ts,
+    postedAt: null,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Per-event entry generation
+// ----------------------------------------------------------------------------
+
+function generateEntriesForEvent(event, state, accounts) {
+  const A = accounts;
+  const p = event.payload;
+  const entries = [];
+
+  switch (event.type) {
+    case 'bank.account.opened': {
+      if (p.openingBalance) {
+        entries.push(makeEntry({
+          event, index: 0, date: p.date || event.ts.slice(0, 10),
+          lines: [line(A.BANK, p.openingBalance, 0), line(A.OPENING_EQUITY, 0, p.openingBalance)],
+          lt: `Pradinis likutis sąskaitoje ${p.iban}`,
+          en: `Opening balance for account ${p.iban}`,
+          confidence: 0.98, notes: [],
+        }));
+      }
+      break;
+    }
+
+    case 'sales.invoice.issued': {
+      const notes = [];
+      let confidence = 0.95;
+      if (!vatLooksStandard(p.net, p.vat)) {
+        confidence = 0.75;
+        notes.push('PVM suma neatitinka standartinių LT tarifų (21/12/9/5/0%) — patikrinkite tarifą arba lengvatą.');
+      }
+      const expected = round2(p.net + p.vat);
+      const mismatch = Math.abs(expected - round2(p.total)) > 0.01;
+      if (mismatch) {
+        confidence = Math.min(confidence, 0.6);
+        notes.push(`Neto + PVM (€${expected}) nesutampa su bendra suma (€${round2(p.total)}) — užregistruota €${expected}, galima duomenų klaida.`);
+      }
+      const booked = mismatch ? expected : round2(p.total);
+      const lines = [line(A.AR, booked, 0), line(A.REVENUE, 0, p.net)];
+      if (p.vat > 0) lines.push(line(A.VAT_PAYABLE, 0, p.vat));
+      else lines[1] = line(A.REVENUE, 0, booked); // 0% VAT: credit full booked amount to revenue
+      entries.push(makeEntry({
+        event, index: 0, date: p.date, lines,
+        lt: `Pardavimo SF ${p.invoiceId} — ${p.customer.name}`,
+        en: `Sales invoice ${p.invoiceId} — ${p.customer.name}`,
+        confidence, notes,
+      }));
+      break;
+    }
+
+    case 'purchase.invoice.received': {
+      const notes = [];
+      let confidence = 0.93;
+      if (!vatLooksStandard(p.net, p.vat)) {
+        confidence = 0.72;
+        notes.push('PVM suma neatitinka standartinių LT tarifų — patikrinkite atskaitos teisę.');
+      }
+      const expected = round2(p.net + p.vat);
+      const mismatch = Math.abs(expected - round2(p.total)) > 0.01;
+      if (mismatch) {
+        confidence = Math.min(confidence, 0.6);
+        notes.push(`Neto + PVM (€${expected}) nesutampa su bendra suma (€${round2(p.total)}) — užregistruota €${expected}, galima duomenų klaida.`);
+      }
+      const expenseAccount = p.expenseAccount || A.PURCHASES;
+      const lines = [line(expenseAccount, p.net, 0)];
+      if (p.vat > 0) lines.push(line(A.VAT_RECEIVABLE, p.vat, 0));
+      lines.push(line(A.AP, 0, mismatch ? expected : round2(p.total)));
+      entries.push(makeEntry({
+        event, index: 0, date: p.date, lines,
+        lt: `Pirkimo SF ${p.invoiceId} — ${p.vendor.name}`,
+        en: `Purchase invoice ${p.invoiceId} — ${p.vendor.name}`,
+        confidence, notes,
+      }));
+      break;
+    }
+
+    case 'payment.received': {
+      const notes = [];
+      let confidence = 0.95;
+      const payment = state.entities.get('payment')?.get(p.paymentId);
+      if (payment && payment.unallocated > 0.005) {
+        confidence = 0.8;
+        notes.push(`Nepaskirstyta suma: €${payment.unallocated} — priskirkite sąskaitai.`);
+      }
+      entries.push(makeEntry({
+        event, index: 0, date: p.date,
+        lines: [line(A.BANK, p.amount, 0), line(A.AR, 0, p.amount)],
+        lt: `Gautas mokėjimas ${p.paymentId}`,
+        en: `Payment received ${p.paymentId}`,
+        confidence, notes,
+      }));
+      break;
+    }
+
+    case 'payment.sent': {
+      const notes = [];
+      let confidence = 0.95;
+      let debitAccount = A.AP;
+      let ltWhat = 'tiekėjui';
+      if (p.obligationId) {
+        const obl = state.entities.get('obligation')?.get(p.obligationId);
+        const taxType = obl?.taxType || '';
+        debitAccount = taxType === 'VAT' ? A.VAT_PAYABLE
+          : taxType === 'GPM' ? A.GPM_PAYABLE
+          : taxType === 'SODRA' ? A.SODRA_PAYABLE
+          : A.AP;
+        ltWhat = taxType ? `(${taxType})` : 'prievolei';
+        if (!obl) { confidence = 0.7; notes.push('Prievolė nerasta dvynyje — patikrinkite ID.'); }
+      } else if (!p.invoiceIds || !p.invoiceIds.length) {
+        confidence = 0.7;
+        notes.push('Mokėjimas be priskirtos sąskaitos ar prievolės — numatyta skola tiekėjams.');
+      }
+      entries.push(makeEntry({
+        event, index: 0, date: p.date,
+        lines: [line(debitAccount, p.amount, 0), line(A.BANK, 0, p.amount)],
+        lt: `Atliktas mokėjimas ${p.paymentId} ${ltWhat}`,
+        en: `Payment sent ${p.paymentId}`,
+        confidence, notes,
+      }));
+      break;
+    }
+
+    case 'payroll.run.completed': {
+      const notes = [];
+      // Runs computed by the Wave 3 engine arrive pre-verified; manual runs stay cautious.
+      let confidence = event.source === 'payroll-engine' ? 0.97 : 0.9;
+      let gross = 0, employerSodra = 0, employeeSodra = 0, gpm = 0, netProvided = 0;
+      for (const l of p.lines) {
+        gross = round2(gross + l.gross);
+        employerSodra = round2(employerSodra + (l.sodraEmployer || 0));
+        employeeSodra = round2(employeeSodra + (l.sodraEmployee || 0));
+        gpm = round2(gpm + (l.gpm || 0));
+        netProvided = round2(netProvided + (l.net || 0));
+      }
+      const netComputed = round2(gross - gpm - employeeSodra);
+      if (Math.abs(netComputed - netProvided) > 0.01 && netProvided !== 0) {
+        confidence = 0.6;
+        notes.push(`Pateiktas neto (€${netProvided}) nesutampa su apskaičiuotu (€${netComputed}) — įrašas sudarytas pagal apskaičiuotą.`);
+      }
+      entries.push(makeEntry({
+        event, index: 0, date: event.ts.slice(0, 10),
+        lines: [
+          line(A.WAGE_EXPENSE, gross, 0),
+          line(A.SODRA_EXPENSE, employerSodra, 0),
+          line(A.WAGES_PAYABLE, 0, netComputed),
+          line(A.GPM_PAYABLE, 0, gpm),
+          line(A.SODRA_PAYABLE, 0, round2(employeeSodra + employerSodra)),
+        ],
+        lt: `Darbo užmokestis už ${p.period} (${p.lines.length} darbuotojai)`,
+        en: `Payroll for ${p.period} (${p.lines.length} employees)`,
+        confidence, notes,
+      }));
+      break;
+    }
+
+    case 'asset.acquired': {
+      const notes = [];
+      const vat = p.vat || 0;
+      const total = round2(p.cost + vat);
+      const lines = [line(A.FIXED_ASSETS, p.cost, 0)];
+      if (vat > 0) lines.push(line(A.VAT_RECEIVABLE, vat, 0));
+      lines.push(line(A.AP, 0, total));
+      entries.push(makeEntry({
+        event, index: 0, date: p.date, lines,
+        lt: `Įsigytas IT: ${p.name} (${p.assetId})`,
+        en: `Fixed asset acquired: ${p.name} (${p.assetId})`,
+        confidence: 0.93, notes,
+      }));
+      break;
+    }
+
+    case 'asset.depreciation.recorded': {
+      entries.push(makeEntry({
+        event, index: 0, date: `${p.period}-28`,
+        lines: [line(A.DEPRECIATION_EXPENSE, p.amount, 0), line(A.ACC_DEPRECIATION, 0, p.amount)],
+        lt: `Nusidėvėjimas ${p.assetId} už ${p.period}`,
+        en: `Depreciation ${p.assetId} for ${p.period}`,
+        confidence: 0.97, notes: [],
+      }));
+      break;
+    }
+
+    // tax.obligation.created produces NO entry on purpose: the liability is
+    // already on the books from the invoices / payroll that created it. The
+    // obligation entity is the compliance tracker (deadline), not a posting.
+    default:
+      break;
+  }
+  return entries;
+}
+
+// ----------------------------------------------------------------------------
+// Ledger: store of proposed/approved/posted entries + trial balance
+// ----------------------------------------------------------------------------
+
+function createLedger(accounts = {}) {
+  const A = { ...DEFAULT_ACCOUNTS, ...accounts };
+  /** @type {Map<string, object>} */
+  const entries = new Map();
+  const order = [];
+
+  function propose(entryList) {
+    for (const e of entryList) {
+      if (entries.has(e.id)) continue; // idempotent on replay
+      entries.set(e.id, e);
+      order.push(e.id);
+    }
+    return entryList;
+  }
+
+  function get(id) { return entries.get(id); }
+
+  function list(status) {
+    const all = order.map((id) => entries.get(id));
+    return status ? all.filter((e) => e.status === status) : all;
+  }
+
+  function approve(id, actor, ts) {
+    const e = entries.get(id);
+    if (!e) throw new Error(`Journal entry not found: ${id}`);
+    if (e.status !== 'proposed') throw new Error(`Cannot approve entry ${id} in status "${e.status}"`);
+    e.status = 'approved';
+    e.approvals.push({ action: 'approve', actor, ts });
+    return e;
+  }
+
+  function post(id, actor, ts) {
+    const e = entries.get(id);
+    if (!e) throw new Error(`Journal entry not found: ${id}`);
+    if (e.status !== 'approved') throw new Error(`Cannot post entry ${id} in status "${e.status}" (approve it first)`);
+    e.status = 'posted';
+    e.postedAt = ts;
+    e.approvals.push({ action: 'post', actor, ts });
+    return e;
+  }
+
+  /** Apply a ledger lifecycle event (from the event log / replay). */
+  function applyLifecycle(event) {
+    if (event.type === 'ledger.entry.approved') return approve(event.payload.entryId, event.payload.actor, event.ts);
+    if (event.type === 'ledger.entry.posted') return post(event.payload.entryId, event.payload.actor, event.ts);
+    return null;
+  }
+
+  /**
+   * Trial balance over posted entries (default). balance = debit - credit,
+   * so liability/income accounts naturally show negative balances.
+   */
+  function trialBalance(statuses = ['posted']) {
+    const acc = new Map();
+    for (const id of order) {
+      const e = entries.get(id);
+      if (!statuses.includes(e.status)) continue;
+      for (const l of e.lines) {
+        if (!acc.has(l.account)) acc.set(l.account, { account: l.account, name: ACCOUNT_NAMES_LT[l.account] || '', debit: 0, credit: 0 });
+        const a = acc.get(l.account);
+        a.debit = round2(a.debit + l.debit);
+        a.credit = round2(a.credit + l.credit);
+      }
+    }
+    const rows = [...acc.values()]
+      .map((a) => ({ ...a, balance: round2(a.debit - a.credit) }))
+      .sort((x, y) => x.account.localeCompare(y.account));
+    const totals = {
+      debit: round2(rows.reduce((s, r) => s + r.debit, 0)),
+      credit: round2(rows.reduce((s, r) => s + r.credit, 0)),
+    };
+    return { rows, totals, balanced: Math.abs(totals.debit - totals.credit) < 0.01 };
+  }
+
+  return { accounts: A, propose, get, list, approve, post, applyLifecycle, trialBalance, generateFor: (event, state) => generateEntriesForEvent(event, state, A) };
+}
+
+  // ───────────────────────── risk.js ─────────────────────────
+// =============================================================================
+// risk.js — Twin-level risk indicators (TW-01 … TW-12)
+// -----------------------------------------------------------------------------
+// These watch the twin itself (entities + ledger), complementing the existing
+// 26-point TAXAI risk engine which watches SAF-T data. Each indicator carries
+// id, severity, bilingual message and evidence so it can plug straight into
+// the honesty dashboard.
+// =============================================================================
+
+
+const DEFAULTS = {
+  concentrationThreshold: 0.3,   // top counterparty share that triggers a flag
+  duplicateWindowDays: 5,        // same vendor+amount within N days = suspicious
+  vatDueSoonDays: 14,            // upcoming VAT deadline warning window
+  unapprovedAgingDays: 7,        // proposed entries older than this get flagged
+  runwayWarnMonths: 6,
+  runwayCriticalMonths: 3,
+  overdueCriticalDays: 30,
+};
+
+function indicator(id, severity, lt, en, evidence = [], entityKeyRef = null) {
+  return { id, severity, messageLt: lt, messageEn: en, evidence, entity: entityKeyRef };
+}
+
+function computeRisks(state, ledger, opts = {}) {
+  const cfg = { ...DEFAULTS, ...opts.config };
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const risks = [];
+  const invoices = listEntities(state, 'invoice');
+
+  // TW-01 — Overdue receivables
+  for (const i of invoices.filter((x) => x.kind === 'sales')) {
+    const open = round2(i.total - i.paid);
+    const daysLate = daysBetween(i.dueDate, now);
+    if (open > 0.005 && daysLate > 0) {
+      const critical = daysLate > cfg.overdueCriticalDays;
+      risks.push(indicator(
+        'TW-01', critical ? 'critical' : 'warning',
+        `Pradelsta pirkėjo skola: SF ${i.id}, €${open}, vėluoja ${daysLate} d.`,
+        `Overdue receivable: invoice ${i.id}, €${open}, ${daysLate} days late.`,
+        i.eventIds, `invoice:${i.id}`,
+      ));
+    }
+  }
+
+  // TW-02 — Customer concentration
+  const customers = listEntities(state, 'customer');
+  const totalSales = round2(customers.reduce((s, c) => s + c.totals.invoiced, 0));
+  if (totalSales > 0) {
+    for (const c of customers) {
+      const share = c.totals.invoiced / totalSales;
+      if (share > cfg.concentrationThreshold && customers.length > 1) {
+        risks.push(indicator(
+          'TW-02', share > 0.5 ? 'critical' : 'warning',
+          `Klientų koncentracija: ${c.name} sudaro ${Math.round(share * 100)}% pajamų.`,
+          `Customer concentration: ${c.name} is ${Math.round(share * 100)}% of revenue.`,
+          c.eventIds, `customer:${c.id}`,
+        ));
+      }
+    }
+  }
+
+  // TW-03 — Vendor concentration
+  const vendors = listEntities(state, 'vendor');
+  const totalPurchases = round2(vendors.reduce((s, v) => s + v.totals.invoiced, 0));
+  if (totalPurchases > 0) {
+    for (const v of vendors) {
+      const share = v.totals.invoiced / totalPurchases;
+      if (share > cfg.concentrationThreshold && vendors.length > 1) {
+        risks.push(indicator(
+          'TW-03', 'info',
+          `Tiekėjų koncentracija: ${v.name} sudaro ${Math.round(share * 100)}% pirkimų.`,
+          `Vendor concentration: ${v.name} is ${Math.round(share * 100)}% of purchases.`,
+          v.eventIds, `vendor:${v.id}`,
+        ));
+      }
+    }
+  }
+
+  // TW-04 — Possible duplicate purchase invoices
+  const purchases = invoices.filter((x) => x.kind === 'purchase');
+  for (let a = 0; a < purchases.length; a++) {
+    for (let b = a + 1; b < purchases.length; b++) {
+      const A = purchases[a], B = purchases[b];
+      if (A.counterpartyId === B.counterpartyId
+        && Math.abs(A.total - B.total) < 0.005
+        && Math.abs(daysBetween(A.date, B.date)) <= cfg.duplicateWindowDays) {
+        risks.push(indicator(
+          'TW-04', 'warning',
+          `Galimas dublikatas: pirkimo SF ${A.id} ir ${B.id} (${A.counterpartyId}, €${A.total}).`,
+          `Possible duplicate: purchase invoices ${A.id} and ${B.id} (${A.counterpartyId}, €${A.total}).`,
+          [...A.eventIds, ...B.eventIds], `invoice:${B.id}`,
+        ));
+      }
+    }
+  }
+
+  // TW-05 — Invoice VAT does not match standard LT rates (from ledger notes)
+  for (const e of ledger.list()) {
+    if (e.notes.some((n) => n.includes('PVM suma neatitinka'))) {
+      risks.push(indicator(
+        'TW-05', 'warning',
+        `PVM neatitikimas: ${e.descriptionLt}.`,
+        `VAT mismatch: ${e.descriptionEn}.`,
+        [e.sourceEventId], null,
+      ));
+    }
+  }
+
+  // TW-06 — VAT obligation due soon / TW-07 — overdue tax obligations
+  for (const o of listEntities(state, 'obligation')) {
+    if (o.status !== 'open') continue;
+    const daysToDue = daysBetween(now, o.dueDate);
+    if (daysToDue < 0) {
+      risks.push(indicator(
+        'TW-07', 'critical',
+        `Pradelsta mokestinė prievolė: ${o.taxType} €${round2(o.amount - o.settled)}, terminas ${o.dueDate}.`,
+        `Overdue tax obligation: ${o.taxType} €${round2(o.amount - o.settled)}, due ${o.dueDate}.`,
+        o.eventIds, `obligation:${o.id}`,
+      ));
+    } else if (o.taxType === 'VAT' && daysToDue <= cfg.vatDueSoonDays) {
+      risks.push(indicator(
+        'TW-06', 'warning',
+        `PVM mokėjimo terminas artėja: €${round2(o.amount - o.settled)} iki ${o.dueDate} (liko ${daysToDue} d.).`,
+        `VAT payment due soon: €${round2(o.amount - o.settled)} by ${o.dueDate} (${daysToDue} days left).`,
+        o.eventIds, `obligation:${o.id}`,
+      ));
+    }
+  }
+
+  // TW-08 — Unallocated payments
+  for (const pmt of listEntities(state, 'payment')) {
+    if (pmt.unallocated > 0.005) {
+      risks.push(indicator(
+        'TW-08', 'info',
+        `Nepaskirstytas mokėjimas ${pmt.id}: €${pmt.unallocated}.`,
+        `Unallocated payment ${pmt.id}: €${pmt.unallocated}.`,
+        pmt.eventIds, `payment:${pmt.id}`,
+      ));
+    }
+  }
+
+  // TW-09 — Proposed entries aging without approval
+  for (const e of ledger.list('proposed')) {
+    const age = daysBetween(e.createdAt.slice(0, 10), now);
+    if (age > cfg.unapprovedAgingDays) {
+      risks.push(indicator(
+        'TW-09', 'warning',
+        `Nepatvirtintas žurnalo įrašas sensta: ${e.descriptionLt} (${age} d.).`,
+        `Journal entry awaiting approval for ${age} days: ${e.descriptionEn}.`,
+        [e.sourceEventId], null,
+      ));
+    }
+  }
+
+  // TW-10 — Low runway
+  const snap = companySnapshot(state, { now });
+  if (snap.runwayMonths !== null) {
+    if (snap.runwayMonths < cfg.runwayCriticalMonths) {
+      risks.push(indicator(
+        'TW-10', 'critical',
+        `Kritiškai trumpas finansinis rezervas: ~${snap.runwayMonths} mėn. (kasa €${snap.cash}, mėn. deginimas €${snap.monthlyBurn}).`,
+        `Critical runway: ~${snap.runwayMonths} months (cash €${snap.cash}, burn €${snap.monthlyBurn}/mo).`,
+      ));
+    } else if (snap.runwayMonths < cfg.runwayWarnMonths) {
+      risks.push(indicator(
+        'TW-10', 'warning',
+        `Trumpas finansinis rezervas: ~${snap.runwayMonths} mėn.`,
+        `Short runway: ~${snap.runwayMonths} months.`,
+      ));
+    }
+  }
+
+  // TW-11 — Payroll cost growing faster than revenue (needs 2+ comparable months)
+  const months = Object.keys(snap.revenueByMonth).sort();
+  if (months.length >= 2) {
+    const payrollByMonth = {};
+    for (const e of listEntities(state, 'employee')) {
+      for (const [period, cost] of Object.entries(e.cost?.periods || {})) {
+        payrollByMonth[period] = round2((payrollByMonth[period] || 0) + cost);
+      }
+    }
+    const [prev, last] = months.slice(-2);
+    if (payrollByMonth[prev] > 0 && payrollByMonth[last] > 0 && snap.revenueByMonth[prev] > 0) {
+      const payrollGrowth = (payrollByMonth[last] - payrollByMonth[prev]) / payrollByMonth[prev];
+      const revenueGrowth = ((snap.revenueByMonth[last] || 0) - snap.revenueByMonth[prev]) / snap.revenueByMonth[prev];
+      if (payrollGrowth > revenueGrowth + 0.05) {
+        risks.push(indicator(
+          'TW-11', 'warning',
+          `DU sąnaudos auga greičiau nei pajamos (${Math.round(payrollGrowth * 100)}% vs ${Math.round(revenueGrowth * 100)}%).`,
+          `Payroll costs growing faster than revenue (${Math.round(payrollGrowth * 100)}% vs ${Math.round(revenueGrowth * 100)}%).`,
+        ));
+      }
+    }
+  }
+
+  // TW-12 — Data quality: invoice without due date
+  for (const i of invoices) {
+    if (!i.dueDate) {
+      risks.push(indicator(
+        'TW-12', 'info',
+        `Sąskaita ${i.id} be apmokėjimo termino — neįmanoma stebėti vėlavimo.`,
+        `Invoice ${i.id} has no due date — overdue tracking impossible.`,
+        i.eventIds, `invoice:${i.id}`,
+      ));
+    }
+  }
+
+  const order = { critical: 0, warning: 1, info: 2 };
+  risks.sort((a, b) => order[a.severity] - order[b.severity] || a.id.localeCompare(b.id));
+  return risks;
+}
+
+const RISK_CATALOG = [
+  { id: 'TW-01', lt: 'Pradelstos pirkėjų skolos', en: 'Overdue receivables' },
+  { id: 'TW-02', lt: 'Klientų koncentracija', en: 'Customer concentration' },
+  { id: 'TW-03', lt: 'Tiekėjų koncentracija', en: 'Vendor concentration' },
+  { id: 'TW-04', lt: 'Galimi pirkimo SF dublikatai', en: 'Possible duplicate purchase invoices' },
+  { id: 'TW-05', lt: 'PVM tarifo neatitikimas', en: 'VAT rate mismatch' },
+  { id: 'TW-06', lt: 'Artėjantis PVM terminas', en: 'VAT deadline approaching' },
+  { id: 'TW-07', lt: 'Pradelstos mokestinės prievolės', en: 'Overdue tax obligations' },
+  { id: 'TW-08', lt: 'Nepaskirstyti mokėjimai', en: 'Unallocated payments' },
+  { id: 'TW-09', lt: 'Senstantys nepatvirtinti įrašai', en: 'Aging unapproved entries' },
+  { id: 'TW-10', lt: 'Trumpas finansinis rezervas', en: 'Short runway' },
+  { id: 'TW-11', lt: 'DU auga greičiau nei pajamos', en: 'Payroll outpacing revenue' },
+  { id: 'TW-12', lt: 'Duomenų kokybė: nėra termino', en: 'Data quality: missing due date' },
+];
+
+  // ───────────────────────── impact.js ─────────────────────────
+// =============================================================================
+// impact.js — "Financial Impact" per entity + company snapshot
+// -----------------------------------------------------------------------------
+// All numbers are derived live from twin state. Snapshot powers the future
+// Executive Cockpit; per-entity impact powers entity detail views.
+// =============================================================================
+
+
+function customerImpact(state, id, { now }) {
+  const c = getEntity(state, 'customer', id);
+  if (!c) return null;
+  const invoices = listEntities(state, 'invoice').filter((i) => i.kind === 'sales' && i.counterpartyId === id);
+  const outstanding = round2(invoices.reduce((s, i) => s + (i.total - i.paid), 0));
+  const overdue = invoices.filter((i) => i.total - i.paid > 0.005 && daysBetween(i.dueDate, now) > 0);
+  const paidInvoices = invoices.filter((i) => i.status === 'paid' && i.payments.length);
+  const avgDaysToPay = paidInvoices.length
+    ? Math.round(paidInvoices.reduce((s, i) => s + daysBetween(i.date, i.payments[i.payments.length - 1].date), 0) / paidInvoices.length)
+    : null;
+  return {
+    invoiceCount: invoices.length,
+    invoiced: c.totals.invoiced,
+    paid: c.totals.paid,
+    outstanding,
+    overdueCount: overdue.length,
+    overdueAmount: round2(overdue.reduce((s, i) => s + (i.total - i.paid), 0)),
+    avgDaysToPay,
+  };
+}
+
+function vendorImpact(state, id, { now }) {
+  const v = getEntity(state, 'vendor', id);
+  if (!v) return null;
+  const invoices = listEntities(state, 'invoice').filter((i) => i.kind === 'purchase' && i.counterpartyId === id);
+  const outstanding = round2(invoices.reduce((s, i) => s + (i.total - i.paid), 0));
+  const overdue = invoices.filter((i) => i.total - i.paid > 0.005 && daysBetween(i.dueDate, now) > 0);
+  return {
+    invoiceCount: invoices.length,
+    invoiced: v.totals.invoiced,
+    paid: v.totals.paid,
+    outstanding,
+    overdueCount: overdue.length,
+    overdueAmount: round2(overdue.reduce((s, i) => s + (i.total - i.paid), 0)),
+  };
+}
+
+function employeeImpact(state, id) {
+  const e = getEntity(state, 'employee', id);
+  if (!e) return null;
+  return {
+    status: e.status,
+    grossSalary: e.grossSalary,
+    ytdGross: e.cost.ytdGross,
+    ytdEmployerSodra: e.cost.ytdEmployerSodra,
+    ytdTotalCost: round2(e.cost.ytdGross + e.cost.ytdEmployerSodra),
+  };
+}
+
+function assetImpact(state, id) {
+  const a = getEntity(state, 'asset', id);
+  if (!a) return null;
+  return {
+    cost: a.cost,
+    accumulatedDepreciation: a.accumulatedDepreciation,
+    nbv: a.nbv,
+    monthlyDepreciation: a.monthlyDepreciation,
+    status: a.status,
+  };
+}
+
+function bankAccountImpact(state, id, { now }) {
+  const acc = getEntity(state, 'bankAccount', id);
+  if (!acc) return null;
+  const last30 = acc.transactions.filter((t) => daysBetween(t.date, now) <= 30 && daysBetween(t.date, now) >= 0);
+  return {
+    balance: acc.balance,
+    currency: acc.currency,
+    inflow30d: round2(last30.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+    outflow30d: round2(last30.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)),
+    transactionCount: acc.transactions.length,
+  };
+}
+
+function obligationImpact(state, id, { now }) {
+  const o = getEntity(state, 'obligation', id);
+  if (!o) return null;
+  return {
+    taxType: o.taxType,
+    amount: o.amount,
+    settled: o.settled,
+    remaining: round2(o.amount - o.settled),
+    status: o.status,
+    dueDate: o.dueDate,
+    daysToDue: daysBetween(now, o.dueDate),
+  };
+}
+
+function entityImpact(state, type, id, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  switch (type) {
+    case 'customer': return customerImpact(state, id, { now });
+    case 'vendor': return vendorImpact(state, id, { now });
+    case 'employee': return employeeImpact(state, id);
+    case 'asset': return assetImpact(state, id);
+    case 'bankAccount': return bankAccountImpact(state, id, { now });
+    case 'obligation': return obligationImpact(state, id, { now });
+    default: {
+      const e = getEntity(state, type, id);
+      return e ? { exists: true } : null;
+    }
+  }
+}
+
+/**
+ * Company-level snapshot. Burn uses an accrual proxy (expenses - revenue per
+ * month, last up to 3 months) — a deliberate Wave 1 simplification, documented
+ * here and in the README. The Forecasting wave replaces it with proper
+ * cash-flow modelling.
+ */
+function companySnapshot(state, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const invoices = listEntities(state, 'invoice');
+  const cash = round2(listEntities(state, 'bankAccount').reduce((s, a) => s + a.balance, 0));
+  const receivables = round2(invoices.filter((i) => i.kind === 'sales').reduce((s, i) => s + (i.total - i.paid), 0));
+  const payables = round2(invoices.filter((i) => i.kind === 'purchase').reduce((s, i) => s + (i.total - i.paid), 0));
+  const openObligations = listEntities(state, 'obligation').filter((o) => o.status === 'open');
+  const taxLiabilities = round2(openObligations.reduce((s, o) => s + (o.amount - o.settled), 0));
+
+  const revenueByMonth = {};
+  const expensesByMonth = {};
+  const addTo = (bag, period, amount) => { bag[period] = round2((bag[period] || 0) + amount); };
+
+  for (const i of invoices) {
+    if (i.kind === 'sales') addTo(revenueByMonth, monthOf(i.date), i.net);
+    else addTo(expensesByMonth, monthOf(i.date), i.net);
+  }
+  for (const e of listEntities(state, 'employee')) {
+    for (const [period, cost] of Object.entries(e.cost?.periods || {})) addTo(expensesByMonth, period, cost);
+  }
+  for (const a of listEntities(state, 'asset')) {
+    // depreciation expense is captured via depreciation events on assets
+    // (accumulated split per period is not tracked per-month in Wave 1; the
+    // ledger has it precisely — snapshot keeps the accrual picture simple)
+  }
+
+  const months = [...new Set([...Object.keys(revenueByMonth), ...Object.keys(expensesByMonth)])].sort();
+  const profitByMonth = {};
+  for (const m of months) {
+    profitByMonth[m] = round2((revenueByMonth[m] || 0) - (expensesByMonth[m] || 0));
+  }
+  const lastMonths = months.slice(-3);
+  const avgProfit = lastMonths.length
+    ? round2(lastMonths.reduce((s, m) => s + profitByMonth[m], 0) / lastMonths.length)
+    : 0;
+  const monthlyBurn = avgProfit < 0 ? round2(-avgProfit) : 0;
+  const runwayMonths = monthlyBurn > 0 ? round2(cash / monthlyBurn) : null; // null = not burning
+
+  const vatByPeriod = {};
+  for (const [period, v] of state.vat.entries()) {
+    vatByPeriod[period] = { output: v.output, input: v.input, net: round2(v.output - v.input) };
+  }
+
+  return {
+    asOf: now,
+    cash,
+    receivables,
+    payables,
+    taxLiabilities,
+    openObligationCount: openObligations.length,
+    revenueByMonth,
+    expensesByMonth,
+    profitByMonth,
+    monthlyBurn,
+    runwayMonths,
+    vatByPeriod,
+  };
+}
+
+  // ───────────────────────── summary.js ─────────────────────────
+// =============================================================================
+// summary.js — Timeline + "AI Summary" per entity
+// -----------------------------------------------------------------------------
+// Two layers, by design:
+//   1) deterministicSummary() — always available, no network, pure twin data.
+//   2) buildAiContext()       — packages the entity for an LLM call (your
+//      existing Vercel Gemini function). This module makes NO network calls.
+// =============================================================================
+
+
+/** One-line human description of an event (for timelines). */
+function describeEvent(event, lang = 'lt') {
+  const p = event.payload;
+  switch (event.type) {
+    case 'bank.account.opened':
+      return lang === 'en' ? `Account ${p.iban}` : `Sąskaita ${p.iban}`;
+    case 'bank.transaction.imported':
+      return `${p.amount > 0 ? '+' : ''}${p.amount} EUR ${p.counterparty || ''}`.trim();
+    case 'sales.invoice.issued':
+      return lang === 'en'
+        ? `Invoice ${p.invoiceId} to ${p.customer.name}, €${p.total}`
+        : `SF ${p.invoiceId} — ${p.customer.name}, €${p.total}`;
+    case 'purchase.invoice.received':
+      return lang === 'en'
+        ? `Invoice ${p.invoiceId} from ${p.vendor.name}, €${p.total}`
+        : `SF ${p.invoiceId} — ${p.vendor.name}, €${p.total}`;
+    case 'payment.received':
+    case 'payment.sent':
+      return `€${p.amount} (${p.paymentId})`;
+    case 'employee.hired':
+      return lang === 'en' ? `${p.name}, gross €${p.grossSalary}` : `${p.name}, bruto €${p.grossSalary}`;
+    case 'employee.terminated':
+      return lang === 'en' ? `Until ${p.endDate}` : `Iki ${p.endDate}`;
+    case 'payroll.run.completed':
+      return lang === 'en' ? `Period ${p.period}, ${p.lines.length} employees` : `Laikotarpis ${p.period}, ${p.lines.length} darb.`;
+    case 'asset.acquired':
+      return `${p.name}, €${p.cost}`;
+    case 'asset.depreciation.recorded':
+      return `€${p.amount} (${p.period})`;
+    case 'contract.signed':
+      return `${p.counterparty}, €${p.value}`;
+    case 'tax.obligation.created':
+      return lang === 'en' ? `${p.taxType} €${p.amount}, due ${p.dueDate}` : `${p.taxType} €${p.amount}, iki ${p.dueDate}`;
+    case 'tax.obligation.settled':
+      return lang === 'en' ? `Settled ${p.date}` : `Įvykdyta ${p.date}`;
+    case 'ledger.entry.approved':
+    case 'ledger.entry.posted':
+      return p.entryId;
+    default:
+      return '';
+  }
+}
+
+/**
+ * Chronological timeline for one entity: every event that touched it,
+ * with bilingual labels. UI-ready.
+ */
+function buildTimeline(state, store, type, id, lang = 'lt') {
+  const entity = getEntity(state, type, id);
+  if (!entity) return [];
+  return entity.eventIds
+    .map((eid) => store.getById(eid))
+    .filter(Boolean)
+    .sort((a, b) => a.seq - b.seq)
+    .map((e) => ({
+      eventId: e.id,
+      ts: e.ts,
+      type: e.type,
+      label: eventLabel(e.type, lang),
+      detail: describeEvent(e, lang),
+    }));
+}
+
+/**
+ * Deterministic 2–3 sentence summary per entity type. No LLM, no network —
+ * this is the always-on fallback the UI shows instantly.
+ */
+function deterministicSummary(state, type, id, opts = {}) {
+  const lang = opts.lang || 'lt';
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const entity = getEntity(state, type, id);
+  if (!entity) return '';
+  const impact = entityImpact(state, type, id, { now });
+
+  if (type === 'customer') {
+    const lt = `${entity.name}: ${impact.invoiceCount} sąskaitos už €${impact.invoiced}. Apmokėta €${impact.paid}, liko €${impact.outstanding}.`
+      + (impact.overdueCount ? ` Pradelsta: ${impact.overdueCount} (€${impact.overdueAmount}).` : '')
+      + (impact.avgDaysToPay !== null ? ` Vid. apmokėjimas per ${impact.avgDaysToPay} d.` : '');
+    const en = `${entity.name}: ${impact.invoiceCount} invoices worth €${impact.invoiced}. Paid €${impact.paid}, outstanding €${impact.outstanding}.`
+      + (impact.overdueCount ? ` Overdue: ${impact.overdueCount} (€${impact.overdueAmount}).` : '')
+      + (impact.avgDaysToPay !== null ? ` Avg. payment in ${impact.avgDaysToPay} days.` : '');
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'vendor') {
+    const lt = `${entity.name}: ${impact.invoiceCount} pirkimo sąskaitos už €${impact.invoiced}. Skola €${impact.outstanding}.`
+      + (impact.overdueCount ? ` Pradelsta: ${impact.overdueCount}.` : '');
+    const en = `${entity.name}: ${impact.invoiceCount} purchase invoices worth €${impact.invoiced}. Outstanding €${impact.outstanding}.`
+      + (impact.overdueCount ? ` Overdue: ${impact.overdueCount}.` : '');
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'employee') {
+    const lt = `${entity.name} (${entity.status === 'active' ? 'dirba' : 'atleistas'}): bruto €${entity.grossSalary}/mėn. Metinės sąnaudos iki šiol: €${impact.ytdTotalCost}.`;
+    const en = `${entity.name} (${entity.status}): gross €${entity.grossSalary}/mo. Cost to date: €${impact.ytdTotalCost}.`;
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'asset') {
+    const lt = `${entity.name}: įsigijimo vertė €${entity.cost}, likutinė vertė €${impact.nbv} (nudėvėta €${impact.accumulatedDepreciation}).`;
+    const en = `${entity.name}: cost €${entity.cost}, net book value €${impact.nbv} (depreciated €${impact.accumulatedDepreciation}).`;
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'bankAccount') {
+    const lt = `Sąskaita ${entity.iban || entity.id}: likutis €${impact.balance}. Per 30 d.: +€${impact.inflow30d} / -€${impact.outflow30d}.`;
+    const en = `Account ${entity.iban || entity.id}: balance €${impact.balance}. Last 30 days: +€${impact.inflow30d} / -€${impact.outflow30d}.`;
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'obligation') {
+    const remaining = round2(entity.amount - entity.settled);
+    const lt = `${entity.taxType} prievolė €${entity.amount}${entity.period ? ` už ${entity.period}` : ''}: ${entity.status === 'settled' ? 'įvykdyta' : `liko €${remaining}, terminas ${entity.dueDate}`}.`;
+    const en = `${entity.taxType} obligation €${entity.amount}${entity.period ? ` for ${entity.period}` : ''}: ${entity.status === 'settled' ? 'settled' : `€${remaining} remaining, due ${entity.dueDate}`}.`;
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'invoice') {
+    const open = round2(entity.total - entity.paid);
+    const lt = `${entity.kind === 'sales' ? 'Pardavimo' : 'Pirkimo'} SF ${entity.id}: €${entity.total}, ${entity.status === 'paid' ? 'apmokėta' : `liko €${open}`}.`;
+    const en = `${entity.kind === 'sales' ? 'Sales' : 'Purchase'} invoice ${entity.id}: €${entity.total}, ${entity.status === 'paid' ? 'paid' : `€${open} open`}.`;
+    return lang === 'en' ? en : lt;
+  }
+
+  if (type === 'contract') {
+    const lt = `Sutartis su ${entity.counterparty}: €${entity.value}, nuo ${entity.startDate}.`;
+    const en = `Contract with ${entity.counterparty}: €${entity.value}, from ${entity.startDate}.`;
+    return lang === 'en' ? en : lt;
+  }
+
+  return lang === 'en' ? `${type} ${id}` : `${type} ${id}`;
+}
+
+/**
+ * Package everything an LLM needs to write a rich summary of one entity.
+ * Feed this to your existing server-side Gemini function — the twin itself
+ * never makes network calls.
+ */
+function buildAiContext(state, store, rel, type, id, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const entity = getEntity(state, type, id);
+  if (!entity) return null;
+  const { eventIds, ...core } = entity;
+  const timeline = buildTimeline(state, store, type, id, 'lt').slice(-10);
+  const relationships = rel.neighbors(`${type}:${id}`).map((n) => ({ key: n.key, type: n.type, direction: n.direction }));
+  const risks = (opts.risks || []).filter((r) => r.entity === `${type}:${id}`);
+  return {
+    language: 'lt',
+    asOf: now,
+    entity: { type, ...core },
+    impact: entityImpact(state, type, id, { now }),
+    relationships,
+    risks: risks.map((r) => ({ id: r.id, severity: r.severity, message: r.messageLt })),
+    recentTimeline: timeline,
+    instructions: 'Parašyk 3 sakinių santrauką vadovui apie šį subjektą: esama padėtis, pinigų srautai, rizika. Be įžangų, be formatavimo.',
+  };
+}
+
+  // ───────────────────────── persistence.js ─────────────────────────
+// =============================================================================
+// persistence.js — Save / restore the twin
+// -----------------------------------------------------------------------------
+// Because the twin is event-sourced, persistence = saving the event log.
+// Restore = verified replay: every hash in the chain is recomputed while
+// loading, so a tampered or corrupted save refuses to load.
+// Adapters are pluggable; localStorage keys are per clientId (bureau mode).
+// =============================================================================
+
+const TWIN_FORMAT = 'taxai-twin';
+const TWIN_FORMAT_VERSION = 1;
+
+/** Serialize a twin to a plain JSON-safe object (deep copy — a true snapshot). */
+function serializeTwin(twin) {
+  return {
+    format: TWIN_FORMAT,
+    version: TWIN_FORMAT_VERSION,
+    savedAt: new Date().toISOString(),
+    clientId: twin.clientId,
+    events: JSON.parse(JSON.stringify(twin.getEvents())),
+  };
+}
+
+/**
+ * Rebuild a twin from serialized data. `createTwinFn` is injected to avoid a
+ * circular import (pass `createTwin` from twin.js).
+ * Throws if the format is wrong or the event chain fails verification.
+ */
+function restoreTwin(data, createTwinFn, opts = {}) {
+  if (!data || data.format !== TWIN_FORMAT) {
+    throw new Error('Not a TAXAI twin file (unknown format)');
+  }
+  if (data.version !== TWIN_FORMAT_VERSION) {
+    throw new Error(`Unsupported twin format version: ${data.version}`);
+  }
+  const twin = createTwinFn({ ...opts, clientId: data.clientId || opts.clientId || 'default' });
+  twin._load(JSON.parse(JSON.stringify(data.events || [])));
+  return twin;
+}
+
+/** In-memory adapter (tests, SSR). */
+function createMemoryAdapter() {
+  let stored = null;
+  return {
+    save(data) { stored = JSON.parse(JSON.stringify(data)); },
+    load() { return stored ? JSON.parse(JSON.stringify(stored)) : null; },
+    clear() { stored = null; },
+  };
+}
+
+/**
+ * localStorage adapter — browser only, one key per client for bureau mode.
+ * Guarded so importing this file in Node never explodes.
+ */
+function createLocalStorageAdapter(clientId = 'default', prefix = 'taxai_twin') {
+  const key = `${prefix}:${clientId}`;
+  function available() {
+    return typeof globalThis !== 'undefined' && typeof globalThis.localStorage !== 'undefined';
+  }
+  return {
+    key,
+    save(data) {
+      if (!available()) throw new Error('localStorage is not available in this environment');
+      globalThis.localStorage.setItem(key, JSON.stringify(data));
+    },
+    load() {
+      if (!available()) throw new Error('localStorage is not available in this environment');
+      const raw = globalThis.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    },
+    clear() {
+      if (!available()) return;
+      globalThis.localStorage.removeItem(key);
+    },
+  };
+}
+
+/** Convenience: save a twin through any adapter. */
+function saveTwin(twin, adapter) {
+  const data = serializeTwin(twin);
+  adapter.save(data);
+  return data;
+}
+
+/** Convenience: load a twin through any adapter (null if nothing saved). */
+function loadTwin(adapter, createTwinFn, opts = {}) {
+  const data = adapter.load();
+  if (!data) return null;
+  return restoreTwin(data, createTwinFn, opts);
+}
+
+  // ───────────────────────── twin.js ─────────────────────────
+// =============================================================================
+// twin.js — The Financial Digital Twin (facade)
+// -----------------------------------------------------------------------------
+// One object, one flow:
+//   ingest(event) -> append to hash-chained log -> project into twin state
+//   -> propose balanced ledger entries (evidence + confidence)
+//   -> you approve & post (approvals are events too)
+//   -> everything queryable: entities, timeline, relationships, risk, impact.
+// =============================================================================
+
+
+const LIFECYCLE_TYPES = new Set(['ledger.entry.approved', 'ledger.entry.posted']);
+
+/**
+ * Create a Financial Digital Twin.
+ * @param {object} [opts]
+ * @param {object} [opts.accounts] - overrides for DEFAULT_ACCOUNTS (align with your CoA)
+ * @param {object} [opts.config]   - { vatDueDay, payrollTaxDueDay, ...risk thresholds }
+ * @param {string} [opts.clientId] - bureau mode: one twin per client
+ */
+function createTwin(opts = {}) {
+  const clientId = opts.clientId || 'default';
+  const store = createEventStore();
+  const rel = createRelIndex();
+  const state = createTwinState(opts.config || {});
+  const ledger = createLedger(opts.accounts || {});
+
+  // Twin-level subscribers are notified AFTER an event is fully routed
+  // (entities projected, journal entries proposed) — unlike store.subscribe,
+  // which fires on raw append. The Wave 2 inbox depends on this ordering.
+  const listeners = new Set();
+  const notify = (stored) => { for (const fn of [...listeners]) fn(stored); };
+
+  /** Route a stored event into state + ledger. Shared by ingest and replay. */
+  function route(storedEvent) {
+    if (LIFECYCLE_TYPES.has(storedEvent.type)) {
+      ledger.applyLifecycle(storedEvent);
+      return [];
+    }
+    projectEvent(state, storedEvent, rel);
+    const proposals = generateEntriesForEvent(storedEvent, state, ledger.accounts);
+    ledger.propose(proposals);
+    return proposals;
+  }
+
+  /**
+   * The ONLY way data enters the twin.
+   * @returns {{event: object, entries: object[]}} the stored event and any proposed entries
+   */
+  function ingest(type, payload, meta = {}) {
+    const event = createEvent(type, payload, meta);
+    const stored = store.append(event);
+    const entries = route(stored);
+    notify(stored);
+    return { event: stored, entries };
+  }
+
+  function approveEntry(entryId, actor = 'user') {
+    const entry = ledger.get(entryId);
+    if (!entry) throw new Error(`Journal entry not found: ${entryId}`);
+    if (entry.status !== 'proposed') throw new Error(`Cannot approve entry ${entryId} in status "${entry.status}"`);
+    return ingest('ledger.entry.approved', { entryId, actor });
+  }
+
+  function postEntry(entryId, actor = 'user') {
+    const entry = ledger.get(entryId);
+    if (!entry) throw new Error(`Journal entry not found: ${entryId}`);
+    if (entry.status !== 'approved') throw new Error(`Cannot post entry ${entryId} in status "${entry.status}" (approve it first)`);
+    return ingest('ledger.entry.posted', { entryId, actor });
+  }
+
+  /**
+   * Close the VAT position for a period into a trackable obligation.
+   * Deterministic event id, so calling twice is rejected as a duplicate.
+   * Only creates an obligation when net VAT is payable (> 0).
+   */
+  function generateVatObligation(period) {
+    const eventId = `evt_vatobl_${period}`;
+    if (store.getById(eventId)) {
+      return { period, obligationCreated: false, alreadyExists: true, obligationId: `obl_vat_${period}` };
+    }
+    const v = state.vat.get(period);
+    const net = v ? round2(v.output - v.input) : 0;
+    if (net <= 0) {
+      return { period, net, obligationCreated: false };
+    }
+    const dueDate = nextMonthDate(period, state.config.vatDueDay);
+    const obligationId = `obl_vat_${period}`;
+    const { event } = ingest('tax.obligation.created', {
+      obligationId,
+      taxType: 'VAT',
+      period,
+      amount: net,
+      dueDate,
+      source: 'vat-position',
+    }, { id: eventId, source: 'twin' });
+    return { period, net, obligationCreated: true, obligationId, dueDate, eventId: event.id };
+  }
+
+  /**
+   * Record straight-line depreciation for every active asset for a period.
+   * Deterministic event ids (one per asset per period) make this idempotent.
+   */
+  function generateDepreciation(period) {
+    const results = [];
+    for (const asset of listEntities(state, 'asset')) {
+      if (asset.nbv <= 0.005) continue;
+      const eventId = `evt_dep_${asset.id}_${period}`;
+      if (store.getById(eventId)) continue; // already recorded for this period
+      const amount = round2(Math.min(asset.monthlyDepreciation, asset.nbv));
+      if (amount <= 0) continue;
+      const { event, entries } = ingest('asset.depreciation.recorded', {
+        assetId: asset.id,
+        amount,
+        period,
+      }, { id: eventId, source: 'twin' });
+      results.push({ assetId: asset.id, amount, eventId: event.id, entries });
+    }
+    return results;
+  }
+
+  /** Verified replay of a serialized event log (used by persistence.restoreTwin). */
+  function _load(events) {
+    for (const e of events) {
+      const stored = store.loadAppend(e); // throws if chain is broken
+      route(stored);
+      notify(stored);
+    }
+  }
+
+  const twin = {
+    clientId,
+    config: state.config,
+    accounts: ledger.accounts,
+
+    // write side
+    ingest,
+    approveEntry,
+    postEntry,
+    generateVatObligation,
+    generateDepreciation,
+
+    // read side — entities
+    getEntity: (type, id) => getEntity(state, type, id),
+    listEntities: (type) => listEntities(state, type),
+
+    // read side — relationships
+    getRelationships: (type, id) => rel.neighbors(`${type}:${id}`),
+    tracePath: (fromKey, toKey) => rel.tracePath(fromKey, toKey),
+    graph: () => rel.toGraph(),
+
+    // read side — analysis
+    getTimeline: (type, id, lang) => buildTimeline(state, store, type, id, lang),
+    getSummary: (type, id, o = {}) => deterministicSummary(state, type, id, o),
+    getAiContext: (type, id, o = {}) => buildAiContext(state, store, rel, type, id, { ...o, risks: o.risks || computeRisks(state, ledger, o) }),
+    getImpact: (type, id, o = {}) => entityImpact(state, type, id, o),
+    getSnapshot: (o = {}) => companySnapshot(state, o),
+    getRisks: (o = {}) => computeRisks(state, ledger, o),
+
+    // read side — ledger
+    getLedger: (status) => ledger.list(status),
+    getEntry: (id) => ledger.get(id),
+    trialBalance: (statuses) => ledger.trialBalance(statuses),
+
+    // read side — events
+    getEvents: () => store.toJSON(),
+    getEvent: (id) => store.getById(id),
+    eventCount: () => store.count(),
+    verifyIntegrity: () => store.verifyIntegrity(),
+    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+
+    // persistence
+    serialize: () => serializeTwin(twin),
+    _load,
+  };
+
+  return twin;
+}
+
+  // ───────────────────────── agents.js ─────────────────────────
+// =============================================================================
+// agents.js — Nine deterministic specialists (Wave 2)
+// -----------------------------------------------------------------------------
+// Every business event is reviewed by a panel of nine agents. They are all
+// deterministic: instant, free, fully testable. No network calls — the
+// optional LLM "narrative" layer lives in escalation.js and runs server-side.
+//
+// An opinion: { agentId, icon, stance, noteLt, noteEn, confidence, evidence }
+//   stance: 'approve' | 'flag' | 'block'
+// An agent returns null when the event is outside its domain (e.g. the
+// Payroll agent only speaks on payroll runs).
+// =============================================================================
+
+
+const AGENT_CATALOG = [
+  { id: 'accounting', icon: '◫', lt: 'Apskaita', en: 'Accounting', domainLt: 'Korespondencija ir aritmetika', domainEn: 'Treatment & arithmetic' },
+  { id: 'tax', icon: '§', lt: 'Mokesčiai', en: 'Tax', domainLt: 'PVM logika ir terminai', domainEn: 'VAT logic & deadlines' },
+  { id: 'fraud', icon: '◐', lt: 'Sukčiavimas', en: 'Fraud', domainLt: 'Dublikatai, TAS 240 indikatoriai', domainEn: 'Duplicates, TAS 240 indicators' },
+  { id: 'treasury', icon: '◖', lt: 'Iždas', en: 'Treasury', domainLt: 'Likvidumo poveikis', domainEn: 'Liquidity impact' },
+  { id: 'payroll', icon: '◰', lt: 'Darbo užmokestis', en: 'Payroll', domainLt: 'GPM/Sodra aritmetika', domainEn: 'GPM/Sodra arithmetic' },
+  { id: 'audit', icon: '◉', lt: 'Auditas', en: 'Audit', domainLt: 'Įrodymų pilnumas', domainEn: 'Evidence completeness' },
+  { id: 'controller', icon: '◳', lt: 'Kontrolierius', en: 'Controller', domainLt: 'Tvirtinimo politika', domainEn: 'Approval policy' },
+  { id: 'fpa', icon: '▱', lt: 'FP&A', en: 'FP&A', domainLt: 'Nuokrypiai nuo tendencijos', domainEn: 'Variance vs trend' },
+  { id: 'cfo', icon: '◆', lt: 'CFO', en: 'CFO', domainLt: 'Galutinis vertinimas', domainEn: 'Final rollup' },
+];
+
+const ICON = Object.fromEntries(AGENT_CATALOG.map((a) => [a.id, a.icon]));
+
+function opinion(agentId, stance, noteLt, noteEn, confidence, evidence) {
+  return { agentId, icon: ICON[agentId], stance, noteLt, noteEn, confidence, evidence: evidence || [] };
+}
+
+const INVOICE_EVENTS = new Set(['sales.invoice.issued', 'purchase.invoice.received']);
+const NO_ENTRY_EVENTS = new Set(['employee.hired', 'employee.terminated', 'contract.signed', 'tax.obligation.created', 'tax.obligation.settled']);
+
+// 2026 LT VAT rates: 21 standard, 12/5 reduced, 0. 9% is the pre-2026 legacy rate.
+const VAT_OK = [21, 12, 5];
+const VAT_LEGACY = 9;
+const RC_PATTERN = /statyb|montavim|metalo\s*lau[žz]|atliek/i; // PVMĮ 96 str. reverse-charge hints
+
+/** Monetary size of an event, for policy thresholds and liquidity checks. */
+function eventAmount(event) {
+  const p = event.payload;
+  if (p.total != null) return Math.abs(p.total);
+  if (p.amount != null) return Math.abs(p.amount);
+  if (p.cost != null) return Math.abs(round2(p.cost + (p.vat || 0)));
+  if (event.type === 'payroll.run.completed') {
+    return round2(p.lines.reduce((s, l) => s + l.gross + (l.sodraEmployer || 0), 0)); // full employer cost
+  }
+  if (p.openingBalance != null) return Math.abs(p.openingBalance);
+  return 0;
+}
+
+// ── 1 · ACCOUNTING — treatment & arithmetic ─────────────────────────────────
+function agentAccounting(ctx) {
+  const { event, entries } = ctx;
+  const p = event.payload;
+
+  if (INVOICE_EVENTS.has(event.type) || event.type === 'asset.acquired') {
+    const net = p.net != null ? p.net : p.cost;
+    const gross = p.total != null ? p.total : round2((p.cost || 0) + (p.vat || 0));
+    const delta = round2(net + (p.vat || 0) - gross);
+    if (Math.abs(delta) > 0.02) {
+      return opinion('accounting', 'flag',
+        `Net + PVM ≠ Gross (Δ €${delta})`,
+        `Net + VAT ≠ Gross (Δ €${delta})`, 0.99, [event.id]);
+    }
+  }
+  if (entries.length === 0) {
+    return opinion('accounting', 'approve',
+      NO_ENTRY_EVENTS.has(event.type) ? 'Apskaitos įrašo nereikia' : 'Įrašas nesiūlomas šiam įvykiui',
+      NO_ENTRY_EVENTS.has(event.type) ? 'No journal entry required' : 'No entry proposed for this event', 0.9);
+  }
+  const minConf = Math.min(...entries.map((e) => e.confidence));
+  if (minConf < 0.95) {
+    const notes = entries.flatMap((e) => e.notes);
+    return opinion('accounting', 'flag',
+      `Korespondencija pasiūlyta su pastabomis: ${notes.join(' ')}`,
+      `Entry proposed with caveats: ${notes.join(' ')}`, minConf, entries.map((e) => e.id));
+  }
+  return opinion('accounting', 'approve',
+    'Korespondencija subalansuota, aritmetika sutampa',
+    'Balanced entry; arithmetic consistent', 0.97, entries.map((e) => e.id));
+}
+
+// ── 2 · TAX — VAT rates, reverse charge, deadlines ──────────────────────────
+function agentTax(ctx) {
+  const { event, now } = ctx;
+  const p = event.payload;
+
+  if (event.type === 'tax.obligation.created') {
+    const days = daysBetween(now, p.dueDate);
+    const late = days < 0;
+    return opinion('tax', late || days <= 5 ? 'flag' : 'approve',
+      late ? `${p.taxType} terminas praleistas ${-days} d. (${p.dueDate})` : `Artėja ${p.taxType} terminas: liko ${days} d. (${p.dueDate})`,
+      late ? `${p.taxType} deadline missed by ${-days} days (${p.dueDate})` : `${p.taxType} deadline approaching: ${days} days left (${p.dueDate})`,
+      0.99, [p.obligationId]);
+  }
+
+  const hasVat = INVOICE_EVENTS.has(event.type) || event.type === 'asset.acquired';
+  if (!hasVat) {
+    return opinion('tax', 'approve', 'Mokestinių požymių pagal įvykio tipą nėra', 'No tax characteristics for this event type', 0.8);
+  }
+
+  const net = p.net != null ? p.net : p.cost;
+  const vat = p.vat || 0;
+  const desc = `${p.description || ''} ${(p.lines || []).map((l) => l.description || '').join(' ')}`;
+
+  if (vat === 0) {
+    return opinion('tax', 'approve',
+      '0 % PVM — patikrinti pagrindą (eksportas, ES tiekimas ar atvirkštinis apmokestinimas)',
+      '0% VAT — verify the basis (export, EU supply or reverse charge)', 0.85);
+  }
+  const pct = net > 0 ? round2((vat / net) * 100) : null;
+  const matches = (target) => pct != null && Math.abs(pct - target) <= 0.5;
+
+  if (matches(VAT_LEGACY)) {
+    return opinion('tax', 'flag',
+      '9 % tarifas — nuo 2026-01-01 pakeistas į 12 %/21 % (PVMĮ 19 str. pakeitimas)',
+      '9% rate — replaced by 12%/21% from 2026-01-01 (VAT Law art. 19 amendment)', 0.95);
+  }
+  if (!VAT_OK.some(matches)) {
+    return opinion('tax', 'block',
+      `Neleistinas PVM tarifas: ${pct} % (PVMĮ 19 str.)`,
+      `Invalid VAT rate: ${pct}% (VAT Law art. 19)`, 0.98, [event.id]);
+  }
+  if (RC_PATTERN.test(desc)) {
+    return opinion('tax', 'flag',
+      'Aprašyme — statyba/metalo laužas su PVM: tikrinti atvirkštinį apmokestinimą (PVMĮ 96 str.)',
+      'Description hints construction/scrap with VAT: check reverse charge (VAT Law art. 96)', 0.85);
+  }
+  return opinion('tax', 'approve', `PVM tarifas ${pct} % leistinas; rizikų nerasta`, `VAT rate ${pct}% valid; no risks found`, 0.93);
+}
+
+// ── 3 · FRAUD — duplicates, round sums, weekend dates (TAS 240) ─────────────
+function agentFraud(ctx) {
+  const { event, twin } = ctx;
+  const p = event.payload;
+
+  if (INVOICE_EVENTS.has(event.type)) {
+    const me = twin.getEntity('invoice', p.invoiceId);
+    if (me) {
+      // Flag only the LATER document so the verdict is stable across replays.
+      const dup = twin.listEntities('invoice').find((o) =>
+        o.id !== me.id && o.kind === me.kind && o.counterpartyId === me.counterpartyId
+        && Math.abs(o.total - me.total) <= 0.01
+        && Math.abs(daysBetween(o.date, me.date)) <= 3
+        && (o.date < me.date || (o.date === me.date && o.id < me.id)));
+      if (dup) {
+        return opinion('fraud', 'block',
+          `Galimas dublikatas: ${dup.id} (ta pati suma €${me.total}, ±3 d.)`,
+          `Possible duplicate of ${dup.id} (same amount €${me.total}, within 3 days)`, 0.97, [dup.id, me.id]);
+      }
+    }
+    const total = p.total || 0;
+    const isRound = total >= 2000 && total % 1000 === 0;
+    const d = new Date(`${p.date}T12:00:00Z`);
+    const wkd = !isNaN(d) && (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    if (isRound || wkd) {
+      const partsLt = [isRound ? 'Apvali suma ×1000' : '', wkd ? 'Savaitgalio data' : ''].filter(Boolean).join(' · ');
+      const partsEn = [isRound ? 'Round ×1000 amount' : '', wkd ? 'Weekend date' : ''].filter(Boolean).join(' · ');
+      return opinion('fraud', 'flag', `${partsLt} (TAS 240 indikatorius)`, `${partsEn} (ISA 240 indicator)`, 0.7);
+    }
+  }
+  if (event.type === 'payment.sent' && !(p.invoiceIds && p.invoiceIds.length) && !p.obligationId) {
+    return opinion('fraud', 'flag',
+      `Išeinantis mokėjimas €${p.amount} be priskyrimo sąskaitai ar prievolei`,
+      `Outgoing payment €${p.amount} with no invoice or obligation reference`, 0.8, [p.paymentId]);
+  }
+  return opinion('fraud', 'approve', 'Sukčiavimo indikatorių nerasta', 'No fraud indicators found', 0.9);
+}
+
+// ── 4 · TREASURY — liquidity impact ─────────────────────────────────────────
+function agentTreasury(ctx) {
+  const { event, snapshot } = ctx;
+  const p = event.payload;
+  const outflowTypes = new Set(['payment.sent', 'purchase.invoice.received', 'payroll.run.completed', 'asset.acquired']);
+
+  if (!outflowTypes.has(event.type)) {
+    if (event.type === 'payment.received' || (event.type === 'bank.transaction.imported' && p.amount > 0)) {
+      return opinion('treasury', 'approve', 'Įplauka — likvidumas gerėja', 'Inflow — liquidity improves', 0.95);
+    }
+    return opinion('treasury', 'approve', 'Pinigų srautų poveikio nėra', 'No cash-flow impact', 0.95);
+  }
+  const out = eventAmount(event);
+  const cash = snapshot.cash || 0;
+  if (out > 0 && cash > 0 && out / cash > 0.2) {
+    return opinion('treasury', 'flag',
+      `Išmoka = ${round2((100 * out) / cash)} % grynųjų — planuoti likvidumą`,
+      `Outflow = ${round2((100 * out) / cash)}% of cash — plan liquidity`, 0.95);
+  }
+  return opinion('treasury', 'approve',
+    `Likvidumo poveikis ${cash > 0 ? round2((100 * out) / cash) + ' %' : 'n/a'}; mokėti terminą atitinkančią dieną (DPO)`,
+    `Liquidity impact ${cash > 0 ? round2((100 * out) / cash) + '%' : 'n/a'}; pay on the due date (DPO)`, 0.9);
+}
+
+// ── 5 · PAYROLL — only when relevant ────────────────────────────────────────
+function agentPayroll(ctx) {
+  const { event } = ctx;
+  if (event.type !== 'payroll.run.completed') return null;
+  const bad = event.payload.lines.filter((l) => Math.abs(round2(l.gross - l.gpm - l.sodraEmployee) - l.net) > 0.01);
+  if (bad.length) {
+    return opinion('payroll', 'flag',
+      `Neto nesutampa su bruto − GPM − Sodra: ${bad.map((l) => l.employeeId).join(', ')}`,
+      `Net ≠ gross − GPM − Sodra for: ${bad.map((l) => l.employeeId).join(', ')}`, 0.95, bad.map((l) => l.employeeId));
+  }
+  return opinion('payroll', 'approve',
+    `GPM/Sodra aritmetika sutampa (${event.payload.lines.length} eil.)`,
+    `GPM/Sodra arithmetic consistent (${event.payload.lines.length} lines)`, 0.97);
+}
+
+// ── 6 · AUDIT — evidence completeness, immutable trail ──────────────────────
+function agentAudit(ctx) {
+  const { event } = ctx;
+  const p = event.payload;
+  if (INVOICE_EVENTS.has(event.type)) {
+    const missing = [];
+    if (!p.dueDate) missing.push('dueDate');
+    if (!p.date) missing.push('date');
+    if (missing.length) {
+      return opinion('audit', 'flag',
+        `Trūksta įrodymų: ${missing.join(', ')}`, `Missing evidence: ${missing.join(', ')}`, 0.95, [p.invoiceId]);
+    }
+    return opinion('audit', 'approve',
+      'Įrodymų grandinė pilna (dokumentas → suma → kontrahentas), įvykis nekeičiamame žurnale',
+      'Evidence chain complete (document → amount → party), event in tamper-evident log', 0.92, [event.id]);
+  }
+  return opinion('audit', 'approve',
+    `Įvykis fiksuotas nekeičiamame žurnale; šaltinis: ${event.source || event.actor || 'system'}`,
+    `Event recorded in tamper-evident log; source: ${event.source || event.actor || 'system'}`, 0.9, [event.id]);
+}
+
+// ── 7 · CONTROLLER — approval policy ladder ─────────────────────────────────
+function policyFor(amount, config = {}) {
+  const dual = config.dualThreshold != null ? config.dualThreshold : 10000;
+  const single = config.singleThreshold != null ? config.singleThreshold : 1000;
+  return amount >= dual ? 'dual' : amount >= single ? 'single' : 'auto';
+}
+
+function agentController(ctx) {
+  const amount = eventAmount(ctx.event);
+  const policy = policyFor(amount, ctx.config);
+  const o = opinion('controller',
+    policy === 'auto' ? 'approve' : 'flag',
+    policy === 'dual' ? `≥ €10 000 — dvigubas patvirtinimas` : policy === 'single' ? 'Reikia vieno patvirtinimo' : 'Politikos ribose — automatinis',
+    policy === 'dual' ? `≥ €10,000 — dual approval required` : policy === 'single' ? 'One approval required' : 'Within policy — automatic', 0.99);
+  o.policy = policy;
+  return o;
+}
+
+// ── 8 · FP&A — variance vs the trailing 3-month trend ───────────────────────
+function agentFpa(ctx) {
+  const { event, snapshot } = ctx;
+  if (!INVOICE_EVENTS.has(event.type)) return null;
+  const isSale = event.type === 'sales.invoice.issued';
+  const amount = event.payload.net;
+
+  // Wave 5: a real forecast baseline, when the host supplies one
+  if (ctx.fpaBaseline) {
+    const baseline = isSale ? ctx.fpaBaseline.sales : ctx.fpaBaseline.purchase;
+    if (baseline > 0) {
+      const share = round2((100 * amount) / baseline);
+      if (share > 25) {
+        return opinion('fpa', 'flag',
+          `Suma = ${share} % prognozuojamų mėn. ${isSale ? 'pajamų' : 'pirkimų'} (prognozė)`,
+          `Amount = ${share}% of forecast monthly ${isSale ? 'revenue' : 'purchases'}`, 0.8);
+      }
+      return opinion('fpa', 'approve', 'Neviršija prognozės nuokrypio ribų', 'Within forecast deviation limits', 0.85);
+    }
+  }
+
+  const byMonth = isSale ? snapshot.revenueByMonth : snapshot.expensesByMonth;
+  const eventMonth = (event.payload.date || '').slice(0, 7);
+  const months = Object.keys(byMonth).filter((m) => m < eventMonth).sort().slice(-3);
+  const baseline = months.length ? round2(months.reduce((s, m) => s + byMonth[m], 0) / months.length) : 0;
+  if (baseline <= 0) {
+    return opinion('fpa', 'approve', 'Nepakanka istorijos palyginimui', 'Not enough history to compare', 0.7);
+  }
+  const share = round2((100 * amount) / baseline);
+  if (share > 25) {
+    return opinion('fpa', 'flag',
+      `Suma = ${share} % mėn. vidurkio (3 mėn. ${isSale ? 'pajamų' : 'pirkimų'} tendencija)`,
+      `Amount = ${share}% of 3-month avg ${isSale ? 'revenue' : 'purchases'}`, 0.8);
+  }
+  return opinion('fpa', 'approve', 'Neviršija tendencijos nuokrypio ribų', 'Within trend deviation limits', 0.85);
+}
+
+// ── 9 · CFO — final rollup over the other opinions ──────────────────────────
+function agentCfo(ctx, others) {
+  const blocks = others.filter((o) => o.stance === 'block').length;
+  const flags = others.filter((o) => o.stance === 'flag').length;
+  const worst = blocks ? 'block' : flags >= 2 ? 'flag' : 'approve';
+  return opinion('cfo', worst,
+    worst === 'block' ? 'Stabdyti: yra blokuojanti nuomonė' : worst === 'flag' ? 'Tvirtinti tik su žmogaus peržiūra' : 'Sutariama — vykdyti',
+    worst === 'block' ? 'Stop: a blocking opinion exists' : worst === 'flag' ? 'Approve only with human review' : 'Consensus — proceed', 0.9);
+}
+
+const PANEL = [agentAccounting, agentTax, agentFraud, agentTreasury, agentPayroll, agentAudit, agentController, agentFpa];
+
+/**
+ * Run the full nine-agent panel over a review context.
+ * Returns the opinions in catalog order (CFO last). Agents outside their
+ * domain return nothing.
+ */
+function runAgents(ctx) {
+  const opinions = [];
+  for (const agent of PANEL) {
+    const o = agent(ctx);
+    if (o) opinions.push(o);
+  }
+  opinions.push(agentCfo(ctx, opinions));
+  return opinions;
+}
+
+  // ───────────────────────── consensus.js ─────────────────────────
+// =============================================================================
+// consensus.js — Panel verdict over the nine agents (Wave 2)
+// -----------------------------------------------------------------------------
+// reviewEvent(twin, event) runs the panel and reduces opinions to:
+//   verdict     'block' | 'review' | 'auto'
+//   policy      'auto' | 'single' | 'dual'   (how many human approvals)
+//   confidence  integer percent — avg(conf) − 6 pp per flag − 15 pp per block,
+//               floored at 40 (the spec's formula)
+//   dissent     every non-approving opinion
+//   severity    Critical (block) | High (≥2 flags) | Medium (1 flag) | Low
+// =============================================================================
+
+
+const SKIP_TYPES = new Set(['ledger.entry.approved', 'ledger.entry.posted', 'inbox.item.decided', 'period.closed']);
+
+/** Assemble everything the agents need to judge one event. */
+function buildReviewContext(twin, event, opts = {}) {
+  const fc = typeof opts.forecast === 'function' ? opts.forecast(twin) : opts.forecast;
+  return {
+    event,
+    twin,
+    entries: twin.getLedger().filter((e) => e.sourceEventId === event.id),
+    snapshot: opts.snapshot || twin.getSnapshot({ now: opts.now }),
+    now: opts.now || new Date().toISOString().slice(0, 10),
+    config: { ...twin.config, ...(opts.config || {}) },
+    fpaBaseline: opts.fpaBaseline || (fc ? { sales: fc.nextRevenue, purchase: fc.nextExpenses } : null),
+  };
+}
+
+/**
+ * Review one event with the full panel.
+ * Returns null for lifecycle/decision events (they are bookkeeping, not facts).
+ */
+function reviewEvent(twin, event, opts = {}) {
+  if (SKIP_TYPES.has(event.type)) return null;
+  const ctx = buildReviewContext(twin, event, opts);
+  const opinions = runAgents(ctx);
+
+  const blocks = opinions.filter((o) => o.stance === 'block').length;
+  const flags = opinions.filter((o) => o.stance === 'flag').length;
+  const controller = opinions.find((o) => o.agentId === 'controller');
+  const policy = (controller && controller.policy) || 'single';
+
+  const verdict = blocks ? 'block' : flags >= 2 ? 'review' : policy === 'auto' ? 'auto' : 'review';
+  const avg = opinions.reduce((s, o) => s + o.confidence, 0) / opinions.length;
+  const confidence = Math.round(Math.max(0.4, round2(avg - 0.06 * flags - 0.15 * blocks)) * 100);
+  const severity = blocks ? 'Critical' : flags >= 2 ? 'High' : flags === 1 ? 'Medium' : 'Low';
+
+  return {
+    eventId: event.id,
+    opinions,
+    verdict,
+    policy,
+    confidence,
+    severity,
+    dissent: opinions.filter((o) => o.stance !== 'approve'),
+    amount: eventAmount(event),
+  };
+}
+
+  // ───────────────────────── inbox.js ─────────────────────────
+// =============================================================================
+// inbox.js — The Autonomous Inbox (Wave 2)
+// -----------------------------------------------------------------------------
+// Every business event becomes an inbox item carrying the nine-agent review.
+// The inbox is a PURE PROJECTION over the twin's event log:
+//   · business events            -> items (reviewed by the panel)
+//   · 'inbox.item.decided' events-> approvals / dismissals / overrides
+//   · 'ledger.entry.posted'      -> items resolve when their entries post
+// Decisions are events, so a restored twin + a fresh inbox reproduce the
+// exact same item statuses. Agent OPINIONS are recomputed live against the
+// current twin (a re-opened client is re-reviewed with today's knowledge);
+// statuses and decisions are event-sourced and stable.
+//
+// Item statuses:
+//   open · awaiting-second · blocked · resolved · dismissed · overridden
+//
+// Autopilot: when enabled, items whose verdict is 'auto' are approved by the
+// inbox itself (actor 'autopilot') through the SAME decide() path as a human —
+// so autopilot actions are ordinary decision events and replay cleanly.
+// =============================================================================
+
+
+const LIFECYCLE = new Set(['ledger.entry.approved', 'ledger.entry.posted']);
+const FINAL = new Set(['resolved', 'dismissed', 'overridden']);
+
+function partyOf(twin, event) {
+  const p = event.payload;
+  if (p.customer) return p.customer.name;
+  if (p.vendor) return p.vendor.name;
+  if (p.counterparty) return p.counterparty;
+  if (p.taxType) return 'VMI / Sodra';
+  if (p.employeeId && event.type.startsWith('employee')) return p.name || p.employeeId;
+  return '';
+}
+
+/**
+ * Create the Autonomous Inbox bound to a twin.
+ * @param {object} twin
+ * @param {object} [opts] - { autopilot: boolean, now: 'YYYY-MM-DD', config: {singleThreshold, dualThreshold} }
+ */
+function createInbox(twin, opts = {}) {
+  const items = new Map();          // itemId -> item
+  const byEvent = new Map();        // sourceEventId -> itemId
+  const byEntry = new Map();        // entryId -> itemId
+  let live = false;                 // replay vs real time
+  const autopilot = !!opts.autopilot;
+
+  function neededApprovals(policy) {
+    return policy === 'dual' ? 2 : 1; // 'auto' and 'single' both take one sign-off
+  }
+
+  function recomputeStatus(item) {
+    if (item.status === 'resolved') return;
+    if (item.decisions.some((d) => d.decision === 'dismiss')) { item.status = 'dismissed'; return; }
+    if (item.decisions.some((d) => d.decision === 'override')) { item.status = 'overridden'; return; }
+    const approvers = [...new Set(item.decisions.filter((d) => d.decision === 'approve').map((d) => d.actor))];
+    if (item.verdict === 'block' && approvers.length === 0) { item.status = 'blocked'; return; }
+    if (approvers.length >= neededApprovals(item.policy)) {
+      // Approved. With entries the posting events will flip it to 'resolved';
+      // without entries an approval IS the resolution (acknowledged).
+      item.status = item.entryIds.length ? item.status : 'resolved';
+      return;
+    }
+    if (approvers.length === 1 && item.policy === 'dual') { item.status = 'awaiting-second'; return; }
+    item.status = item.verdict === 'block' ? 'blocked' : 'open';
+  }
+
+  function createItem(event) {
+    const review = reviewEvent(twin, event, { now: opts.now, config: opts.config, forecast: opts.forecast });
+    if (!review) return null;
+    const item = {
+      id: `ibx_${event.id}`,
+      eventId: event.id,
+      type: event.type,
+      ts: event.ts,
+      date: event.payload.date || event.payload.startDate || event.payload.dueDate || event.ts.slice(0, 10),
+      titleLt: `${eventLabel(event.type, 'lt')} — ${describeEvent(event, 'lt')}`,
+      titleEn: `${eventLabel(event.type, 'en')} — ${describeEvent(event, 'en')}`,
+      party: partyOf(twin, event),
+      amount: review.amount,
+      severity: review.severity,
+      verdict: review.verdict,
+      policy: review.policy,
+      confidence: review.confidence,
+      opinions: review.opinions,
+      dissent: review.dissent,
+      entryIds: twin.getLedger().filter((e) => e.sourceEventId === event.id).map((e) => e.id),
+      decisions: [],
+      status: 'open',
+    };
+    items.set(item.id, item);
+    byEvent.set(event.id, item.id);
+    for (const id of item.entryIds) byEntry.set(id, item.id);
+    recomputeStatus(item);
+    return item;
+  }
+
+  function applyDecision(event) {
+    const item = items.get(event.payload.itemId);
+    if (!item) return;
+    item.decisions.push({
+      decision: event.payload.decision,
+      actor: event.payload.actor,
+      reason: event.payload.reason || '',
+      ts: event.ts,
+      eventId: event.id,
+    });
+    recomputeStatus(item);
+  }
+
+  function applyPosted(event) {
+    const itemId = byEntry.get(event.payload.entryId);
+    if (!itemId) return;
+    const item = items.get(itemId);
+    if (FINAL.has(item.status) && item.status !== 'overridden') return;
+    const allPosted = item.entryIds.every((id) => (twin.getEntry(id) || {}).status === 'posted');
+    if (allPosted) {
+      item.status = item.status === 'overridden' ? 'overridden' : 'resolved';
+      item.resolvedAt = event.ts;
+    }
+  }
+
+  /** Route one twin event into the inbox projection. */
+  function derive(event) {
+    if (event.type === 'inbox.item.decided') { applyDecision(event); return; }
+    if (event.type === 'ledger.entry.posted') { applyPosted(event); return; }
+    if (LIFECYCLE.has(event.type)) return;
+    const item = createItem(event);
+    if (live && autopilot && item && item.verdict === 'auto' && item.status === 'open') {
+      decide(item.id, 'approve', 'autopilot');
+    }
+  }
+
+  /**
+   * Record a human (or autopilot) decision. This INGESTS an event — decisions
+   * are part of the permanent log — and then performs the side effects
+   * (approving + posting linked entries) when the policy is satisfied.
+   * decision: 'approve' | 'dismiss' | 'override'
+   */
+  function decide(itemId, decision, actor, reason = '') {
+    const item = items.get(itemId);
+    if (!item) throw new Error(`Inbox item not found: ${itemId}`);
+    if (FINAL.has(item.status)) throw new Error(`Item ${itemId} is already ${item.status}`);
+    if (!['approve', 'dismiss', 'override'].includes(decision)) throw new Error(`Unknown decision: ${decision}`);
+    if (decision === 'override') {
+      if (item.status !== 'blocked') throw new Error(`Only blocked items can be overridden (status: ${item.status})`);
+      if (!reason) throw new Error('Override requires a reason');
+    }
+    if (decision === 'approve') {
+      if (item.status === 'blocked') throw new Error(`Item ${itemId} is blocked — use override with a reason`);
+      const prior = item.decisions.filter((d) => d.decision === 'approve').map((d) => d.actor);
+      if (prior.includes(actor)) throw new Error(`Dual approval requires a different actor than "${actor}"`);
+    }
+
+    twin.ingest('inbox.item.decided', { itemId, decision, actor, reason }, { source: 'inbox', actor });
+    // The subscription already applied the decision; now the side effects.
+    const approvers = [...new Set(item.decisions.filter((d) => d.decision === 'approve').map((d) => d.actor))];
+    const satisfied = decision === 'override' || approvers.length >= neededApprovals(item.policy);
+    if (satisfied && decision !== 'dismiss') {
+      for (const entryId of item.entryIds) {
+        const entry = twin.getEntry(entryId);
+        if (entry && entry.status === 'proposed') twin.approveEntry(entryId, actor);
+        if (entry && twin.getEntry(entryId).status === 'approved') twin.postEntry(entryId, actor);
+      }
+    }
+    return items.get(itemId);
+  }
+
+  // ── Read API ──────────────────────────────────────────────────────────────
+  function list(filter = {}) {
+    let all = [...items.values()];
+    if (filter.status) all = all.filter((i) => i.status === filter.status);
+    if (filter.severity) all = all.filter((i) => i.severity === filter.severity);
+    if (filter.open) all = all.filter((i) => !FINAL.has(i.status));
+    const sevRank = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+    return all.sort((a, b) => (sevRank[a.severity] - sevRank[b.severity]) || (a.ts < b.ts ? 1 : -1));
+  }
+
+  function stats() {
+    const all = [...items.values()];
+    const by = (key) => all.reduce((m, i) => ((m[i[key]] = (m[i[key]] || 0) + 1), m), {});
+    return {
+      total: all.length,
+      byStatus: by('status'),
+      bySeverity: by('severity'),
+      openCritical: all.filter((i) => i.severity === 'Critical' && !FINAL.has(i.status)).length,
+      avgConfidence: all.length ? Math.round(all.reduce((s, i) => s + i.confidence, 0) / all.length) : null,
+    };
+  }
+
+  // ── Boot: replay history, then go live ────────────────────────────────────
+  for (const event of twin.getEvents()) derive(event);
+  live = true;
+  const unsubscribe = twin.subscribe(derive);
+
+  return {
+    autopilot,
+    decide,
+    get: (id) => items.get(id),
+    getByEvent: (eventId) => items.get(byEvent.get(eventId)),
+    list,
+    stats,
+    count: () => items.size,
+    destroy: unsubscribe,
+  };
+}
+
+  // ───────────────────────── escalation.js ─────────────────────────
+// =============================================================================
+// escalation.js — Narrative layer for items that need a human (Wave 2)
+// -----------------------------------------------------------------------------
+// Two levels, same pattern as Wave 1's summaries:
+//   1) deterministicBriefing(item) — instant, no network: who agreed, who
+//      dissented, what to do. Always shown in the UI.
+//   2) buildEscalationContext(twin, item) — packages everything for your
+//      server-side LLM (the Vercel Gemini function) to write a CFO-style
+//      narrative when the verdict isn't 'auto'. This module never calls out.
+// =============================================================================
+
+
+const NAME = Object.fromEntries(AGENT_CATALOG.map((a) => [a.id, a]));
+
+/** One-paragraph consensus/dissent briefing, no LLM needed. */
+function deterministicBriefing(item, lang = 'lt') {
+  const total = item.opinions.length;
+  const approving = item.opinions.filter((o) => o.stance === 'approve').length;
+  const dis = item.dissent.map((o) => `${NAME[o.agentId][lang === 'en' ? 'en' : 'lt']}: ${lang === 'en' ? o.noteEn : o.noteLt}`);
+  const action = {
+    block: { lt: 'Stabdyti ir išspręsti blokuojančią pastabą (arba pergyvendinti su priežastimi).', en: 'Stop and resolve the blocking note (or override with a reason).' },
+    review: { lt: item.policy === 'dual' ? 'Reikia dviejų skirtingų asmenų patvirtinimo.' : 'Reikia žmogaus patvirtinimo.', en: item.policy === 'dual' ? 'Two distinct approvers required.' : 'Human approval required.' },
+    auto: { lt: 'Politikos ribose — galima vykdyti automatiškai.', en: 'Within policy — can proceed automatically.' },
+  }[item.verdict];
+  if (lang === 'en') {
+    return `${approving} of ${total} agents approve (confidence ${item.confidence}%).`
+      + (dis.length ? ` Dissent — ${dis.join(' · ')}.` : ' No dissent.')
+      + ` ${action.en}`;
+  }
+  return `Pritaria ${approving} iš ${total} agentų (pasitikėjimas ${item.confidence} %).`
+    + (dis.length ? ` Nesutinka — ${dis.join(' · ')}.` : ' Prieštaravimų nėra.')
+    + ` ${action.lt}`;
+}
+
+/**
+ * Package an inbox item for the LLM narrative. Feed the result to your
+ * existing server-side Gemini function. Includes counterparty impact when the
+ * item touches a customer or vendor.
+ */
+function buildEscalationContext(twin, item, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const event = twin.getEvent(item.eventId);
+  const p = event ? event.payload : {};
+
+  let counterparty = null;
+  const inv = p.invoiceId ? twin.getEntity('invoice', p.invoiceId) : null;
+  if (inv) {
+    counterparty = {
+      type: inv.counterpartyType,
+      ...((twin.getEntity(inv.counterpartyType, inv.counterpartyId) && { name: twin.getEntity(inv.counterpartyType, inv.counterpartyId).name }) || {}),
+      impact: twin.getImpact(inv.counterpartyType, inv.counterpartyId, { now }),
+    };
+  }
+
+  return {
+    language: 'lt',
+    asOf: now,
+    item: {
+      id: item.id,
+      title: item.titleLt,
+      party: item.party,
+      amount: item.amount,
+      severity: item.severity,
+      verdict: item.verdict,
+      policy: item.policy,
+      confidence: item.confidence,
+      status: item.status,
+    },
+    eventPayload: p,
+    opinions: item.opinions.map((o) => ({ agent: NAME[o.agentId].lt, stance: o.stance, note: o.noteLt, confidence: o.confidence })),
+    dissent: item.dissent.map((o) => ({ agent: NAME[o.agentId].lt, stance: o.stance, note: o.noteLt })),
+    counterparty,
+    companySnapshot: (({ cash, receivables, payables, taxLiabilities, runwayMonths }) =>
+      ({ cash, receivables, payables, taxLiabilities, runwayMonths }))(twin.getSnapshot({ now })),
+    instructions: 'Tu esi įmonės finansų direktorius (CFO). Įvertink šį įvykį per 3–4 sakinius: ar tvirtinti, kokia pagrindinė rizika ir koks konkretus veiksmas. Būtinai atsižvelk į nesutinkančių agentų pastabas. Be įžangų, be formatavimo.',
+  };
+}
+
+  // ───────────────────────── payrollParams.js ─────────────────────────
+// =============================================================================
+// payrollParams.js — 2026 Lithuanian payroll constants (Wave 3)
+// -----------------------------------------------------------------------------
+// One frozen object holds EVERY number the engine uses, so a law change is a
+// one-line override: createPayrollEngine({ npd: { max: 822 } }).
+//
+// Sources: the FinanceOS LT rule cards (GPMĮ 6 str. 2026 three-tier system,
+// VSD 2026 rates, MMA €1,153, VDU ~€2,304.50) plus DK (Labour Code) rules for
+// vacation, sickness and termination. Values marked VERIFY are the ones most
+// likely to move with annual budgets — confirm against vmi.lt / sodra.lt
+// before live payroll.
+// =============================================================================
+
+const PARAMS_2026 = Object.freeze({
+  year: 2026,
+  mma: 1153,          // minimali mėnesinė alga 2026
+  vdu: 2304.50,       // vidutinis darbo užmokestis taikomas riboms (VERIFY annually)
+
+  // ── GPM: three-tier progressive system from 2026-01-01 (GPMĮ 6 str.) ──
+  // Marginal brackets — each rate applies to the SLICE of income in its band.
+  // Annual bands 36 VDU (€82,962) and 60 VDU (€138,270); monthly = annual / 12.
+  gpm: {
+    brackets: [
+      { uptoAnnual: 82962, rate: 0.20 },   // iki 36 VDU
+      { uptoAnnual: 138270, rate: 0.25 },  // 36–60 VDU
+      { uptoAnnual: null, rate: 0.32 },    // virš 60 VDU
+    ],
+    dividendRate: 0.15, // dividendai — atskirai, ne progresinėje skalėje
+  },
+
+  // ── NPD: tax-exempt amount applied to gross employment income ──
+  // npd = max(0, f1, f2):
+  //   f1 = max − slope1 × max(0, gross − mma)
+  //   f2 = highBase − slope2 × max(0, gross − highRef)
+  // The spec card keeps max NPD at €747 for 2026. The f1/f2 crossover is
+  // computed dynamically (VERIFY the official switch threshold when published).
+  npd: {
+    max: 747,
+    slope1: 0.49,
+    highBase: 400,
+    slope2: 0.18,
+    highRef: 642,
+    disability0_25: 1127,   // fiksuotas NPD, 0–25 % darbingumas (2025 carry-over — VERIFY)
+    disability30_55: 1057,  // fiksuotas NPD, 30–55 % darbingumas (2025 carry-over — VERIFY)
+  },
+
+  // ── Sodra (VSD + PSD) ──
+  // Employee 19.5 % split per the spec card; PSD (health) has NO ceiling,
+  // the social-insurance part stops at the 60 VDU annual ceiling.
+  sodra: {
+    employeeSplit: {
+      pension: 0.0872,    // pensijų
+      health: 0.0698,     // sveikatos (PSD) — be lubų
+      sickness: 0.0209,   // ligos / motinystės
+      unemployment: 0.0171, // nedarbo
+    },
+    pensionAccumulationExtra: 0.03, // II pakopa (savanoriška) — ant VSD bazės
+    employer: {
+      openEnded: 0.0177,  // neterminuota sutartis
+      fixedTerm: 0.0249,  // terminuota sutartis (oficialus 2.49 %; spec'o kortelė naudoja 2.77 % — override jei reikia)
+    },
+    ceilingVduYears: 60,  // VSD lubos: 60 VDU per metus (PSD netaikoma)
+  },
+
+  // ── Sickness (NLD): employer pays the first days, Sodra from day 3 ──
+  sickness: {
+    employerCalendarDays: 2,
+    employerPctMin: 0.6206, // darbdavys moka 62,06–100 % vidutinio DU
+    employerPctMax: 1.0,
+    sodraPct: 0.6206,       // Sodra nuo 3 d. — 62,06 % kompensuojamojo uždarbio
+  },
+
+  // ── Vacation (DK 126 str.) ──
+  vacation: {
+    daysPerYear: 20,        // darbo dienos, 5 d. d. savaitė (kai kurioms grupėms 25 — override)
+  },
+
+  // ── Termination (DK 54–57 str.) — severance in months of average pay ──
+  termination: {
+    severance: {
+      'employer-initiative': { under1y: 0.5, over1y: 2 },   // DK 57 str.
+      'employee-important': { under1y: 1, over1y: 2 },      // DK 56 str. (VERIFY)
+      'mutual': { under1y: 0, over1y: 0 },                  // DK 54 str. — pagal susitarimą
+      'resignation': { under1y: 0, over1y: 0 },             // DK 55 str.
+    },
+    // Ilgalaikio darbo išmoka iš Sodros fondo (NOT an employer cost):
+    longTenureFund: [
+      { minMonths: 180, months: 3 },
+      { minMonths: 120, months: 2 },
+      { minMonths: 60, months: 1 },
+    ],
+    noticeDays: {
+      'employer-initiative': { under1y: 14, over1y: 30 },   // kalendorinės dienos
+      'resignation': { under1y: 20, over1y: 20 },
+      'employee-important': { under1y: 5, over1y: 5 },
+      'mutual': { under1y: 0, over1y: 0 },
+    },
+    protectedNoticeMultiplier: 2, // pvz. auginantiems vaiką iki 14 m. (DK 57 str. 7 d.)
+  },
+
+  // ── Deadlines ──
+  payDeadlines: {
+    gpmDayOfNextMonth: 15,   // GPM sumokamas iki kito mėn. 15 d.
+    sodraDayOfNextMonth: 15, // Sodra įmokos — iki kito mėn. 15 d.
+  },
+});
+
+/** Deep-merge user overrides over the 2026 defaults (arrays are replaced). */
+function mergeParams(overrides = {}, base = PARAMS_2026) {
+  if (overrides == null) return base;
+  const out = Array.isArray(base) ? [...base] : { ...base };
+  for (const [k, v] of Object.entries(overrides)) {
+    out[k] = v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])
+      ? mergeParams(v, base[k])
+      : v;
+  }
+  return out;
+}
+
+  // ───────────────────────── payroll.js ─────────────────────────
+// =============================================================================
+// payroll.js — Lithuanian payroll engine (Wave 3)
+// -----------------------------------------------------------------------------
+// Deterministic, dependency-free, fully parameterized. Computes what the twin
+// so far only recorded: GPM with NPD, Sodra employee/employer with the 60 VDU
+// ceiling and optional II-pillar accumulation, full payroll runs with
+// payslips, sick-pay employer/Sodra split, vacation accrual reserves and
+// termination packages — then hands the result to the twin as the
+// `payroll.run.completed` event the ledger and the ◰ Payroll agent already
+// understand.
+//
+// Net is ALWAYS gross − GPM − employee Sodra by construction, so the Wave 2
+// Payroll agent verifies this engine's output line by line.
+// =============================================================================
+
+
+function createPayrollEngine(overrides = {}) {
+  const P = mergeParams(overrides);
+  const employeeRate = Object.values(P.sodra.employeeSplit).reduce((s, r) => s + r, 0); // 0.195
+  const vsdRate = round6(employeeRate - P.sodra.employeeSplit.health);                  // ceiling applies here
+  const monthlyBrackets = P.gpm.brackets.map((b) => ({
+    uptoMonthly: b.uptoAnnual == null ? Infinity : b.uptoAnnual / 12,
+    rate: b.rate,
+  }));
+  const vsdCeilingMonthly = (P.sodra.ceilingVduYears * P.vdu) / 12; // 5 VDU
+  const vsdCeilingAnnual = P.sodra.ceilingVduYears * P.vdu;
+
+  function round6(x) { return Math.round(x * 1e6) / 1e6; }
+
+  // ── NPD ────────────────────────────────────────────────────────────────────
+  function npdMonthly(gross, opts = {}) {
+    if (opts.disability === '0-25') return P.npd.disability0_25;
+    if (opts.disability === '30-55') return P.npd.disability30_55;
+    const f1 = P.npd.max - P.npd.slope1 * Math.max(0, gross - P.mma);
+    const f2 = P.npd.highBase - P.npd.slope2 * Math.max(0, gross - P.npd.highRef);
+    return round2(Math.max(0, f1, f2));
+  }
+
+  // ── GPM: marginal three-tier withholding on (gross − NPD) ─────────────────
+  function gpmMonthly(gross, opts = {}) {
+    const applyNpd = opts.applyNpd !== false;
+    const npd = applyNpd ? Math.min(npdMonthly(gross, opts), gross) : 0;
+    const taxable = round2(Math.max(0, gross - npd));
+    let remaining = taxable;
+    let floor = 0;
+    let gpm = 0;
+    const slices = [];
+    for (const b of monthlyBrackets) {
+      const width = b.uptoMonthly - floor;
+      const slice = Math.max(0, Math.min(remaining, width));
+      if (slice > 0) {
+        gpm += slice * b.rate;
+        slices.push({ rate: b.rate, amount: round2(slice), tax: round2(slice * b.rate) });
+      }
+      remaining -= slice;
+      floor = b.uptoMonthly;
+      if (remaining <= 0) break;
+    }
+    return { npd, taxable, gpm: round2(gpm), slices };
+  }
+
+  // ── Sodra: employee (VSD capped at 60 VDU/yr, PSD uncapped, II pillar) ─────
+  function sodraEmployee(gross, opts = {}) {
+    let vsdBase = gross;
+    let capped = false;
+    if (opts.ytdVsdBase != null) {
+      vsdBase = Math.max(0, Math.min(gross, vsdCeilingAnnual - opts.ytdVsdBase));
+      capped = vsdBase < gross;
+    } else if (gross > vsdCeilingMonthly) {
+      vsdBase = vsdCeilingMonthly; // monthly approximation of the annual ceiling
+      capped = true;
+    }
+    const vsd = round2(vsdBase * vsdRate);
+    const psd = round2(gross * P.sodra.employeeSplit.health);
+    const pension2 = opts.pensionAccumulation ? round2(vsdBase * P.sodra.pensionAccumulationExtra) : 0;
+    return {
+      vsdBase: round2(vsdBase), vsd, psd, pension2, capped,
+      total: round2(vsd + psd + pension2),
+    };
+  }
+
+  function sodraEmployer(gross, opts = {}) {
+    const rate = opts.contractType === 'fixed-term' ? P.sodra.employer.fixedTerm : P.sodra.employer.openEnded;
+    return { rate, amount: round2(gross * rate) };
+  }
+
+  // ── One employee, one month ────────────────────────────────────────────────
+  function calcEmployee(emp) {
+    const gross = round2(emp.gross);
+    const tax = gpmMonthly(gross, emp);
+    const se = sodraEmployee(gross, emp);
+    const er = sodraEmployer(gross, emp);
+    const net = round2(gross - tax.gpm - se.total);
+    const assumptions = [];
+    if (se.capped) assumptions.push('VSD lubos (60 VDU) pritaikytos / VSD ceiling (60 VDU) applied');
+    if (emp.pensionAccumulation) assumptions.push('II pakopos kaupimas 3 % / II-pillar accumulation 3%');
+    if (emp.disability) assumptions.push(`Fiksuotas NPD (darbingumas ${emp.disability} %) / fixed disability NPD`);
+    if (emp.contractType === 'fixed-term') assumptions.push('Terminuota sutartis — darbdavio 2,49 % / fixed-term 2.49%');
+    return {
+      employeeId: emp.employeeId,
+      name: emp.name || emp.employeeId,
+      gross,
+      npd: tax.npd,
+      taxable: tax.taxable,
+      gpm: tax.gpm,
+      gpmSlices: tax.slices,
+      sodraEmployee: se.total,
+      sodraEmployeeDetail: se,
+      sodraEmployer: er.amount,
+      net,
+      employerCost: round2(gross + er.amount),
+      assumptions,
+    };
+  }
+
+  // ── Full payroll run ───────────────────────────────────────────────────────
+  function runPayroll(period, employees, opts = {}) {
+    const lines = employees.map(calcEmployee);
+    const sum = (k) => round2(lines.reduce((s, l) => s + l[k], 0));
+    return {
+      runId: opts.runId || `RUN-${period}`,
+      period,
+      params: { year: P.year, mma: P.mma, vdu: P.vdu },
+      lines,
+      totals: {
+        gross: sum('gross'),
+        npd: sum('npd'),
+        gpm: sum('gpm'),
+        sodraEmployee: sum('sodraEmployee'),
+        sodraEmployer: sum('sodraEmployer'),
+        net: sum('net'),
+        employerCost: sum('employerCost'),
+      },
+      assumptionsLt: 'Mėnesinis išskaičiavimas; metinį perskaičiavimą atlieka VMI. Parametrai konfigūruojami payrollParams.js.',
+      assumptionsEn: 'Monthly withholding; the annual reconciliation is VMI\'s. All parameters configurable in payrollParams.js.',
+    };
+  }
+
+  // ── Payslip (atsiskaitymo lapelis) ─────────────────────────────────────────
+  function buildPayslip(run, employeeId, company = {}) {
+    const l = run.lines.find((x) => x.employeeId === employeeId);
+    if (!l) throw new Error(`No payroll line for ${employeeId} in ${run.runId}`);
+    const d = l.sodraEmployeeDetail;
+    const split = P.sodra.employeeSplit;
+    const vsdParts = [
+      { lt: 'Pensijų soc. draudimas', en: 'Pension insurance', amount: round2(d.vsdBase * split.pension) },
+      { lt: 'Ligos / motinystės draudimas', en: 'Sickness / maternity', amount: round2(d.vsdBase * split.sickness) },
+      { lt: 'Nedarbo draudimas', en: 'Unemployment', amount: round2(d.vsdBase * split.unemployment) },
+    ];
+    // absorb cent drift into the largest part so detail sums to the booked VSD
+    const drift = round2(d.vsd - vsdParts.reduce((s, x) => s + x.amount, 0));
+    if (drift !== 0) vsdParts[0].amount = round2(vsdParts[0].amount + drift);
+    const deductions = [
+      { lt: `GPM (NPD €${l.npd})`, en: `PIT (NPD €${l.npd})`, amount: l.gpm },
+      ...vsdParts,
+      { lt: 'Sveikatos draudimas (PSD)', en: 'Health insurance (PSD)', amount: d.psd },
+      ...(d.pension2 > 0 ? [{ lt: 'II pakopos pensijų kaupimas', en: 'II-pillar pension', amount: d.pension2 }] : []),
+    ];
+    return {
+      runId: run.runId,
+      period: run.period,
+      company: company.name || '',
+      employeeId: l.employeeId,
+      employee: l.name,
+      gross: l.gross,
+      deductions,
+      totalDeductions: round2(l.gross - l.net),
+      net: l.net,
+      employerSodra: l.sodraEmployer,
+      employerCost: l.employerCost,
+      assumptions: l.assumptions,
+    };
+  }
+
+  function renderPayslipText(slip, lang = 'lt') {
+    const lt = lang !== 'en';
+    const W = 46;
+    const row = (label, amount) => `${label.padEnd(W - 12)}${('€' + amount.toFixed(2)).padStart(12)}`;
+    const lines = [
+      (lt ? 'ATSISKAITYMO LAPELIS' : 'PAYSLIP') + ` · ${slip.period}`,
+      `${slip.company}${slip.company ? ' · ' : ''}${slip.employee}`,
+      '-'.repeat(W),
+      row(lt ? 'Priskaičiuota (bruto)' : 'Gross pay', slip.gross),
+      ...slip.deductions.map((dd) => row('  − ' + (lt ? dd.lt : dd.en), dd.amount)),
+      '-'.repeat(W),
+      row(lt ? 'IŠMOKAMA (neto)' : 'NET PAY', slip.net),
+      row(lt ? 'Darbdavio Sodra' : 'Employer Sodra', slip.employerSodra),
+      row(lt ? 'Visa darbo vietos kaina' : 'Total employer cost', slip.employerCost),
+    ];
+    return lines.join('\n');
+  }
+
+  // ── Sickness: employer days 1–2, Sodra from day 3 ─────────────────────────
+  function sickPay({ avgDailyPay, calendarDaysSick, employerPct }) {
+    const pct = Math.min(P.sickness.employerPctMax, Math.max(P.sickness.employerPctMin, employerPct || P.sickness.employerPctMin));
+    const employerDays = Math.min(P.sickness.employerCalendarDays, calendarDaysSick);
+    const sodraDays = Math.max(0, calendarDaysSick - employerDays);
+    return {
+      employerDays,
+      employerPct: pct,
+      employerAmount: round2(avgDailyPay * employerDays * pct),
+      sodraDays,
+      sodraEstimate: round2(avgDailyPay * sodraDays * P.sickness.sodraPct),
+      noteLt: 'Sodra dalis — įvertis: tikslią išmoką Sodra skaičiuoja nuo kompensuojamojo uždarbio su lubomis.',
+      noteEn: 'Sodra part is an estimate: the exact benefit is computed by Sodra from capped compensatory earnings.',
+    };
+  }
+
+  // ── Vacation accrual reserve ───────────────────────────────────────────────
+  function vacationAccrual({ monthsWorked, usedDays = 0, avgDailyPay, contractType }) {
+    const accruedDays = round2(monthsWorked * (P.vacation.daysPerYear / 12));
+    const remainingDays = round2(Math.max(0, accruedDays - usedDays));
+    const liability = round2(remainingDays * avgDailyPay);
+    const er = sodraEmployer(liability, { contractType });
+    return {
+      accruedDays,
+      usedDays,
+      remainingDays,
+      liability,
+      employerSodra: er.amount,
+      totalReserve: round2(liability + er.amount),
+      noteLt: `Kaupiniai: ${remainingDays} d. × €${avgDailyPay} + darbdavio Sodra — atostogų rezervas balansui.`,
+      noteEn: `Reserve: ${remainingDays} days × €${avgDailyPay} + employer Sodra — vacation liability for the balance sheet.`,
+    };
+  }
+
+  // ── Termination package (DK 54–57) ─────────────────────────────────────────
+  function termination({ reason = 'employer-initiative', tenureMonths, avgMonthlyPay, avgDailyPay, unusedVacationDays = 0, protectedCategory = false }) {
+    const sevRule = P.termination.severance[reason];
+    if (!sevRule) throw new Error(`Unknown termination reason: ${reason}`);
+    const over1y = tenureMonths >= 12;
+    const severanceMonths = over1y ? sevRule.over1y : sevRule.under1y;
+    const severance = round2(severanceMonths * avgMonthlyPay);
+    const fund = reason === 'employer-initiative'
+      ? (P.termination.longTenureFund.find((f) => tenureMonths >= f.minMonths) || { months: 0 }).months
+      : 0;
+    const noticeRule = P.termination.noticeDays[reason];
+    const noticeDays = (over1y ? noticeRule.over1y : noticeRule.under1y) * (protectedCategory && reason === 'employer-initiative' ? P.termination.protectedNoticeMultiplier : 1);
+    const vacationCompensation = round2(unusedVacationDays * avgDailyPay);
+    return {
+      reason,
+      severanceMonths,
+      severance,
+      longTenureFundMonths: fund, // mokama iš Sodros fondo, NE darbdavio kaštas
+      noticeDays,
+      vacationCompensation,
+      totalEmployerCost: round2(severance + vacationCompensation),
+      notesLt: [
+        'Išeitinė ir kompensacija už atostogas apmokestinamos GPM; Sodros taikymą išeitinei pasitikrinkite.',
+        fund ? `Ilgalaikio darbo išmoka (${fund} mėn. VDU) mokama iš Sodros fondo — ne darbdavio kaštas.` : '',
+      ].filter(Boolean),
+      notesEn: [
+        'Severance and vacation compensation are subject to PIT; verify Sodra treatment of severance.',
+        fund ? `Long-tenure benefit (${fund} months) is paid by the Sodra fund — not an employer cost.` : '',
+      ].filter(Boolean),
+    };
+  }
+
+  // ── Hand the run to the twin (idempotent) ──────────────────────────────────
+  function ingestRun(twin, run, opts = {}) {
+    const eventId = `evt_payroll_${run.runId}`;
+    if (twin.getEvent(eventId)) {
+      return { alreadyIngested: true, eventId };
+    }
+    const { event, entries } = twin.ingest('payroll.run.completed', {
+      runId: run.runId,
+      period: run.period,
+      lines: run.lines.map((l) => ({
+        employeeId: l.employeeId,
+        gross: l.gross,
+        gpm: l.gpm,
+        sodraEmployee: l.sodraEmployee,
+        sodraEmployer: l.sodraEmployer,
+        net: l.net,
+      })),
+    }, { id: eventId, source: 'payroll-engine' });
+
+    const obligations = [];
+    if (opts.createObligations !== false) {
+      const [y, m] = run.period.split('-').map(Number);
+      const next = new Date(Date.UTC(y, m, 1)); // first day of the next month
+      const due = (day) => `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const mk = (taxType, amount, day) => {
+        const oid = `obl_${taxType.toLowerCase()}_${run.period}`;
+        const oeid = `evt_obl_${taxType.toLowerCase()}_${run.period}`;
+        if (amount <= 0 || twin.getEvent(oeid)) return;
+        twin.ingest('tax.obligation.created', {
+          obligationId: oid, taxType, amount, dueDate: due(day), period: run.period, source: 'payroll-engine',
+        }, { id: oeid, source: 'payroll-engine' });
+        obligations.push({ obligationId: oid, taxType, amount, dueDate: due(day) });
+      };
+      mk('GPM', run.totals.gpm, P.payDeadlines.gpmDayOfNextMonth);
+      mk('SODRA', round2(run.totals.sodraEmployee + run.totals.sodraEmployer), P.payDeadlines.sodraDayOfNextMonth);
+    }
+    return { event, entries, obligations };
+  }
+
+  return {
+    params: P,
+    npdMonthly,
+    gpmMonthly,
+    sodraEmployee,
+    sodraEmployer,
+    calcEmployee,
+    runPayroll,
+    buildPayslip,
+    renderPayslipText,
+    sickPay,
+    vacationAccrual,
+    termination,
+    ingestRun,
+  };
+}
+
+  // ───────────────────────── close.js ─────────────────────────
+// =============================================================================
+// close.js — Continuous Close (Wave 4)
+// -----------------------------------------------------------------------------
+// "Books always ≥95 % ready." Instead of a month-end scramble, the twin scores
+// its own close readiness continuously from weighted checks. Each check:
+//   { id, lt, en, ok, pct (0–100), detail, weight }
+// score = weighted average of pct; blockers = anything below 100.
+//
+// The checks here are twin-native. TaxAI_v17's existing engines (XSD schema,
+// i.MAS gate, i.SAF reconciliation) plug in through opts.external — same
+// shape, merged into the same score — so the merged product reproduces the
+// full FinanceOS checklist without this module knowing about SAF-T files.
+//
+// Closing a period is itself an event ('period.closed'), so WHO closed WHAT
+// at WHICH score is permanent audit history, and replays like everything else.
+// =============================================================================
+
+
+const FINAL_ITEM = new Set(['resolved', 'dismissed', 'overridden']);
+
+function inPeriod(dateStr, period) {
+  return typeof dateStr === 'string' && dateStr.startsWith(period);
+}
+
+/**
+ * Score how ready a period is to close.
+ * @param {object} twin
+ * @param {object} [opts] - { period: 'YYYY-MM', now, inbox, external: [], target }
+ */
+function closeReadiness(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const period = opts.period || now.slice(0, 7);
+  const target = opts.target != null ? opts.target : 95;
+  const checks = [];
+  const C = (id, lt, en, ok, pct, detail, weight) => checks.push({
+    id, lt, en, ok: !!ok, pct: Math.max(0, Math.min(100, Math.round(pct != null ? pct : (ok ? 100 : 0)))), detail, weight: weight || 1,
+  });
+
+  // 1 · General ledger balances (it should by construction — verify anyway)
+  const tb = twin.trialBalance();
+  C('gl', 'DK debetas = kreditas', 'GL debits = credits', tb.balanced, tb.balanced ? 100 : 0,
+    tb.balanced ? 'subalansuota' : 'nesubalansuota', 1.5);
+
+  // 2 · Period entries posted (the heart of a continuous close)
+  const periodEntries = twin.getLedger().filter((e) => inPeriod(e.date, period));
+  const posted = periodEntries.filter((e) => e.status === 'posted').length;
+  C('posted', 'Laikotarpio įrašai užregistruoti', 'Period entries posted',
+    periodEntries.length === 0 || posted === periodEntries.length,
+    periodEntries.length ? (100 * posted) / periodEntries.length : 100,
+    `${posted}/${periodEntries.length}`, 2);
+
+  // 3 · Entry confidence — nothing booked with open doubts
+  const confident = periodEntries.filter((e) => e.confidence >= 0.9).length;
+  C('conf', 'Įrašai be abejonių (pasitikėjimas ≥ 0,9)', 'Entries without caveats (confidence ≥ 0.9)',
+    periodEntries.length === 0 || confident === periodEntries.length,
+    periodEntries.length ? (100 * confident) / periodEntries.length : 100,
+    `${confident}/${periodEntries.length}`, 1);
+
+  // 4 · Inbox worked / no open Critical items (when an inbox is attached)
+  if (opts.inbox) {
+    const items = opts.inbox.list().filter((i) => inPeriod(i.date, period));
+    const done = items.filter((i) => FINAL_ITEM.has(i.status)).length;
+    C('inbox', 'Inbox įvykiai išspręsti', 'Inbox items worked',
+      items.length === 0 || done === items.length,
+      items.length ? (100 * done) / items.length : 100,
+      `${done}/${items.length}`, 1.5);
+    const openCritical = opts.inbox.stats().openCritical;
+    C('critical', 'Nėra atvirų kritinių įvykių', 'No open Critical items',
+      openCritical === 0, openCritical === 0 ? 100 : 0, `${openCritical} atvirų`, 2);
+  } else {
+    const high = twin.getRisks({ now }).filter((r) => r.severity === 'high').length;
+    C('critical', 'Nėra aukštos rizikos indikatorių', 'No high-severity risk indicators',
+      high === 0, high === 0 ? 100 : 0, `${high} TW indikatorių`, 2);
+  }
+
+  // 5 · No missed deadlines
+  const openObl = twin.listEntities('obligation').filter((o) => o.status === 'open');
+  const overdue = openObl.filter((o) => daysBetween(now, o.dueDate) < 0);
+  C('dead', 'Nepraleisti terminai', 'No missed deadlines',
+    overdue.length === 0, overdue.length === 0 ? 100 : 0, `${overdue.length} praleisti`, 1.5);
+
+  // 6 · The period's VAT position is materialized as an obligation (FR0600 basis)
+  const vat = (twin.getSnapshot({ now }).vatByPeriod || {})[period];
+  const vatObl = twin.listEntities('obligation').some((o) => o.taxType === 'VAT' && o.period === period);
+  const vatNeeded = !!vat && vat.net > 0.005;
+  C('vat', 'PVM prievolė laikotarpiui suformuota', 'VAT obligation generated for the period',
+    !vatNeeded || vatObl, !vatNeeded || vatObl ? 100 : 0,
+    vatNeeded ? (vatObl ? 'suformuota' : `trūksta (neto €${vat.net})`) : 'PVM mokėti nereikia', 1);
+
+  // 7 · Evidence completeness — period invoices carry due dates (TW-12)
+  const periodInvoices = twin.listEntities('invoice').filter((i) => inPeriod(i.date, period));
+  const withDue = periodInvoices.filter((i) => i.dueDate).length;
+  C('evidence', 'Sąskaitos su mokėjimo terminais', 'Invoices carry due dates',
+    periodInvoices.length === 0 || withDue === periodInvoices.length,
+    periodInvoices.length ? (100 * withDue) / periodInvoices.length : 100,
+    `${withDue}/${periodInvoices.length}`, 0.5);
+
+  // 8 · External checks injected by the host app (XSD, i.MAS gate, i.SAF …)
+  for (const x of opts.external || []) {
+    C(x.id, x.lt, x.en, x.ok, x.pct, x.detail, x.weight);
+  }
+
+  const wsum = checks.reduce((s, c) => s + c.weight, 0);
+  const score = Math.round(checks.reduce((s, c) => s + c.pct * c.weight, 0) / wsum);
+  const blockers = checks.filter((c) => c.pct < 100).sort((a, b) => b.weight - a.weight || a.pct - b.pct);
+
+  const closedEvent = twin.getEvents().filter((e) => e.type === 'period.closed' && e.payload.period === period).pop() || null;
+
+  return {
+    period,
+    asOf: now,
+    score,
+    target,
+    ready: score >= target,
+    checks,
+    blockers,
+    etaMin: blockers.length * 20,
+    closedAt: closedEvent ? closedEvent.ts : null,
+    closedBy: closedEvent ? closedEvent.payload.actor : null,
+    closedScore: closedEvent ? closedEvent.payload.score : null,
+  };
+}
+
+/**
+ * Record the close as a permanent event. Idempotent — a period closes once;
+ * the event stores who closed it and at what readiness score.
+ */
+function closePeriod(twin, period, actor, opts = {}) {
+  const eventId = `evt_close_${period}`;
+  if (twin.getEvent(eventId)) {
+    return { alreadyClosed: true, event: twin.getEvent(eventId) };
+  }
+  const readiness = closeReadiness(twin, { ...opts, period });
+  if (opts.requireReady && !readiness.ready) {
+    throw new Error(`Period ${period} is not ready to close: ${readiness.score}% < ${readiness.target}%`);
+  }
+  const { event } = twin.ingest('period.closed', {
+    period,
+    actor,
+    score: readiness.score,
+  }, { id: eventId, source: 'close', actor });
+  return { event, score: readiness.score, readiness };
+}
+
+  // ───────────────────────── cockpit.js ─────────────────────────
+// =============================================================================
+// cockpit.js — Executive Cockpit (Wave 4)
+// -----------------------------------------------------------------------------
+// One screen for the owner: KPIs, the deadline radar, the close-readiness
+// score and a morning briefing — every number computed from the twin, never
+// guessed. Two narrative levels, same pattern as Waves 2–3:
+//   dailyBriefing()        — deterministic sentences, zero network
+//   buildBriefingContext() — packaged facts + LT instructions for the
+//                            server-side LLM morning memo
+// =============================================================================
+
+
+function kpi(id, lt, en, value, fmt, extra = {}) {
+  return { id, lt, en, value, fmt, ...extra };
+}
+
+function momTrend(byMonth, period) {
+  const months = Object.keys(byMonth).sort();
+  const idx = months.indexOf(period);
+  const prev = idx > 0 ? months[idx - 1] : months.filter((m) => m < period).pop();
+  if (!prev || Math.abs(byMonth[prev]) <= 1 || byMonth[period] == null) return null;
+  return round2((100 * (byMonth[period] - byMonth[prev])) / Math.abs(byMonth[prev]));
+}
+
+/**
+ * Build the cockpit for a period (defaults to the current month).
+ * @param {object} twin
+ * @param {object} [opts] - { now, period, inbox, external (close checks), target }
+ */
+function buildCockpit(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const period = opts.period || now.slice(0, 7);
+  const snap = twin.getSnapshot({ now });
+  const close = closeReadiness(twin, { now, period, inbox: opts.inbox, external: opts.external, target: opts.target });
+
+  // Overdue receivables
+  const overdueAr = round2(twin.listEntities('invoice')
+    .filter((i) => i.kind === 'sales' && i.total - i.paid > 0.005 && i.dueDate && daysBetween(now, i.dueDate) < 0)
+    .reduce((s, i) => s + (i.total - i.paid), 0));
+
+  // Latest payroll run -> monthly burden
+  const lastRun = twin.getEvents().filter((e) => e.type === 'payroll.run.completed').pop() || null;
+  const payrollBurden = lastRun
+    ? round2(lastRun.payload.lines.reduce((s, l) => s + l.gross + (l.sodraEmployer || 0), 0))
+    : null;
+  const headcount = twin.listEntities('employee').filter((e) => e.status === 'active').length;
+
+  // Customer concentration
+  const customers = twin.listEntities('customer');
+  const invoicedTotal = customers.reduce((s, c) => s + c.totals.invoiced, 0);
+  const top = [...customers].sort((a, b) => b.totals.invoiced - a.totals.invoiced)[0] || null;
+  const topShare = top && invoicedTotal > 0 ? round2((100 * top.totals.invoiced) / invoicedTotal) : null;
+
+  const vat = (snap.vatByPeriod || {})[period] || null;
+  const revenue = snap.revenueByMonth[period] || 0;
+  const expenses = snap.expensesByMonth[period] || 0;
+  const profit = round2(revenue - expenses);
+
+  const kpis = [
+    kpi('cash', 'Pinigai', 'Cash', snap.cash, 'eur'),
+    kpi('revenue', 'Pajamos (mėn.)', 'Revenue (month)', revenue, 'eur', { trend: momTrend(snap.revenueByMonth, period) }),
+    kpi('expenses', 'Sąnaudos (mėn.)', 'Expenses (month)', expenses, 'eur', { trend: momTrend(snap.expensesByMonth, period) }),
+    kpi('profit', 'Rezultatas (mėn.)', 'Result (month)', profit, 'eur'),
+    kpi('margin', 'Marža', 'Margin', revenue > 0 ? round2((100 * profit) / revenue) : null, 'pct'),
+    kpi('ar', 'Pirkėjų skolos', 'Receivables', snap.receivables, 'eur',
+      { subLt: overdueAr > 0 ? `pradelsta €${overdueAr}` : 'pradelstų nėra', subEn: overdueAr > 0 ? `overdue €${overdueAr}` : 'nothing overdue', overdue: overdueAr }),
+    kpi('ap', 'Skolos tiekėjams', 'Payables', snap.payables, 'eur'),
+    kpi('vat', 'PVM (laikot.)', 'VAT (period)', vat ? vat.net : 0, 'eur',
+      { subLt: vat ? `pardavimo €${vat.output} − pirkimo €${vat.input}` : 'PVM judėjimo nėra', subEn: vat ? `output €${vat.output} − input €${vat.input}` : 'no VAT movement' }),
+    kpi('tax', 'Mokesčių ekspozicija', 'Tax exposure', snap.taxLiabilities, 'eur',
+      { subLt: `${snap.openObligationCount} atviros prievolės`, subEn: `${snap.openObligationCount} open obligations` }),
+    kpi('payroll', 'DU našta /mėn.', 'Payroll burden /mo', payrollBurden, 'eur',
+      { subLt: lastRun ? `paskutinis: ${lastRun.payload.period}` : 'paleidimo nebuvo', subEn: lastRun ? `last run: ${lastRun.payload.period}` : 'no runs yet' }),
+    kpi('headcount', 'Darbuotojai', 'Headcount', headcount, 'n'),
+    (() => {
+      // Wave 5: prefer the forecast's modelled burn (cash basis) over the accrual proxy
+      const fc = opts.forecast || null;
+      const burn = fc && fc.monthlyBurn > 0 ? fc.monthlyBurn : snap.monthlyBurn;
+      const months = burn > 0 ? round2(snap.cash / burn) : null;
+      const basis = fc && fc.monthlyBurn > 0 ? fc.burnBasis : 'accrual proxy';
+      return kpi('runway', 'Runway', 'Runway', months, 'mo',
+        { subLt: burn > 0 ? `deginimas €${burn}/mėn. (${basis})` : 'cash-flow teigiamas', subEn: burn > 0 ? `burn €${burn}/mo (${basis})` : 'cash-flow positive' });
+    })(),
+    kpi('topCustomer', 'TOP-1 pirkėjo dalis', 'Top-customer share', topShare, 'pct',
+      { subLt: top ? top.name : '—', subEn: top ? top.name : '—' }),
+    kpi('close', 'Uždarymo parengtis', 'Close readiness', close.score, 'pct',
+      { subLt: `tikslas ≥${close.target} %`, subEn: `target ≥${close.target}%` }),
+  ];
+  if (opts.inbox) {
+    kpis.push(kpi('critical', 'Atviri kritiniai', 'Open critical', opts.inbox.stats().openCritical, 'n',
+      { subLt: 'Autonominė dėžutė', subEn: 'Autonomous Inbox' }));
+  }
+  if (opts.forecast) {
+    kpis.push(kpi('forecastAccuracy', 'Prognozės tikslumas', 'Forecast accuracy', opts.forecast.accuracy, 'pct',
+      { subLt: '3 mėn. backtest', subEn: '3-month backtest' }));
+    kpis.push(kpi('nextVat', 'PVM (kitas mėn.)', 'VAT (next month)', opts.forecast.nextNetVat, 'eur',
+      { subLt: 'prognozė', subEn: 'forecast' }));
+  }
+  if (opts.treasury) {
+    kpis.push(kpi('minCash13w', 'Min. pinigai 13 sav.', 'Min cash 13w', opts.treasury.minWeek ? opts.treasury.minWeek.cum : snap.cash, 'eur',
+      { subLt: opts.treasury.breachWeek ? `NEIGIAMA nuo ${opts.treasury.breachWeek}` : (opts.treasury.minWeek ? opts.treasury.minWeek.label : '—'),
+        subEn: opts.treasury.breachWeek ? `NEGATIVE from ${opts.treasury.breachWeek}` : (opts.treasury.minWeek ? opts.treasury.minWeek.label : '—') }));
+  }
+
+  // Deadline radar: everything open due within 30 days, plus anything overdue
+  const deadlines = twin.listEntities('obligation')
+    .filter((o) => o.status === 'open')
+    .map((o) => ({
+      obligationId: o.id, taxType: o.taxType, amount: round2(o.amount - o.settled),
+      dueDate: o.dueDate, daysLeft: daysBetween(now, o.dueDate), overdue: daysBetween(now, o.dueDate) < 0,
+    }))
+    .filter((o) => o.daysLeft <= 30)
+    .sort((a, b) => a.daysLeft - b.daysLeft);
+
+  const treasury = opts.treasury
+    ? { minWeek: opts.treasury.minWeek, breachWeek: opts.treasury.breachWeek }
+    : null;
+  return { asOf: now, period, kpis, deadlines, close, treasury };
+}
+
+/** Deterministic morning briefing — short sentences, every figure from the cockpit. */
+function dailyBriefing(cockpit, lang = 'lt') {
+  const lt = lang !== 'en';
+  const k = Object.fromEntries(cockpit.kpis.map((x) => [x.id, x]));
+  const eur = (v) => `€${(v || 0).toLocaleString('lt-LT')}`;
+  const out = [];
+
+  out.push(lt
+    ? `Pinigai ${eur(k.cash.value)}${k.runway.value != null ? `, runway ${k.runway.value} mėn.` : ''}`
+    : `Cash ${eur(k.cash.value)}${k.runway.value != null ? `, runway ${k.runway.value} months` : ''}`);
+  if (k.runway.value != null && k.runway.value < 6) {
+    out.push(lt ? `Runway žemiau 6 mėn. saugos ribos` : `Runway below the 6-month safety line`);
+  }
+  if (k.revenue.trend != null) {
+    out.push(lt
+      ? `Pajamos ${k.revenue.trend >= 0 ? '+' : ''}${k.revenue.trend} % mėn./mėn. (${eur(k.revenue.value)})`
+      : `Revenue ${k.revenue.trend >= 0 ? '+' : ''}${k.revenue.trend}% MoM (${eur(k.revenue.value)})`);
+  }
+  if (k.ar.overdue > 0) {
+    out.push(lt ? `Pradelstos pirkėjų skolos ${eur(k.ar.overdue)}` : `Overdue receivables ${eur(k.ar.overdue)}`);
+  }
+  for (const d of cockpit.deadlines.filter((x) => x.daysLeft <= 7)) {
+    out.push(d.overdue
+      ? (lt ? `PRALEISTAS terminas: ${d.taxType} ${eur(d.amount)} (${d.dueDate})` : `MISSED deadline: ${d.taxType} ${eur(d.amount)} (${d.dueDate})`)
+      : (lt ? `Terminas: ${d.taxType} ${eur(d.amount)} iki ${d.dueDate} (liko ${d.daysLeft} d.)` : `Deadline: ${d.taxType} ${eur(d.amount)} by ${d.dueDate} (${d.daysLeft} days)`));
+  }
+  if (cockpit.treasury && cockpit.treasury.breachWeek) {
+    out.push(lt
+      ? `LIKVIDUMO RIZIKA: ${cockpit.treasury.minWeek.label} savaitę pinigai krenta iki €${cockpit.treasury.minWeek.cum.toLocaleString('lt-LT')}`
+      : `LIQUIDITY RISK: cash bottoms at €${cockpit.treasury.minWeek.cum.toLocaleString('lt-LT')} in ${cockpit.treasury.minWeek.label}`);
+  }
+  if (k.critical && k.critical.value > 0) {
+    out.push(lt ? `Inbox'e ${k.critical.value} atviri kritiniai įvykiai` : `${k.critical.value} open critical items in the inbox`);
+  }
+  out.push(lt
+    ? `Uždarymo parengtis ${k.close.value} % (tikslas ${cockpit.close.target} %)${cockpit.close.blockers.length ? ` — kliūčių: ${cockpit.close.blockers.length}` : ''}`
+    : `Close readiness ${k.close.value}% (target ${cockpit.close.target}%)${cockpit.close.blockers.length ? ` — ${cockpit.close.blockers.length} blockers` : ''}`);
+
+  return out.join('. ') + '.';
+}
+
+/**
+ * Package the cockpit for the server-side LLM morning memo.
+ * Same contract as Waves 2–3: this module never calls the network.
+ */
+function buildBriefingContext(twin, opts = {}) {
+  const cockpit = opts.cockpit || buildCockpit(twin, opts);
+  return {
+    language: 'lt',
+    asOf: cockpit.asOf,
+    period: cockpit.period,
+    kpis: cockpit.kpis.map((k) => ({ id: k.id, label: k.lt, value: k.value, fmt: k.fmt, trend: k.trend ?? null, sub: k.subLt || null })),
+    deadlines: cockpit.deadlines,
+    closeReadiness: { score: cockpit.close.score, target: cockpit.close.target, blockers: cockpit.close.blockers.map((b) => ({ id: b.id, lt: b.lt, pct: b.pct, detail: b.detail })) },
+    deterministicBriefing: dailyBriefing(cockpit, 'lt'),
+    instructions: 'Tu esi įmonės finansų direktorius (CFO), rašantis rytinį memo vadovui. Parašyk 4–6 sakinius lietuviškai: likvidumas, svarbiausi pokyčiai, artėjantys terminai ir vienas konkretus šios dienos veiksmas. Naudok TIK pateiktus skaičius — nieko nesugalvok. Be įžangų, be sąrašų, be formatavimo.',
+  };
+}
+
+  // ───────────────────────── forecast.js ─────────────────────────
+// =============================================================================
+// forecast.js — Forecasting (Wave 5)
+// -----------------------------------------------------------------------------
+// No magic: an ordinary-least-squares trend per series, ±1σ residual bands,
+// scenario multipliers, and an accuracy score that is honestly BACKTESTED —
+// the model is fit on the older months and judged on the last three it never
+// saw. Every output says what model produced it.
+// =============================================================================
+
+
+function addMonths(ym, k) {
+  const y = +ym.slice(0, 4);
+  const m = +ym.slice(5, 7) - 1 + k;
+  return `${y + Math.floor(m / 12)}-${String(((m % 12) + 12) % 12 + 1).padStart(2, '0')}`;
+}
+
+/** Ordinary least squares over a numeric series. Returns null below 3 points. */
+function olsFit(ys) {
+  const n = ys.length;
+  if (n < 3) return null;
+  const mx = (n - 1) / 2;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0;
+  let den = 0;
+  ys.forEach((y, x) => { num += (x - mx) * (y - my); den += (x - mx) * (x - mx); });
+  const b = den ? num / den : 0;
+  const a = my - b * mx;
+  const resid = ys.map((y, x) => y - (a + b * x));
+  const sd = Math.sqrt(resid.reduce((s, r) => s + r * r, 0) / Math.max(1, n - 2));
+  return { a, b, sd, n };
+}
+
+const project = (f, i) => (f ? f.a + f.b * (f.n - 1 + i) : 0);
+
+/**
+ * Build the month-by-month history the models train on:
+ * revenue/expenses (accrual, from invoices), payIn/payOut (cash, from
+ * payments), netVat — for every calendar month from the first to the last
+ * with any activity.
+ */
+function monthlySeries(twin, opts = {}) {
+  const snap = twin.getSnapshot({ now: opts.now });
+  const bags = { revenue: snap.revenueByMonth, expenses: snap.expensesByMonth };
+  const payIn = {};
+  const payOut = {};
+  for (const p of twin.listEntities('payment')) {
+    const bag = p.direction === 'in' ? payIn : payOut;
+    const ym = monthOf(p.date);
+    bag[ym] = round2((bag[ym] || 0) + p.amount);
+  }
+  const vat = snap.vatByPeriod || {};
+  const all = [...new Set([
+    ...Object.keys(bags.revenue), ...Object.keys(bags.expenses),
+    ...Object.keys(payIn), ...Object.keys(payOut), ...Object.keys(vat),
+  ])].sort();
+  if (all.length === 0) return { months: [], active: [] };
+
+  const months = [];
+  for (let ym = all[0]; ym <= all[all.length - 1]; ym = addMonths(ym, 1)) {
+    months.push({
+      ym,
+      revenue: bags.revenue[ym] || 0,
+      expenses: bags.expenses[ym] || 0,
+      payIn: payIn[ym] || 0,
+      payOut: payOut[ym] || 0,
+      netVat: vat[ym] ? vat[ym].net : 0,
+    });
+  }
+  const active = months.filter((m) => m.revenue || m.expenses || m.payIn || m.payOut);
+  return { months, active };
+}
+
+/**
+ * Forecast the next `horizon` months.
+ * @param {object} twin
+ * @param {object} [opts] - { horizon: 6, now, scenario: { revMul, costMul } }
+ */
+function buildForecast(twin, opts = {}) {
+  const H = opts.horizon || 6;
+  const S = opts.scenario || {};
+  const { active } = monthlySeries(twin, opts);
+  if (active.length === 0) return null;
+
+  const series = (k) => active.map((m) => m[k]);
+  const fR = olsFit(series('revenue'));
+  const fE = olsFit(series('expenses'));
+  const fV = olsFit(series('netVat'));
+  const lastYm = active[active.length - 1].ym;
+
+  const rows = [];
+  for (let i = 1; i <= H; i++) {
+    const revenue = Math.max(0, project(fR, i)) * (S.revMul || 1);
+    const expenses = Math.max(0, project(fE, i)) * (S.costMul || 1);
+    rows.push({
+      ym: addMonths(lastYm, i),
+      revenue: round2(revenue),
+      revenueBest: round2(Math.max(0, revenue + (fR ? fR.sd : 0))),
+      revenueWorst: round2(Math.max(0, revenue - (fR ? fR.sd : 0))),
+      expenses: round2(expenses),
+      netVat: round2(project(fV, i) * (S.revMul || 1)),
+      net: round2(revenue - expenses),
+    });
+  }
+
+  // Honest accuracy: train on everything but the last 3 months, test on those.
+  let accuracy = null;
+  if (active.length >= 6) {
+    const ys = series('revenue');
+    const train = ys.slice(0, ys.length - 3);
+    const test = ys.slice(-3);
+    const f = olsFit(train);
+    if (f) {
+      let mape = 0;
+      let k = 0;
+      test.forEach((y, i) => {
+        if (Math.abs(y) > 1) { mape += Math.abs((y - (f.a + f.b * (train.length + i))) / y); k += 1; }
+      });
+      if (k) accuracy = Math.max(0, Math.min(100, round2(100 * (1 - mape / k))));
+    }
+  }
+
+  // Burn: cash basis when payments exist, accrual proxy otherwise — disclosed.
+  const hasCash = active.some((m) => m.payIn || m.payOut);
+  const burnSeries = hasCash ? active.map((m) => m.payOut - m.payIn) : active.map((m) => m.expenses - m.revenue);
+  const monthlyBurn = round2(Math.max(0, burnSeries.reduce((s, v) => s + v, 0) / burnSeries.length));
+
+  return {
+    rows,
+    horizon: H,
+    scenario: { revMul: S.revMul || 1, costMul: S.costMul || 1 },
+    accuracy,
+    nextRevenue: rows[0].revenue,
+    nextExpenses: rows[0].expenses,
+    nextNetVat: rows[0].netVat,
+    monthlyBurn,
+    burnBasis: hasCash ? 'cash (payments)' : 'accrual proxy (expenses − revenue)',
+    basisLt: `OLS tendencija per ${active.length} aktyvių mėn.; juostos = ±1σ liekamoji paklaida; tikslumas — 3 mėn. backtest (MAPE).`,
+    basisEn: `OLS trend over ${active.length} active months; bands = ±1σ residual error; accuracy — 3-month backtest (MAPE).`,
+  };
+}
+
+/** Three ready-made scenarios for the UI. */
+const SCENARIOS = [
+  { id: 'base', lt: 'Bazinis', en: 'Base', revMul: 1, costMul: 1 },
+  { id: 'optimistic', lt: 'Optimistinis', en: 'Optimistic', revMul: 1.1, costMul: 0.97 },
+  { id: 'pessimistic', lt: 'Pesimistinis', en: 'Pessimistic', revMul: 0.85, costMul: 1.05 },
+];
+
+  // ───────────────────────── treasury.js ─────────────────────────
+// =============================================================================
+// treasury.js — 13-week cash view + stress tests (Wave 5)
+// -----------------------------------------------------------------------------
+// The classic 13-week treasury sheet, built from facts the twin already
+// holds: open invoices land in the week of their DUE date (overdue lands in
+// week 1), tax obligations on their real deadlines, recurring payroll at
+// month-ends with its taxes on the 15th after, and an estimated VAT point
+// from the forecast — every estimated flow is tagged so the UI can show what
+// is fact and what is model.
+//
+// Stress tests replay the SAME flows deterministically: collections −20 %,
+// receipts two weeks late (DSO +14 d), and losing the top customer — the last
+// one removes that customer's actual open invoices, not a percentage guess.
+// =============================================================================
+
+
+function addDays(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function endOfMonth(ym) {
+  const y = +ym.slice(0, 4);
+  const m = +ym.slice(5, 7);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * Build the weekly cash view.
+ * @param {object} twin
+ * @param {object} [opts] - { now, weeks: 13, forecast: object|false, recurringMonths: 3 }
+ */
+function buildCashView(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const N = opts.weeks || 13;
+  const horizonEnd = addDays(now, N * 7 - 1);
+  const snap = twin.getSnapshot({ now });
+  const assumptions = [];
+
+  // ── Collect every expected flow with provenance ───────────────────────────
+  // flow: { date, amount, dir: 'in'|'out', kind, ref, partyId?, estimated? }
+  const flows = [];
+  let beyond = 0;
+  const put = (flow) => {
+    if (flow.amount <= 0.005) return;
+    if (flow.date > horizonEnd) { beyond += 1; return; }
+    flows.push({ ...flow, date: flow.date < now ? now : flow.date });
+  };
+
+  for (const inv of twin.listEntities('invoice')) {
+    const open = round2(inv.total - inv.paid);
+    if (open <= 0.005) continue;
+    const expected = inv.dueDate || addDays(inv.date, 30);
+    put({
+      date: expected, amount: open, dir: inv.kind === 'sales' ? 'in' : 'out',
+      kind: inv.kind === 'sales' ? 'ar' : 'ap', ref: inv.id, partyId: inv.counterpartyId,
+      estimated: !inv.dueDate,
+    });
+  }
+  for (const o of twin.listEntities('obligation')) {
+    if (o.status !== 'open') continue;
+    put({ date: o.dueDate, amount: round2(o.amount - o.settled), dir: 'out', kind: 'tax', ref: `${o.taxType} ${o.period || ''}`.trim() });
+  }
+
+  // Recurring payroll, projected from the latest run (estimates, labelled)
+  const lastRun = twin.getEvents().filter((e) => e.type === 'payroll.run.completed').pop() || null;
+  if (lastRun) {
+    const L = lastRun.payload.lines;
+    const netTotal = round2(L.reduce((s, l) => s + l.net, 0));
+    const taxTotal = round2(L.reduce((s, l) => s + l.gpm + l.sodraEmployee + (l.sodraEmployer || 0), 0));
+    const months = opts.recurringMonths != null ? opts.recurringMonths : 3;
+    let ym = lastRun.payload.period;
+    for (let i = 1; i <= months; i++) {
+      ym = `${+ym.slice(0, 4) + (+ym.slice(5, 7) === 12 ? 1 : 0)}-${String((+ym.slice(5, 7) % 12) + 1).padStart(2, '0')}`;
+      put({ date: endOfMonth(ym), amount: netTotal, dir: 'out', kind: 'payroll', ref: `DU ${ym}`, estimated: true });
+      put({ date: nextMonthDate(ym, 15), amount: taxTotal, dir: 'out', kind: 'payroll-tax', ref: `GPM+Sodra ${ym}`, estimated: true });
+    }
+    assumptions.push(`Pasikartojantis DU — pagal paskutinį paleidimą ${lastRun.payload.period} (€${netTotal} neto + €${taxTotal} mokesčiai/mėn.).`);
+  }
+
+  // One estimated VAT point from the forecast, beyond materialized obligations
+  const fc = opts.forecast === false ? null : (opts.forecast || buildForecast(twin, { now, horizon: 3 }));
+  if (fc && fc.nextNetVat > 0) {
+    const firstFcPeriod = fc.rows[0].ym;
+    const already = twin.listEntities('obligation').some((o) => o.taxType === 'VAT' && o.period === firstFcPeriod);
+    if (!already) {
+      put({ date: nextMonthDate(firstFcPeriod, 25), amount: fc.nextNetVat, dir: 'out', kind: 'vat-forecast', ref: `PVM ${firstFcPeriod} (prognozė)`, estimated: true });
+      assumptions.push(`PVM prognozė €${fc.nextNetVat} už ${firstFcPeriod} — 25 d. terminas (modelis, ne prievolė).`);
+    }
+  }
+  if (beyond) assumptions.push(`${beyond} srautai vėliau nei ${N} sav. horizontas — neįtraukti.`);
+
+  // ── Aggregate into weeks and run the cumulative line ──────────────────────
+  const weekOf = (d) => Math.min(N - 1, Math.max(0, Math.floor(daysBetween(now, d) / 7)));
+  const buildWeeks = (flowList) => {
+    const W = Array.from({ length: N }, (_, i) => ({
+      w: i + 1, label: `W${i + 1}`, from: addDays(now, i * 7), to: addDays(now, i * 7 + 6),
+      inflow: 0, outflow: 0,
+    }));
+    for (const f of flowList) W[weekOf(f.date)][f.dir === 'in' ? 'inflow' : 'outflow'] += f.amount;
+    let cum = snap.cash;
+    let minWeek = null;
+    let breachWeek = null;
+    for (const r of W) {
+      r.inflow = round2(r.inflow);
+      r.outflow = round2(r.outflow);
+      r.net = round2(r.inflow - r.outflow);
+      cum = round2(cum + r.net);
+      r.cum = cum;
+      if (minWeek === null || r.cum < minWeek.cum) minWeek = r;
+      if (r.cum < 0 && breachWeek === null) breachWeek = r.label;
+    }
+    return { weeks: W, minWeek, breachWeek };
+  };
+
+  const base = buildWeeks(flows);
+
+  // ── Deterministic stress tests over the same flows ────────────────────────
+  const topCustomer = [...twin.listEntities('customer')].sort((a, b) => b.totals.invoiced - a.totals.invoiced)[0] || null;
+  const runStress = (id, lt, en, mutate) => {
+    const r = buildWeeks(mutate(flows));
+    return { id, lt, en, min: r.minWeek ? r.minWeek.cum : snap.cash, breachWeek: r.breachWeek };
+  };
+  const stress = [
+    runStress('base', 'Bazinis', 'Base', (F) => F),
+    runStress('coll-20', 'Surinkimas −20 %', 'Collections −20%',
+      (F) => F.map((f) => (f.dir === 'in' ? { ...f, amount: round2(f.amount * 0.8) } : f))),
+    runStress('dso+14', 'Įplaukos vėluoja 2 sav. (DSO +14 d.)', 'Receipts 2 weeks late (DSO +14d)',
+      (F) => F.map((f) => (f.dir === 'in' ? { ...f, date: addDays(f.date, 14) > horizonEnd ? horizonEnd : addDays(f.date, 14) } : f))),
+    runStress('top1', topCustomer ? `Netenkam TOP-1 pirkėjo (${topCustomer.name})` : 'Netenkam TOP-1 pirkėjo', 'Losing the top customer',
+      (F) => (topCustomer ? F.filter((f) => !(f.kind === 'ar' && f.partyId === topCustomer.id)) : F)),
+  ];
+
+  // ── Ratios (disclosed heuristics) ─────────────────────────────────────────
+  const last3 = (bag) => {
+    const keys = Object.keys(bag).sort().slice(-3);
+    return keys.reduce((s, k) => s + bag[k], 0);
+  };
+  const rev3 = last3(snap.revenueByMonth);
+  const exp3 = last3(snap.expensesByMonth);
+  const dso = rev3 > 0 ? round2((snap.receivables / rev3) * 90) : null;
+  const dpo = exp3 > 0 ? round2((snap.payables / exp3) * 90) : null;
+  const curLiab = round2(snap.payables + snap.taxLiabilities);
+  const workingCapital = round2(snap.cash + snap.receivables - curLiab);
+  const currentRatio = curLiab > 0 ? round2((snap.cash + snap.receivables) / curLiab) : null;
+  assumptions.push('DSO/DPO — likutis / 3 mėn. apyvarta × 90 d.; apyvartinis kapitalas = pinigai + pirkėjų skolos − (tiekėjai + mokesčiai).');
+
+  return {
+    asOf: now,
+    cash: snap.cash,
+    weeks: base.weeks,
+    minWeek: base.minWeek,
+    breachWeek: base.breachWeek,
+    stress,
+    flows,
+    dso,
+    dpo,
+    workingCapital,
+    currentRatio,
+    assumptions,
+  };
+}
+
+  // ───────────────────────── fraudScan.js ─────────────────────────
+// =============================================================================
+// fraudScan.js — Portfolio fraud scan (Wave 6)
+// -----------------------------------------------------------------------------
+// The ◐ Fraud agent judges one event at a time; this scan looks across the
+// whole book for patterns no single document reveals: vendors sharing
+// registration details, sizable payments to nobody in particular, big items
+// stuck before their second signature, a first-digit distribution that
+// stopped obeying Benford, and a weekend-dating habit.
+//
+// score = min(100, Σ severity points: Critical 35 · High 20 · Medium 10).
+// Every item names its refs so the UI can deep-link straight to the evidence.
+// =============================================================================
+
+
+const POINTS = { Critical: 35, High: 20, Medium: 10 };
+const FINAL_ITEM_FRAUDSCAN = new Set(['resolved', 'dismissed', 'overridden']);
+const BENFORD = Array.from({ length: 9 }, (_, i) => Math.log10(1 + 1 / (i + 1)));
+
+/**
+ * Scan the whole twin for portfolio-level fraud patterns.
+ * @param {object} twin
+ * @param {object} [opts] - { inbox, now, benfordMinSample: 30 }
+ */
+function scanFraud(twin, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const items = [];
+  const add = (id, severity, lt, en, detail, refs) => items.push({ id, severity, lt, en, detail, refs: refs || [] });
+
+  // 1 · Vendors sharing registration details (classic shell pattern)
+  const byVat = new Map();
+  for (const v of twin.listEntities('vendor')) {
+    if (!v.vatCode) continue;
+    if (!byVat.has(v.vatCode)) byVat.set(v.vatCode, []);
+    byVat.get(v.vatCode).push(v);
+  }
+  for (const [vat, group] of byVat) {
+    if (group.length > 1) {
+      add('shared-details', 'Critical',
+        `Bendri rekvizitai tarp tiekėjų: ${group.map((g) => g.name).join(' · ')}`,
+        `Vendors share registration details: ${group.map((g) => g.name).join(' · ')}`,
+        `PVM kodas ${vat} — ${group.length} skirtingos kortelės`, group.map((g) => g.id));
+    }
+  }
+
+  // 2 · Ghost payments: sizable outflows with no invoice or obligation behind them
+  const ghosts = twin.listEntities('payment')
+    .filter((p) => p.direction === 'out' && p.amount >= 2000 && p.unallocated >= p.amount - 0.005);
+  if (ghosts.length) {
+    add('ghost-payments', 'High',
+      `Mokėjimai be kontrahento (galimi „šešėliniai" gavėjai)`,
+      'Payments with no counterparty (possible ghost payees)',
+      `${ghosts.length} mokėjimai ≥ €2 000 be sąskaitos ar prievolės (Σ €${round2(ghosts.reduce((s, p) => s + p.amount, 0))})`,
+      ghosts.slice(0, 5).map((p) => p.id));
+  }
+
+  // 3 · Dual approvals pending (policy-bypass exposure) — needs the inbox
+  if (opts.inbox) {
+    const pending = opts.inbox.list().filter((i) => i.policy === 'dual' && !FINAL_ITEM_FRAUDSCAN.has(i.status));
+    if (pending.length) {
+      add('dual-pending', 'Medium',
+        'Laukia dvigubo patvirtinimo (politikos apėjimo rizika)',
+        'Awaiting dual approval (policy-bypass exposure)',
+        `${pending.length} įvykiai ≥ €10 000 be antrojo parašo`, pending.slice(0, 3).map((i) => i.id));
+    }
+  }
+
+  // 4 · Benford first-digit drift over all posted ledger amounts
+  const minSample = opts.benfordMinSample != null ? opts.benfordMinSample : 30;
+  const amounts = twin.getLedger().flatMap((e) => e.lines.map((l) => Math.max(l.debit, l.credit))).filter((v) => v >= 1);
+  let benford = { n: amounts.length, mad: null, verdict: 'insufficient' };
+  if (amounts.length >= minSample) {
+    const counts = Array(9).fill(0);
+    for (const v of amounts) counts[Number(String(Math.abs(v)).replace(/[^1-9]*/, '')[0]) - 1] += 1;
+    const mad = counts.reduce((s, c, i) => s + Math.abs(c / amounts.length - BENFORD[i]), 0) / 9;
+    const verdict = mad <= 0.006 ? 'close' : mad <= 0.012 ? 'acceptable' : mad <= 0.015 ? 'marginal' : 'nonconformity';
+    benford = { n: amounts.length, mad: round2(mad * 1000) / 1000, verdict };
+    if (verdict === 'nonconformity' || verdict === 'marginal') {
+      add('benford', verdict === 'nonconformity' ? 'High' : 'Medium',
+        'Benfordo pirmo skaitmens nuokrypis',
+        'Benford first-digit deviation',
+        `MAD ${benford.mad} (${verdict}) iš ${amounts.length} eilučių`, []);
+    }
+  }
+
+  // 5 · Weekend-dating habit across the document flow
+  const invoices = twin.listEntities('invoice');
+  if (invoices.length >= 10) {
+    const wkd = invoices.filter((i) => {
+      const d = new Date(`${i.date}T12:00:00Z`);
+      return !isNaN(d) && (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    });
+    const share = wkd.length / invoices.length;
+    if (share >= 0.2) {
+      add('weekend-pattern', 'Medium',
+        'Įprotis datuoti dokumentus savaitgaliais (TAS 240)',
+        'A habit of weekend-dated documents (ISA 240)',
+        `${wkd.length}/${invoices.length} sąskaitų (${round2(share * 100)} %)`, wkd.slice(0, 5).map((i) => i.id));
+    }
+  }
+
+  const sevRank = { Critical: 0, High: 1, Medium: 2 };
+  items.sort((a, b) => sevRank[a.severity] - sevRank[b.severity]);
+  const score = Math.min(100, items.reduce((s, i) => s + POINTS[i.severity], 0));
+
+  return {
+    scannedAt: now,
+    score,
+    items,
+    benford,
+    basisLt: 'Deterministinis portfelio skenavimas: bendri rekvizitai · mokėjimai be gavėjo · laukiantys dvigubi patvirtinimai · Benfordas · savaitgalių įpročiai.',
+    basisEn: 'Deterministic portfolio scan: shared details · ghost payees · pending dual approvals · Benford · weekend habits.',
+  };
+}
+
+  // ───────────────────────── copilot.js ─────────────────────────
+// =============================================================================
+// copilot.js — CFO Copilot (Wave 6)
+// -----------------------------------------------------------------------------
+// Owner questions, answered deterministically FIRST. "Kodėl krito pajamos?"
+// gets an exact month-over-month decomposition by customer from the twin —
+// not a guess. The LLM is the second layer: buildCopilotContext packages the
+// verified numbers and the deterministic answer so the model only narrates,
+// never invents. Same contract as every other wave: this module never calls
+// the network.
+// =============================================================================
+
+
+const eur = (v) => `€${round2(v ?? 0).toLocaleString('lt-LT')}`;
+
+function norm(q) {
+  return String(q).toLowerCase()
+    .replace(/ą/g, 'a').replace(/č/g, 'c').replace(/ę/g, 'e').replace(/ė/g, 'e')
+    .replace(/į/g, 'i').replace(/š/g, 's').replace(/ų/g, 'u').replace(/ū/g, 'u').replace(/ž/g, 'z');
+}
+
+function detectLang(q) {
+  if (/[ąčęėįšųūž]/i.test(q)) return 'lt';
+  if (/\b(kodel|kiek|kada|kas|kam|kokia|kaip|apie|papasakok|galim\w*|menes\w*|pajamos|pinigai|skol\w*|mokes\w*|rizik\w*|alga|uzdar\w*|prognoz\w*|tiekej\w*|pirkej\w*)\b/i.test(norm(q))) return 'lt';
+  return 'en';
+}
+
+const COPILOT_SUGGESTIONS = [
+  { intent: 'revenue-why', lt: 'Kodėl pasikeitė pajamos?', en: 'Why did revenue change?' },
+  { intent: 'cash', lt: 'Kiek turime pinigų ir kokia runway?', en: 'How much cash and what runway?' },
+  { intent: 'receivables', lt: 'Kas mums skolingas?', en: 'Who owes us?' },
+  { intent: 'deadlines', lt: 'Kada artimiausi mokesčių terminai?', en: 'When are the next tax deadlines?' },
+  { intent: 'concentration', lt: 'Kokia klientų koncentracija?', en: 'How concentrated are our customers?' },
+  { intent: 'close', lt: 'Ar galime uždaryti mėnesį?', en: 'Can we close the month?' },
+  { intent: 'fraud', lt: 'Ar yra sukčiavimo požymių?', en: 'Any fraud signals?' },
+];
+
+/**
+ * Answer an owner question from the twin. Deterministic; returns
+ * { intent, lang, answer, data, needsLlm } — needsLlm is true only when no
+ * intent matched and the LLM fallback (with full grounding) is the next step.
+ */
+function askCopilot(twin, question, opts = {}) {
+  const lang = opts.lang || detectLang(question);
+  const lt = lang === 'lt';
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const t = norm(question);
+  const snap = twin.getSnapshot({ now });
+  const R = (intent, answer, data) => ({ intent, lang, answer, data: data || null, needsLlm: false });
+
+  // ── fraud ──
+  if (/sukc|fraud/.test(t)) {
+    const scan = scanFraud(twin, { inbox: opts.inbox, now });
+    const top = scan.items.slice(0, 3).map((i) => `[${i.severity}] ${lt ? i.lt : i.en}`).join('; ');
+    return R('fraud',
+      lt ? `Sukčiavimo rizikos balas ${scan.score}/100. ${scan.items.length ? `Radiniai: ${top}.` : 'Portfelio lygio požymių nerasta.'}`
+         : `Fraud risk score ${scan.score}/100. ${scan.items.length ? `Findings: ${top}.` : 'No portfolio-level signals found.'}`,
+      scan);
+  }
+
+  // ── revenue change: exact MoM decomposition by customer ──
+  if (/pajam|revenue|apyvart/.test(t)) {
+    const months = Object.entries(snap.revenueByMonth).filter(([, v]) => v !== 0).map(([m]) => m).sort();
+    if (months.length < 2) {
+      return R('revenue-why', lt ? 'Per mažai aktyvių mėnesių pokyčio dekompozicijai.' : 'Not enough active months to decompose the change.');
+    }
+    const [prev, last] = months.slice(-2);
+    const delta = round2(snap.revenueByMonth[last] - snap.revenueByMonth[prev]);
+    const byC = new Map();
+    for (const inv of twin.listEntities('invoice')) {
+      if (inv.kind !== 'sales') continue;
+      const ym = inv.date.slice(0, 7);
+      if (ym !== prev && ym !== last) continue;
+      const r = byC.get(inv.counterpartyId) || { prev: 0, last: 0 };
+      r[ym === prev ? 'prev' : 'last'] += inv.net;
+      byC.set(inv.counterpartyId, r);
+    }
+    const movers = [...byC.entries()]
+      .map(([id, r]) => ({ name: (twin.getEntity('customer', id) || { name: id }).name, delta: round2(r.last - r.prev) }))
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 3);
+    const moversTxt = movers.map((m) => `${m.name} ${m.delta >= 0 ? '+' : ''}${eur(m.delta)}`).join('; ');
+    return R('revenue-why',
+      lt ? `Pajamos ${prev} → ${last}: ${eur(snap.revenueByMonth[prev])} → ${eur(snap.revenueByMonth[last])} (Δ ${eur(delta)}). Didžiausi veiksniai: ${moversTxt}.`
+         : `Revenue ${prev} → ${last}: ${eur(snap.revenueByMonth[prev])} → ${eur(snap.revenueByMonth[last])} (Δ ${eur(delta)}). Top movers: ${moversTxt}.`,
+      { prev, last, delta, movers });
+  }
+
+  // ── customer concentration (+HHI) ──
+  if (/koncentr|concentration|klient.*dal|top.*(pirkej|customer)/.test(t)) {
+    const customers = twin.listEntities('customer');
+    const total = customers.reduce((s, c) => s + c.totals.invoiced, 0);
+    if (!total) return R('concentration', lt ? 'Pardavimų dar nėra.' : 'No sales yet.');
+    const shares = customers.map((c) => ({ name: c.name, share: round2((100 * c.totals.invoiced) / total) }))
+      .sort((a, b) => b.share - a.share);
+    const hhi = round2(shares.reduce((s, c) => s + c.share * c.share, 0));
+    const top3 = shares.slice(0, 3).map((c) => `${c.name} ${c.share} %`).join('; ');
+    return R('concentration',
+      (lt ? `Koncentracija: ${top3}. HHI ${hhi}` : `Concentration: ${top3}. HHI ${hhi}`)
+      + (shares[0].share >= 20 ? (lt ? ' — TOP-1 viršija 20 % ribą.' : ' — top-1 exceeds the 20% threshold.') : '.'),
+      { shares, hhi });
+  }
+
+  // ── cash / runway / liquidity ──
+  if (/runway|pinig|cash|likvid|isgyven|how long/.test(t)) {
+    const fc = opts.forecast || null;
+    const burn = fc && fc.monthlyBurn > 0 ? fc.monthlyBurn : snap.monthlyBurn;
+    const basis = fc && fc.monthlyBurn > 0 ? fc.burnBasis : 'accrual proxy';
+    const runway = burn > 0 ? round2(snap.cash / burn) : null;
+    let answer = runway == null
+      ? (lt ? `Grynieji ${eur(snap.cash)}; vidutinis deginimas ≤ 0 — runway neribojamas.` : `Cash ${eur(snap.cash)}; average burn ≤ 0 — runway unconstrained.`)
+      : (lt ? `Grynieji ${eur(snap.cash)} ÷ deginimas ${eur(burn)}/mėn. (${basis}) → runway ≈ ${runway} mėn.` : `Cash ${eur(snap.cash)} ÷ burn ${eur(burn)}/mo (${basis}) → runway ≈ ${runway} months.`);
+    if (opts.treasury && opts.treasury.breachWeek) {
+      answer += lt ? ` ĮSPĖJIMAS: 13 sav. linija neigiama nuo ${opts.treasury.breachWeek} (min ${eur(opts.treasury.minWeek.cum)}).`
+                   : ` WARNING: the 13-week line goes negative from ${opts.treasury.breachWeek} (min ${eur(opts.treasury.minWeek.cum)}).`;
+    }
+    return R('cash', answer, { cash: snap.cash, burn, runway });
+  }
+
+  // ── who owes us / who we owe ──
+  const openByParty = (kind, entityType) => {
+    const map = new Map();
+    for (const inv of twin.listEntities('invoice')) {
+      if (inv.kind !== kind) continue;
+      const open = round2(inv.total - inv.paid);
+      if (open <= 0.005) continue;
+      const r = map.get(inv.counterpartyId) || { name: (twin.getEntity(entityType, inv.counterpartyId) || { name: inv.counterpartyId }).name, open: 0, overdue: 0 };
+      r.open = round2(r.open + open);
+      if (inv.dueDate && daysBetween(now, inv.dueDate) < 0) r.overdue = round2(r.overdue + open);
+      map.set(inv.counterpartyId, r);
+    }
+    return [...map.values()].sort((a, b) => b.open - a.open);
+  };
+  if (/tiekej|payab|mes skoling|we owe/.test(t)) {
+    const rows = openByParty('purchase', 'vendor');
+    const total = round2(rows.reduce((s, r) => s + r.open, 0));
+    const list = rows.slice(0, 5).map((r) => `${r.name} ${eur(r.open)}${r.overdue ? (lt ? ` (pradelsta ${eur(r.overdue)})` : ` (overdue ${eur(r.overdue)})`) : ''}`).join('; ');
+    return R('payables', rows.length
+      ? (lt ? `Skolos tiekėjams ${eur(total)}: ${list}.` : `Payables ${eur(total)}: ${list}.`)
+      : (lt ? 'Atvirų skolų tiekėjams nėra.' : 'No open payables.'), { total, rows });
+  }
+  if (/pirkej|receivab|(mums|man).*skoling|skoling.*(mums|man)|owes? (us|me)|neapmok|pradels/.test(t)) {
+    const rows = openByParty('sales', 'customer');
+    const total = round2(rows.reduce((s, r) => s + r.open, 0));
+    const list = rows.slice(0, 5).map((r) => `${r.name} ${eur(r.open)}${r.overdue ? (lt ? ` (pradelsta ${eur(r.overdue)})` : ` (overdue ${eur(r.overdue)})`) : ''}`).join('; ');
+    return R('receivables', rows.length
+      ? (lt ? `Pirkėjų skolos ${eur(total)}: ${list}.` : `Receivables ${eur(total)}: ${list}.`)
+      : (lt ? 'Atvirų pirkėjų skolų nėra.' : 'No open receivables.'), { total, rows });
+  }
+
+  // ── deadlines ──
+  if (/termin|deadline|kada.*moke|due|moketi iki/.test(t)) {
+    const obls = twin.listEntities('obligation').filter((o) => o.status === 'open')
+      .map((o) => ({ taxType: o.taxType, amount: round2(o.amount - o.settled), dueDate: o.dueDate, daysLeft: daysBetween(now, o.dueDate) }))
+      .sort((a, b) => a.daysLeft - b.daysLeft);
+    const list = obls.slice(0, 5).map((o) => `${o.taxType} ${eur(o.amount)} — ${o.dueDate}${o.daysLeft < 0 ? (lt ? ` (VĖLUOJA ${-o.daysLeft} d.)` : ` (LATE ${-o.daysLeft}d)`) : (lt ? ` (liko ${o.daysLeft} d.)` : ` (${o.daysLeft}d left)`)}`).join('; ');
+    return R('deadlines', obls.length
+      ? (lt ? `Artimiausi terminai: ${list}.` : `Next deadlines: ${list}.`)
+      : (lt ? 'Atvirų mokestinių prievolių nėra.' : 'No open tax obligations.'), { obligations: obls });
+  }
+
+  // ── VAT position ──
+  if (/\bpvm\b|\bvat\b/.test(t)) {
+    const period = now.slice(0, 7);
+    const v = (snap.vatByPeriod || {})[period];
+    return R('vat', v
+      ? (lt ? `PVM ${period}: pardavimo ${eur(v.output)} − pirkimo ${eur(v.input)} = ${eur(v.net)} ${v.net >= 0 ? 'mokėtina' : 'grąžintina'}.`
+            : `VAT ${period}: output ${eur(v.output)} − input ${eur(v.input)} = ${eur(v.net)} ${v.net >= 0 ? 'payable' : 'refundable'}.`)
+      : (lt ? `${period} PVM judėjimo dar nėra.` : `No VAT movement for ${period} yet.`), v || null);
+  }
+
+  // ── payroll ──
+  if (/\balg|darbo uzmok|payroll|atlygin|salar/.test(t)) {
+    const run = twin.getEvents().filter((e) => e.type === 'payroll.run.completed').pop();
+    if (!run) return R('payroll', lt ? 'Darbo užmokesčio paleidimų dar nebuvo.' : 'No payroll runs yet.');
+    const L = run.payload.lines;
+    const gross = round2(L.reduce((s, l) => s + l.gross, 0));
+    const cost = round2(L.reduce((s, l) => s + l.gross + (l.sodraEmployer || 0), 0));
+    const taxes = round2(L.reduce((s, l) => s + l.gpm + l.sodraEmployee + (l.sodraEmployer || 0), 0));
+    return R('payroll',
+      lt ? `Paskutinis DU paleidimas ${run.payload.period}: ${L.length} darbuotojai, bruto ${eur(gross)}, visa kaina ${eur(cost)}, GPM+Sodra ${eur(taxes)} (terminai — kito mėn. 15 d.).`
+         : `Last payroll ${run.payload.period}: ${L.length} employees, gross ${eur(gross)}, total cost ${eur(cost)}, GPM+Sodra ${eur(taxes)} (due the 15th).`,
+      { period: run.payload.period, employees: L.length, gross, cost, taxes });
+  }
+
+  // ── close readiness ──
+  if (/uzdar|close|parengt|readiness/.test(t)) {
+    const r = closeReadiness(twin, { now, inbox: opts.inbox });
+    const blockers = r.blockers.slice(0, 4).map((b) => `${lt ? b.lt : b.en} (${b.detail})`).join('; ');
+    return R('close',
+      lt ? `Uždarymo parengtis ${r.score} % (tikslas ${r.target} %).${r.blockers.length ? ` Blokuoja: ${blockers}.` : ' Kliūčių nėra — galima uždaryti.'}`
+         : `Close readiness ${r.score}% (target ${r.target}%).${r.blockers.length ? ` Blockers: ${blockers}.` : ' No blockers — ready to close.'}`,
+      r);
+  }
+
+  // ── forecast ──
+  if (/prognoz|forecast|kita(s|i)? men|next month/.test(t)) {
+    const fc = opts.forecast || buildForecast(twin, { now });
+    if (!fc) return R('forecast', lt ? 'Per mažai istorijos prognozei.' : 'Not enough history to forecast.');
+    return R('forecast',
+      lt ? `${fc.rows[0].ym} prognozė: pajamos ${eur(fc.nextRevenue)} (±${eur(fc.rows[0].revenue - fc.rows[0].revenueWorst)}), sąnaudos ${eur(fc.nextExpenses)}, PVM ${eur(fc.nextNetVat)}.${fc.accuracy != null ? ` Modelio tikslumas (backtest) ${fc.accuracy} %.` : ''}`
+         : `${fc.rows[0].ym} forecast: revenue ${eur(fc.nextRevenue)} (±${eur(fc.rows[0].revenue - fc.rows[0].revenueWorst)}), expenses ${eur(fc.nextExpenses)}, VAT ${eur(fc.nextNetVat)}.${fc.accuracy != null ? ` Backtested accuracy ${fc.accuracy}%.` : ''}`,
+      fc);
+  }
+
+  // ── risks ──
+  if (/rizik|risk/.test(t)) {
+    const risks = twin.getRisks({ now });
+    const top = risks.filter((r) => r.severity === 'critical').concat(risks.filter((r) => r.severity === 'warning')).slice(0, 4);
+    const openCritical = opts.inbox ? opts.inbox.stats().openCritical : null;
+    return R('risk',
+      (lt ? 'Didžiausios rizikos: ' : 'Biggest risks: ')
+      + (top.length ? top.map((r) => `[${r.id}] ${lt ? r.messageLt : r.messageEn}`).join('; ') : (lt ? 'indikatorių nėra' : 'none'))
+      + (openCritical ? (lt ? `. Inbox'e ${openCritical} atviri kritiniai.` : `. ${openCritical} open critical in the inbox.`) : '.'),
+      { risks: top, openCritical });
+  }
+
+  // ── entity lookup by name ──
+  for (const type of ['customer', 'vendor']) {
+    for (const e of twin.listEntities(type)) {
+      if (e.name && e.name.length >= 4 && t.includes(norm(e.name))) {
+        const impact = twin.getImpact(type, e.id, { now });
+        const rels = twin.getRelationships(type, e.id);
+        return R('entity',
+          lt ? `${e.name} (${type === 'customer' ? 'pirkėjas' : 'tiekėjas'}): sąskaitų ${eur(e.totals.invoiced)}, atvira ${eur(impact.outstanding)}, apmokėta ${eur(e.totals.paid)}; ${rels.length} ryšiai dvynyje.`
+             : `${e.name} (${type}): invoiced ${eur(e.totals.invoiced)}, outstanding ${eur(impact.outstanding)}, paid ${eur(e.totals.paid)}; ${rels.length} graph links.`,
+          { type, id: e.id, impact, relationships: rels.length });
+      }
+    }
+  }
+
+  // ── fallback: suggest + hand to the LLM with grounding ──
+  const sugg = COPILOT_SUGGESTIONS.map((s) => (lt ? s.lt : s.en)).join(' · ');
+  return {
+    intent: 'unknown',
+    lang,
+    answer: lt ? `Galiu deterministiškai atsakyti: ${sugg}. Arba perduokite klausimą AI su patikrintais faktais.`
+               : `I can answer deterministically: ${sugg}. Or hand the question to the AI with verified facts.`,
+    data: null,
+    needsLlm: true,
+  };
+}
+
+/**
+ * Package the question + verified facts for the server-side LLM.
+ * The deterministic answer rides along so the model narrates, never invents.
+ */
+function buildCopilotContext(twin, question, opts = {}) {
+  const now = opts.now || new Date().toISOString().slice(0, 10);
+  const det = askCopilot(twin, question, opts);
+  const snap = twin.getSnapshot({ now });
+  return {
+    language: det.lang,
+    asOf: now,
+    question,
+    deterministicAnswer: det.answer,
+    intent: det.intent,
+    data: det.data,
+    grounding: {
+      cash: snap.cash,
+      receivables: snap.receivables,
+      payables: snap.payables,
+      taxLiabilities: snap.taxLiabilities,
+      revenueByMonth: snap.revenueByMonth,
+      openObligations: snap.openObligationCount,
+    },
+    instructions: 'Tu esi CFO copilot. Atsakyk į savininko klausimą 3–5 sakiniais lietuviškai, remdamasis TIK pateiktais faktais ir deterministiniu atsakymu. Jei faktų klausimui nepakanka — taip ir pasakyk, nieko nesugalvok. Be formatavimo, be įžangų.',
+  };
+}
+
+  // ───────────────────────── graph.js ─────────────────────────
+// =============================================================================
+// graph.js — Knowledge Graph explorer (Wave 6)
+// -----------------------------------------------------------------------------
+// Makes the Wave 1 relationship engine visible. Every projector has been
+// drawing typed edges since the first event (ISSUED_TO, PAYS, EMPLOYS,
+// SETTLES …); this module turns them into a renderable view: pick a focus,
+// get its ego network with human labels, money values, statuses and the risk
+// flags that touch each node. No layout engine — geometry belongs to the UI.
+// =============================================================================
+
+
+function enrichNode(twin, key, risksByEntity) {
+  const [type, ...rest] = key.split(':');
+  const id = rest.join(':');
+  const e = type === 'company' ? null : twin.getEntity(type, id);
+  let label = id;
+  let value = null;
+  let status = null;
+  if (type === 'company') label = twin.clientId || 'Įmonė';
+  else if (e) {
+    label = e.name || e.iban || (type === 'obligation' ? `${e.taxType} ${e.period || ''}`.trim() : id);
+    status = e.status || null;
+    value = e.total ?? e.amount ?? e.balance ?? (e.totals && e.totals.invoiced) ?? e.grossSalary ?? e.cost ?? null;
+    if (typeof value === 'object') value = null;
+  }
+  return {
+    key, type, id, label,
+    value: value != null ? round2(value) : null,
+    status,
+    risks: risksByEntity.get(key) || [],
+  };
+}
+
+/**
+ * Build a renderable graph view.
+ * @param {object} twin
+ * @param {object} [opts] - { focus: 'type:id' | {type,id}, depth: 1, now, maxNodes: 150 }
+ * @returns {{ nodes, edges, focus, depth, truncated }}
+ */
+function buildGraphView(twin, opts = {}) {
+  const depth = opts.depth != null ? opts.depth : 1;
+  const maxNodes = opts.maxNodes != null ? opts.maxNodes : 150;
+  const focusKey = opts.focus
+    ? (typeof opts.focus === 'string' ? opts.focus : entityKey(opts.focus.type, opts.focus.id))
+    : null;
+
+  const full = twin.graph();
+  const risksByEntity = new Map();
+  for (const r of twin.getRisks({ now: opts.now })) {
+    if (!r.entity) continue;
+    if (!risksByEntity.has(r.entity)) risksByEntity.set(r.entity, []);
+    risksByEntity.get(r.entity).push({ id: r.id, severity: r.severity });
+  }
+
+  let keep = null; // null = whole graph
+  if (focusKey) {
+    const adj = new Map();
+    const link = (a, b) => { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
+    for (const e of full.edges) { link(e.from, e.to); link(e.to, e.from); }
+    keep = new Map([[focusKey, 0]]);
+    let frontier = [focusKey];
+    for (let d = 1; d <= depth; d++) {
+      const next = [];
+      for (const k of frontier) {
+        for (const n of adj.get(k) || []) {
+          if (!keep.has(n)) { keep.set(n, d); next.push(n); }
+        }
+      }
+      frontier = next;
+    }
+  }
+
+  let nodeKeys = (keep ? [...keep.keys()] : full.nodes.map((n) => n.key));
+  const truncated = nodeKeys.length > maxNodes;
+  if (truncated) nodeKeys = nodeKeys.slice(0, maxNodes);
+  const nodeSet = new Set(nodeKeys);
+
+  const edges = full.edges
+    .filter((e) => nodeSet.has(e.from) && nodeSet.has(e.to))
+    .map((e) => ({ from: e.from, to: e.to, relType: e.type, eventId: e.eventId }));
+
+  const degree = new Map();
+  for (const e of edges) {
+    degree.set(e.from, (degree.get(e.from) || 0) + 1);
+    degree.set(e.to, (degree.get(e.to) || 0) + 1);
+  }
+
+  const nodes = nodeKeys.map((key) => ({
+    ...enrichNode(twin, key, risksByEntity),
+    degree: degree.get(key) || 0,
+    ring: keep ? keep.get(key) : null, // distance from focus (0 = focus)
+  }));
+
+  return { nodes, edges, focus: focusKey, depth, truncated };
+}
+
+/** Trace the evidence path between two entities, enriched for display. */
+function traceConnection(twin, from, to, opts = {}) {
+  const fromKey = typeof from === 'string' ? from : entityKey(from.type, from.id);
+  const toKey = typeof to === 'string' ? to : entityKey(to.type, to.id);
+  const trace = twin.tracePath(fromKey, toKey);
+  if (!trace.found) return { found: false, from: fromKey, to: toKey, nodes: [], hops: [] };
+  const risksByEntity = new Map();
+  for (const r of twin.getRisks({ now: opts.now })) {
+    if (!r.entity) continue;
+    if (!risksByEntity.has(r.entity)) risksByEntity.set(r.entity, []);
+    risksByEntity.get(r.entity).push({ id: r.id, severity: r.severity });
+  }
+  return {
+    found: true,
+    from: fromKey,
+    to: toKey,
+    nodes: trace.path.map((k) => enrichNode(twin, k, risksByEntity)),
+    hops: trace.hops, // [{ from, to, type, eventId }] — every hop names its evidence event
+  };
+}
+
+
+  return { createTwin, createInbox, AGENT_CATALOG, runAgents, eventAmount, policyFor, reviewEvent, buildReviewContext, deterministicBriefing, buildEscalationContext, createPayrollEngine, PARAMS_2026, mergeParams, closeReadiness, closePeriod, buildCockpit, dailyBriefing, buildBriefingContext, buildForecast, monthlySeries, olsFit, SCENARIOS, buildCashView, askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, buildGraphView, traceConnection, scanFraud, serializeTwin, restoreTwin, createLocalStorageAdapter, saveTwin, loadTwin, REL_TYPES, entityKey, COMPANY_KEY, round2, daysBetween, eventLabel, VERSION: "1.5.0-wave6" };
+})();
+
+/* ── Twin UI · TwinExplorer (Wave reference component) ── */
+const TwinExplorer = (() => {
+  const { createTwin } = FinTwin;
+// =============================================================================
+// TwinExplorer.jsx — reference UI for the Financial Digital Twin (Wave 1)
+// -----------------------------------------------------------------------------
+// STATUS: reference component. The engine underneath is fully tested (100/100);
+// this component was written for structure and wiring, not pixel-perfection —
+// restyle it into TaxAI_v17's design system when merging (tokens, fonts,
+// command-palette integration). It is deliberately self-contained: inline
+// styles only, no Tailwind, no external imports beyond React.
+//
+// Usage:
+//   import { createTwin } from '../src/index.js';
+//   <TwinExplorer twin={twin} lang="lt" now="2026-06-12" />
+//
+// Design notes (kept intentionally quiet so it slots under TAXAI's identity):
+// ink-dark panels, gold ledger accent for money, tabular numerals everywhere,
+// monospace for ids/accounts/hashes. The signature element is the evidence
+// trail: every risk and timeline row points back at the events that prove it.
+// =============================================================================
+
+
+const C = {
+  bg: '#0B0F14',
+  panel: '#11161D',
+  panelSoft: '#161D26',
+  border: '#222B36',
+  text: '#E6EDF3',
+  dim: '#8B98A5',
+  faint: '#5C6873',
+  gold: '#E8B339',
+  green: '#3FB68B',
+  red: '#E5484D',
+  blue: '#5B9DD9',
+};
+
+const SEVERITY = { critical: C.red, warning: C.gold, info: C.blue };
+
+const TYPE_LABELS = {
+  customer: { lt: 'Pirkėjai', en: 'Customers' },
+  vendor: { lt: 'Tiekėjai', en: 'Vendors' },
+  invoice: { lt: 'Sąskaitos', en: 'Invoices' },
+  payment: { lt: 'Mokėjimai', en: 'Payments' },
+  employee: { lt: 'Darbuotojai', en: 'Employees' },
+  asset: { lt: 'Turtas', en: 'Assets' },
+  bankAccount: { lt: 'Bankas', en: 'Bank' },
+  obligation: { lt: 'Prievolės', en: 'Obligations' },
+  contract: { lt: 'Sutartys', en: 'Contracts' },
+};
+
+const eur = (v) => (typeof v === 'number'
+  ? `€${v.toLocaleString('lt-LT', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+  : '—');
+
+const mono = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' };
+const nums = { fontVariantNumeric: 'tabular-nums' };
+
+function entityTitle(e) {
+  return e.name || e.iban || e.counterparty || e.taxType && `${e.taxType} ${e.period || ''}`.trim() || e.id;
+}
+
+function Stat({ label, value, tone }) {
+  return (
+    <div style={{ background: C.panelSoft, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', minWidth: 120 }}>
+      <div style={{ color: C.faint, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
+      <div style={{ ...nums, color: tone || C.text, fontSize: 20, fontWeight: 600, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+}
+
+function ImpactStats({ type, impact, lang }) {
+  if (!impact) return null;
+  const L = (lt, en) => (lang === 'en' ? en : lt);
+  const rows = [];
+  if (type === 'customer' || type === 'vendor') {
+    rows.push([L('Išrašyta', 'Invoiced'), eur(impact.invoiced)]);
+    rows.push([L('Apmokėta', 'Paid'), eur(impact.paid)]);
+    rows.push([L('Likutis', 'Outstanding'), eur(impact.outstanding), impact.outstanding > 0 ? C.gold : C.green]);
+    if (impact.overdueCount) rows.push([L('Pradelsta', 'Overdue'), eur(impact.overdueAmount), C.red]);
+    if (impact.avgDaysToPay != null) rows.push([L('Vid. apmokėjimas', 'Avg days to pay'), `${impact.avgDaysToPay} d.`]);
+  } else if (type === 'employee') {
+    rows.push([L('Bruto', 'Gross'), eur(impact.grossSalary)]);
+    rows.push([L('Sąnaudos (YTD)', 'Cost YTD'), eur(impact.ytdTotalCost)]);
+  } else if (type === 'asset') {
+    rows.push([L('Įsigijimo vertė', 'Cost'), eur(impact.cost)]);
+    rows.push([L('Likutinė vertė', 'NBV'), eur(impact.nbv), C.gold]);
+    rows.push([L('Nudėvėta', 'Depreciated'), eur(impact.accumulatedDepreciation)]);
+  } else if (type === 'bankAccount') {
+    rows.push([L('Likutis', 'Balance'), eur(impact.balance), C.gold]);
+    rows.push([L('Įplaukos 30 d.', 'In 30d'), eur(impact.inflow30d), C.green]);
+    rows.push([L('Išlaidos 30 d.', 'Out 30d'), eur(impact.outflow30d), C.red]);
+  } else if (type === 'obligation') {
+    rows.push([L('Suma', 'Amount'), eur(impact.amount)]);
+    rows.push([L('Liko', 'Remaining'), eur(impact.remaining), impact.remaining > 0 ? C.gold : C.green]);
+    rows.push([L('Iki termino', 'Days to due'), `${impact.daysToDue} d.`, impact.daysToDue < 0 ? C.red : C.text]);
+  }
+  return (
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
+      {rows.map(([label, value, tone]) => <Stat key={label} label={label} value={value} tone={tone} />)}
+    </div>
+  );
+}
+
+function TwinExplorer({ twin, lang = 'lt', now }) {
+  const [tick, setTick] = useState(0);
+  const [type, setType] = useState('customer');
+  const [selectedId, setSelectedId] = useState(null);
+
+  useEffect(() => twin.subscribe(() => setTick((t) => t + 1)), [twin]);
+
+  const opts = now ? { now } : {};
+  const L = (lt, en) => (lang === 'en' ? en : lt);
+
+  const snapshot = useMemo(() => twin.getSnapshot(opts), [twin, tick, now]);
+  const risks = useMemo(() => twin.getRisks(opts), [twin, tick, now]);
+  const entities = useMemo(() => twin.listEntities(type), [twin, type, tick]);
+  const selected = selectedId ? twin.getEntity(type, selectedId) : entities[0];
+
+  const detail = selected ? {
+    summary: twin.getSummary(type, selected.id, { ...opts, lang }),
+    impact: twin.getImpact(type, selected.id, opts),
+    timeline: twin.getTimeline(type, selected.id, lang),
+    relationships: twin.getRelationships(type, selected.id),
+    risks: risks.filter((r) => r.entity === `${type}:${selected.id}`),
+  } : null;
+
+  const typeKeys = Object.keys(TYPE_LABELS).filter((t) => twin.listEntities(t).length > 0);
+
+  return (
+    <div style={{ background: C.bg, color: C.text, minHeight: '100vh', padding: 20, fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: 14 }}>
+      {/* Header strip: the company at a glance */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
+        <Stat label={L('Pinigai', 'Cash')} value={eur(snapshot.cash)} tone={C.gold} />
+        <Stat label={L('Gautinos sumos', 'Receivables')} value={eur(snapshot.receivables)} />
+        <Stat label={L('Mokėtinos sumos', 'Payables')} value={eur(snapshot.payables)} />
+        <Stat label={L('Mokesčiai', 'Tax due')} value={eur(snapshot.taxLiabilities)} tone={snapshot.taxLiabilities > 0 ? C.gold : C.green} />
+        <Stat label={L('Rizikos', 'Risks')} value={String(risks.length)} tone={risks.some((r) => r.severity === 'critical') ? C.red : C.text} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '180px 280px 1fr', gap: 14, alignItems: 'start' }}>
+        {/* Entity type rail */}
+        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 8 }}>
+          {typeKeys.map((t) => (
+            <div
+              key={t}
+              onClick={() => { setType(t); setSelectedId(null); }}
+              style={{
+                padding: '8px 10px', borderRadius: 6, cursor: 'pointer', display: 'flex', justifyContent: 'space-between',
+                background: t === type ? C.panelSoft : 'transparent',
+                color: t === type ? C.text : C.dim,
+                borderLeft: t === type ? `2px solid ${C.gold}` : '2px solid transparent',
+              }}
+            >
+              <span>{TYPE_LABELS[t][lang] || t}</span>
+              <span style={{ ...nums, color: C.faint }}>{twin.listEntities(t).length}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Entity list */}
+        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, maxHeight: '70vh', overflowY: 'auto' }}>
+          {entities.map((e) => (
+            <div
+              key={e.id}
+              onClick={() => setSelectedId(e.id)}
+              style={{
+                padding: '9px 10px', borderRadius: 6, cursor: 'pointer',
+                background: selected && e.id === selected.id ? C.panelSoft : 'transparent',
+              }}
+            >
+              <div style={{ fontWeight: 500 }}>{entityTitle(e)}</div>
+              <div style={{ ...mono, color: C.faint, fontSize: 11, marginTop: 2 }}>{e.id}</div>
+            </div>
+          ))}
+          {!entities.length && <div style={{ color: C.faint, padding: 10 }}>{L('Nėra įrašų', 'No records')}</div>}
+        </div>
+
+        {/* Detail */}
+        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18 }}>
+          {selected && detail ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <h2 style={{ margin: 0, fontSize: 20 }}>{entityTitle(selected)}</h2>
+                <span style={{ ...mono, color: C.faint, fontSize: 12 }}>{type}:{selected.id}</span>
+              </div>
+
+              {/* AI summary (deterministic; swap in the Gemini call via twin.getAiContext) */}
+              <p style={{ color: C.dim, lineHeight: 1.55, marginTop: 12, borderLeft: `2px solid ${C.gold}`, paddingLeft: 12 }}>
+                {detail.summary}
+              </p>
+
+              <ImpactStats type={type} impact={detail.impact} lang={lang} />
+
+              {/* Risks with evidence */}
+              {detail.risks.length > 0 && (
+                <div style={{ marginTop: 18 }}>
+                  <div style={{ color: C.faint, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                    {L('Rizikos indikatoriai', 'Risk indicators')}
+                  </div>
+                  {detail.risks.map((r, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 0', borderTop: `1px solid ${C.border}` }}>
+                      <span style={{ ...mono, color: SEVERITY[r.severity], fontSize: 12, minWidth: 52 }}>{r.id}</span>
+                      <span style={{ flex: 1, color: C.text }}>{lang === 'en' ? r.messageEn : r.messageLt}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Timeline — every row is an event, the evidence trail */}
+              <div style={{ marginTop: 18 }}>
+                <div style={{ color: C.faint, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                  {L('Įvykių juosta', 'Timeline')}
+                </div>
+                {detail.timeline.map((t) => (
+                  <div key={t.eventId} style={{ display: 'flex', gap: 12, padding: '7px 0', borderTop: `1px solid ${C.border}` }}>
+                    <span style={{ ...mono, ...nums, color: C.faint, fontSize: 12, minWidth: 78 }}>{t.ts.slice(0, 10)}</span>
+                    <span style={{ color: C.dim, minWidth: 220 }}>{t.label}</span>
+                    <span style={{ flex: 1 }}>{t.detail}</span>
+                    <span style={{ ...mono, color: C.faint, fontSize: 11 }}>{t.eventId.slice(0, 14)}…</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Relationships */}
+              {detail.relationships.length > 0 && (
+                <div style={{ marginTop: 18 }}>
+                  <div style={{ color: C.faint, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                    {L('Ryšiai', 'Relationships')}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {detail.relationships.map((r, i) => (
+                      <span key={i} style={{ ...mono, fontSize: 12, color: C.dim, background: C.panelSoft, border: `1px solid ${C.border}`, borderRadius: 6, padding: '4px 8px' }}>
+                        {r.direction === 'out' ? '→' : '←'} {r.type} · {r.key}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ color: C.faint }}>{L('Pasirinkite įrašą', 'Select a record')}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+  return TwinExplorer;
+})();
+
+/* ── Twin UI · AgentInbox (Wave reference component) ── */
+const AgentInbox = (() => {
+  const { AGENT_CATALOG, deterministicBriefing } = FinTwin;
+// =============================================================================
+// AgentInbox.jsx — reference UI for the Autonomous Inbox (Wave 2)
+// -----------------------------------------------------------------------------
+// Drop-in starting point for TaxAI_v17. Inline styles on purpose (no Tailwind
+// assumptions) — restyle with your design system on merge. Pairs with
+// TwinExplorer.jsx from Wave 1.
+//
+// Props:
+//   twin     — a Wave 1 twin instance
+//   inbox    — createInbox(twin, { autopilot, now })
+//   lang     — 'lt' | 'en'
+//   onEscalate(item) — optional: wire to your server-side Gemini function with
+//                      buildEscalationContext(twin, item)
+// =============================================================================
+
+
+const INK = '#0B0F14';
+const PANEL = '#11161D';
+const LINE = '#1E2630';
+const GOLD = '#E8B339';
+const TEXT = '#D7DEE7';
+const DIM = '#7E8A99';
+
+const SEV_COLOR = { Critical: '#E5484D', High: '#E8923A', Medium: '#E8B339', Low: '#4E9A6F' };
+const STANCE_COLOR = { approve: '#4E9A6F', flag: '#E8923A', block: '#E5484D' };
+const STATUS_LT = {
+  open: 'Laukia', 'awaiting-second': 'Laukia 2-o parašo', blocked: 'Užblokuota',
+  resolved: 'Užregistruota', dismissed: 'Atmesta', overridden: 'Pergyvendinta',
+};
+const STATUS_EN = {
+  open: 'Open', 'awaiting-second': 'Awaiting 2nd', blocked: 'Blocked',
+  resolved: 'Posted', dismissed: 'Dismissed', overridden: 'Overridden',
+};
+
+const AGENT = Object.fromEntries(AGENT_CATALOG.map((a) => [a.id, a]));
+
+function AgentInbox({ twin, inbox, lang = 'lt', onEscalate, actor = 'buhalterė' }) {
+  const [tick, force] = useState(0);
+  const [selectedId, setSelectedId] = useState(null);
+  const [filter, setFilter] = useState('open');
+  const [reason, setReason] = useState('');
+  const lt = lang === 'lt';
+
+  useEffect(() => twin.subscribe(() => force((n) => n + 1)), [twin]);
+
+  const items = useMemo(
+    () => (filter === 'open' ? inbox.list({ open: true }) : filter === 'all' ? inbox.list() : inbox.list({ status: filter })),
+    [inbox, filter, tick]
+  );
+  const selected = selectedId ? inbox.get(selectedId) : items[0];
+  const stats = inbox.stats();
+
+  const act = (decision) => {
+    try {
+      inbox.decide(selected.id, decision, actor, decision === 'override' ? reason : '');
+      setReason('');
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div style={{ background: INK, color: TEXT, minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', display: 'flex' }}>
+      {/* ── Queue ── */}
+      <div style={{ width: 380, borderRight: `1px solid ${LINE}`, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '18px 20px', borderBottom: `1px solid ${LINE}` }}>
+          <div style={{ fontSize: 11, letterSpacing: 2, color: GOLD }}>{lt ? 'AUTONOMINĖ DĖŽUTĖ' : 'AUTONOMOUS INBOX'}</div>
+          <div style={{ fontSize: 12, color: DIM, marginTop: 6 }}>
+            {stats.total} {lt ? 'įvykių' : 'events'} · {stats.openCritical} {lt ? 'kritinių laukia' : 'critical open'} ·
+            {' '}{lt ? 'vid. pasitikėjimas' : 'avg confidence'} {stats.avgConfidence}%
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+            {['open', 'blocked', 'resolved', 'all'].map((f) => (
+              <button key={f} onClick={() => setFilter(f)} style={{
+                background: filter === f ? GOLD : 'transparent', color: filter === f ? INK : DIM,
+                border: `1px solid ${filter === f ? GOLD : LINE}`, borderRadius: 4,
+                padding: '3px 10px', fontSize: 11, cursor: 'pointer',
+              }}>{f === 'open' ? (lt ? 'Laukia' : 'Open') : f === 'blocked' ? (lt ? 'Blokuota' : 'Blocked') : f === 'resolved' ? (lt ? 'Atlikta' : 'Done') : (lt ? 'Visi' : 'All')}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          {items.map((item) => (
+            <div key={item.id} onClick={() => setSelectedId(item.id)} style={{
+              padding: '12px 20px', borderBottom: `1px solid ${LINE}`, cursor: 'pointer',
+              background: selected && selected.id === item.id ? PANEL : 'transparent',
+              borderLeft: `3px solid ${SEV_COLOR[item.severity]}`,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>
+                  {lt ? item.titleLt : item.titleEn}
+                </span>
+                {item.amount > 0 && <span style={{ color: GOLD }}>€{item.amount.toLocaleString('lt-LT')}</span>}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11, color: DIM }}>
+                <span>{item.date} · {item.party}</span>
+                <span style={{ color: SEV_COLOR[item.severity] }}>{(lt ? STATUS_LT : STATUS_EN)[item.status]}</span>
+              </div>
+            </div>
+          ))}
+          {items.length === 0 && <div style={{ padding: 24, color: DIM, fontSize: 13 }}>{lt ? 'Tuščia — viskas sutvarkyta.' : 'Empty — all clear.'}</div>}
+        </div>
+      </div>
+
+      {/* ── Review panel ── */}
+      {selected && (
+        <div style={{ flex: 1, padding: '24px 32px', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{lt ? selected.titleLt : selected.titleEn}</div>
+              <div style={{ fontSize: 12, color: DIM, marginTop: 4 }}>
+                {selected.date} · {selected.party} · {lt ? 'politika' : 'policy'}: {selected.policy}
+                {' '}· {lt ? 'verdiktas' : 'verdict'}: <b style={{ color: SEV_COLOR[selected.severity] }}>{selected.verdict}</b>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 26, color: GOLD, fontWeight: 700 }}>{selected.confidence}%</div>
+              <div style={{ fontSize: 10, color: DIM, letterSpacing: 1 }}>{lt ? 'PASITIKĖJIMAS' : 'CONFIDENCE'}</div>
+            </div>
+          </div>
+
+          {/* Briefing */}
+          <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: 16, marginTop: 18, fontSize: 13, lineHeight: 1.6 }}>
+            {deterministicBriefing(selected, lang)}
+            {onEscalate && selected.verdict !== 'auto' && (
+              <button onClick={() => onEscalate(selected)} style={{
+                display: 'block', marginTop: 10, background: 'transparent', color: GOLD,
+                border: `1px solid ${GOLD}`, borderRadius: 4, padding: '4px 12px', fontSize: 11, cursor: 'pointer',
+              }}>{lt ? '◆ CFO komentaras (AI)' : '◆ CFO narrative (AI)'}</button>
+            )}
+          </div>
+
+          {/* Nine-agent panel */}
+          <div style={{ fontSize: 11, letterSpacing: 2, color: DIM, margin: '22px 0 10px' }}>{lt ? 'DEVYNIŲ AGENTŲ PERŽIŪRA' : 'NINE-AGENT REVIEW'}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 10 }}>
+            {selected.opinions.map((o) => (
+              <div key={o.agentId} style={{ background: PANEL, border: `1px solid ${LINE}`, borderLeft: `3px solid ${STANCE_COLOR[o.stance]}`, borderRadius: 6, padding: '10px 12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span><span style={{ color: GOLD }}>{o.icon}</span> <b>{AGENT[o.agentId][lt ? 'lt' : 'en']}</b></span>
+                  <span style={{ color: STANCE_COLOR[o.stance], textTransform: 'uppercase', fontSize: 10, letterSpacing: 1 }}>{o.stance}</span>
+                </div>
+                <div style={{ fontSize: 12, color: TEXT, marginTop: 6, lineHeight: 1.5 }}>{lt ? o.noteLt : o.noteEn}</div>
+                <div style={{ fontSize: 10, color: DIM, marginTop: 6 }}>{Math.round(o.confidence * 100)}%{o.evidence.length ? ` · ${o.evidence.join(', ')}` : ''}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Actions */}
+          {!['resolved', 'dismissed', 'overridden'].includes(selected.status) && (
+            <div style={{ marginTop: 24, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              {selected.status !== 'blocked' && (
+                <button onClick={() => act('approve')} style={{ background: GOLD, color: INK, border: 'none', borderRadius: 6, padding: '8px 20px', fontWeight: 700, cursor: 'pointer' }}>
+                  {selected.policy === 'dual' && selected.status !== 'awaiting-second'
+                    ? (lt ? 'Tvirtinti (1 iš 2)' : 'Approve (1 of 2)')
+                    : (lt ? 'Tvirtinti ir registruoti' : 'Approve & post')}
+                </button>
+              )}
+              {selected.status === 'blocked' && (
+                <>
+                  <input value={reason} onChange={(e) => setReason(e.target.value)}
+                    placeholder={lt ? 'Pergyvendinimo priežastis…' : 'Override reason…'}
+                    style={{ background: PANEL, border: `1px solid ${LINE}`, color: TEXT, borderRadius: 6, padding: '8px 12px', fontSize: 12, width: 280 }} />
+                  <button onClick={() => act('override')} disabled={!reason} style={{
+                    background: reason ? '#E5484D' : LINE, color: '#fff', border: 'none', borderRadius: 6, padding: '8px 20px', fontWeight: 700, cursor: reason ? 'pointer' : 'not-allowed',
+                  }}>{lt ? 'Pergyvendinti' : 'Override'}</button>
+                </>
+              )}
+              <button onClick={() => act('dismiss')} style={{ background: 'transparent', color: DIM, border: `1px solid ${LINE}`, borderRadius: 6, padding: '8px 20px', cursor: 'pointer' }}>
+                {lt ? 'Atmesti' : 'Dismiss'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+  return AgentInbox;
+})();
+
+/* ── Twin UI · PayrollRunner (Wave reference component) ── */
+const PayrollRunner = (() => {
+  const { createPayrollEngine } = FinTwin;
+// =============================================================================
+// PayrollRunner.jsx — reference UI for the Wave 3 payroll engine
+// -----------------------------------------------------------------------------
+// Drop-in starting point for TaxAI_v17. Inline styles on purpose — restyle
+// with your design system on merge. Pairs with AgentInbox.jsx: after
+// "Perduoti dvyniui", the run appears in the inbox for the nine-agent review.
+//
+// Props:
+//   twin    — a twin instance (optional; without it the runner just computes)
+//   engine  — createPayrollEngine(...) (defaults to 2026 params)
+//   period  — 'YYYY-MM' initial period
+//   company — { name } for payslips
+// =============================================================================
+
+
+const INK = '#0B0F14', PANEL = '#11161D', LINE = '#1E2630', GOLD = '#E8B339', TEXT = '#D7DEE7', DIM = '#7E8A99';
+const cell = { padding: '8px 10px', borderBottom: `1px solid ${LINE}`, fontSize: 12 };
+const input = { background: PANEL, border: `1px solid ${LINE}`, color: TEXT, borderRadius: 4, padding: '6px 8px', fontSize: 12, width: '100%' };
+
+function PayrollRunner({ twin, engine, period: initialPeriod = '2026-05', company = {}, lang = 'lt' }) {
+  const eng = useMemo(() => engine || createPayrollEngine(), [engine]);
+  const lt = lang === 'lt';
+  const [period, setPeriod] = useState(initialPeriod);
+  const [rows, setRows] = useState([{ employeeId: 'E1', name: '', gross: 1153, pensionAccumulation: false, contractType: 'open-ended' }]);
+  const [slipId, setSlipId] = useState(null);
+  const [ingested, setIngested] = useState(null);
+
+  const run = useMemo(() => {
+    try {
+      return eng.runPayroll(period, rows.filter((r) => r.employeeId && r.gross > 0));
+    } catch { return null; }
+  }, [eng, period, rows]);
+
+  const upd = (i, k, v) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const money = (n) => '€' + (n || 0).toLocaleString('lt-LT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const handoff = () => {
+    if (!twin || !run) return;
+    const res = eng.ingestRun(twin, run);
+    setIngested(res.alreadyIngested
+      ? (lt ? 'Šis paleidimas jau perduotas dvyniui.' : 'This run was already handed to the twin.')
+      : (lt ? `Perduota: 1 įvykis, ${res.obligations.length} prievolės. Patvirtinkite Inbox'e.` : `Handed off: 1 event, ${res.obligations.length} obligations. Approve in the Inbox.`));
+  };
+
+  return (
+    <div style={{ background: INK, color: TEXT, minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 32px' }}>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: GOLD }}>{lt ? 'DARBO UŽMOKESČIO VARIKLIS · 2026' : 'PAYROLL ENGINE · 2026'}</div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'center', margin: '14px 0' }}>
+        <label style={{ fontSize: 12, color: DIM }}>{lt ? 'Laikotarpis' : 'Period'}
+          <input style={{ ...input, width: 110, marginLeft: 8 }} value={period} onChange={(e) => setPeriod(e.target.value)} />
+        </label>
+        <button onClick={() => setRows((rs) => [...rs, { employeeId: `E${rs.length + 1}`, name: '', gross: 1153, pensionAccumulation: false, contractType: 'open-ended' }])}
+          style={{ background: 'transparent', color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 4, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}>
+          + {lt ? 'Darbuotojas' : 'Employee'}
+        </button>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', background: PANEL, borderRadius: 8 }}>
+        <thead>
+          <tr style={{ color: DIM, textAlign: 'left', fontSize: 10, letterSpacing: 1 }}>
+            {['ID', lt ? 'Vardas' : 'Name', lt ? 'Bruto' : 'Gross', 'II pak.', lt ? 'Sutartis' : 'Contract', 'NPD', 'GPM', 'Sodra (darb.)', lt ? 'Neto' : 'Net', lt ? 'Kaina' : 'Cost', ''].map((h) => <th key={h} style={cell}>{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const l = run && run.lines.find((x) => x.employeeId === r.employeeId);
+            return (
+              <tr key={i}>
+                <td style={cell}><input style={{ ...input, width: 56 }} value={r.employeeId} onChange={(e) => upd(i, 'employeeId', e.target.value)} /></td>
+                <td style={cell}><input style={{ ...input, width: 130 }} value={r.name} onChange={(e) => upd(i, 'name', e.target.value)} /></td>
+                <td style={cell}><input style={{ ...input, width: 84 }} type="number" value={r.gross} onChange={(e) => upd(i, 'gross', +e.target.value)} /></td>
+                <td style={cell}><input type="checkbox" checked={r.pensionAccumulation} onChange={(e) => upd(i, 'pensionAccumulation', e.target.checked)} /></td>
+                <td style={cell}>
+                  <select style={input} value={r.contractType} onChange={(e) => upd(i, 'contractType', e.target.value)}>
+                    <option value="open-ended">{lt ? 'Neterminuota' : 'Open-ended'}</option>
+                    <option value="fixed-term">{lt ? 'Terminuota' : 'Fixed-term'}</option>
+                  </select>
+                </td>
+                <td style={cell}>{l ? money(l.npd) : '—'}</td>
+                <td style={cell}>{l ? money(l.gpm) : '—'}</td>
+                <td style={cell}>{l ? money(l.sodraEmployee) : '—'}</td>
+                <td style={{ ...cell, color: GOLD, fontWeight: 600 }}>{l ? money(l.net) : '—'}</td>
+                <td style={cell}>{l ? money(l.employerCost) : '—'}</td>
+                <td style={cell}>{l && <button onClick={() => setSlipId(r.employeeId)} style={{ background: 'transparent', color: DIM, border: `1px solid ${LINE}`, borderRadius: 4, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>{lt ? 'Lapelis' : 'Slip'}</button>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        {run && (
+          <tfoot>
+            <tr style={{ fontWeight: 700 }}>
+              <td style={cell} colSpan={5}>{lt ? 'IŠ VISO' : 'TOTAL'} · {run.lines.length} {lt ? 'darbuotojai' : 'employees'}</td>
+              <td style={cell}>{money(run.totals.npd)}</td>
+              <td style={cell}>{money(run.totals.gpm)}</td>
+              <td style={cell}>{money(run.totals.sodraEmployee)}</td>
+              <td style={{ ...cell, color: GOLD }}>{money(run.totals.net)}</td>
+              <td style={cell}>{money(run.totals.employerCost)}</td>
+              <td style={cell} />
+            </tr>
+          </tfoot>
+        )}
+      </table>
+
+      {run && (
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 18 }}>
+          {twin && (
+            <button onClick={handoff} style={{ background: GOLD, color: INK, border: 'none', borderRadius: 6, padding: '9px 22px', fontWeight: 700, cursor: 'pointer' }}>
+              {lt ? 'Perduoti dvyniui (į Inbox)' : 'Hand to the twin (to Inbox)'}
+            </button>
+          )}
+          <span style={{ fontSize: 12, color: DIM }}>
+            {ingested || (lt
+              ? `GPM €${run.totals.gpm.toFixed(2)} ir Sodra €${(run.totals.sodraEmployee + run.totals.sodraEmployer).toFixed(2)} — terminai iki kito mėn. 15 d.`
+              : `GPM €${run.totals.gpm.toFixed(2)} and Sodra €${(run.totals.sodraEmployee + run.totals.sodraEmployer).toFixed(2)} — due by the 15th of next month.`)}
+          </span>
+        </div>
+      )}
+
+      {run && slipId && run.lines.some((l) => l.employeeId === slipId) && (
+        <pre style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: 18, marginTop: 18, fontSize: 12, lineHeight: 1.7, whiteSpace: 'pre', overflowX: 'auto' }}>
+          {eng.renderPayslipText(eng.buildPayslip(run, slipId, company), lang)}
+        </pre>
+      )}
+
+      <div style={{ fontSize: 11, color: DIM, marginTop: 22, maxWidth: 720, lineHeight: 1.6 }}>
+        {lt ? run?.assumptionsLt : run?.assumptionsEn}
+      </div>
+    </div>
+  );
+}
+
+  return PayrollRunner;
+})();
+
+/* ── Twin UI · ExecutiveCockpit (Wave reference component) ── */
+const ExecutiveCockpit = (() => {
+  const { buildCockpit, dailyBriefing, buildBriefingContext, closePeriod } = FinTwin;
+// =============================================================================
+// ExecutiveCockpit.jsx — reference UI for Wave 4
+// -----------------------------------------------------------------------------
+// One screen for the owner. Inline styles on purpose — restyle on merge.
+// Pairs with AgentInbox.jsx (the "critical" tile deep-links there in v17).
+//
+// Props:
+//   twin    — twin instance
+//   inbox   — optional createInbox(...) for inbox-aware checks/KPIs
+//   lang    — 'lt' | 'en'
+//   now     — 'YYYY-MM-DD' (defaults to today)
+//   external— optional extra close checks from v17 engines (XSD, i.MAS gate…)
+//   onAiMemo(context) — optional: wire buildBriefingContext to your Gemini fn
+// =============================================================================
+
+
+const INK = '#0B0F14', PANEL = '#11161D', LINE = '#1E2630', GOLD = '#E8B339', TEXT = '#D7DEE7', DIM = '#7E8A99';
+const GREEN = '#4E9A6F', AMBER = '#E8923A', RED = '#E5484D';
+
+function fmt(v, kind, lt) {
+  if (v == null) return '—';
+  if (kind === 'eur') return '€' + v.toLocaleString('lt-LT', { maximumFractionDigits: 0 });
+  if (kind === 'pct') return v.toLocaleString('lt-LT') + ' %';
+  if (kind === 'mo') return v + (lt ? ' mėn.' : ' mo');
+  return String(v);
+}
+
+function ExecutiveCockpit({ twin, inbox, lang = 'lt', now, external, onAiMemo, actor = 'direktorius' }) {
+  const [tick, force] = useState(0);
+  useEffect(() => twin.subscribe(() => force((n) => n + 1)), [twin]);
+  const lt = lang === 'lt';
+
+  const ck = useMemo(() => buildCockpit(twin, { now, inbox, external }), [twin, inbox, now, external, tick]);
+  const briefing = useMemo(() => dailyBriefing(ck, lang), [ck, lang]);
+  const close = ck.close;
+  const ring = close.score >= close.target ? GREEN : close.score >= 70 ? AMBER : RED;
+
+  const tile = (k) => (
+    <div key={k.id} style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: '14px 16px' }}>
+      <div style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, textTransform: 'uppercase' }}>{lt ? k.lt : k.en}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
+        <span style={{ fontSize: 22, fontWeight: 700, color: k.id === 'close' ? ring : TEXT }}>{fmt(k.value, k.fmt, lt)}</span>
+        {k.trend != null && (
+          <span style={{ fontSize: 12, color: k.trend >= 0 ? GREEN : RED }}>{k.trend >= 0 ? '▲' : '▼'} {Math.abs(k.trend)} %</span>
+        )}
+      </div>
+      {(lt ? k.subLt : k.subEn) && <div style={{ fontSize: 11, color: k.id === 'ar' && k.overdue > 0 ? AMBER : DIM, marginTop: 4 }}>{lt ? k.subLt : k.subEn}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{ background: INK, color: TEXT, minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 32px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div style={{ fontSize: 11, letterSpacing: 2, color: GOLD }}>{lt ? 'VADOVO KABINA' : 'EXECUTIVE COCKPIT'} · {ck.period}</div>
+        <div style={{ fontSize: 11, color: DIM }}>{ck.asOf}</div>
+      </div>
+
+      {/* Morning briefing */}
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderLeft: `3px solid ${GOLD}`, borderRadius: 8, padding: 16, margin: '16px 0', fontSize: 13, lineHeight: 1.7 }}>
+        {briefing}
+        {onAiMemo && (
+          <button onClick={() => onAiMemo(buildBriefingContext(twin, { now, inbox, cockpit: ck }))} style={{
+            display: 'block', marginTop: 10, background: 'transparent', color: GOLD,
+            border: `1px solid ${GOLD}`, borderRadius: 4, padding: '4px 12px', fontSize: 11, cursor: 'pointer',
+          }}>{lt ? '◆ Rytinis AI memo' : '◆ AI morning memo'}</button>
+        )}
+      </div>
+
+      {/* KPI grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 12 }}>
+        {ck.kpis.map(tile)}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16, marginTop: 20 }}>
+        {/* Continuous close */}
+        <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontSize: 11, letterSpacing: 2, color: DIM }}>{lt ? 'NUOLATINIS UŽDARYMAS' : 'CONTINUOUS CLOSE'}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: ring }}>{close.score} %</div>
+          </div>
+          <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+            {close.checks.map((c) => (
+              <div key={c.id}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span>{lt ? c.lt : c.en}</span>
+                  <span style={{ color: c.pct === 100 ? GREEN : c.pct >= 50 ? AMBER : RED }}>{c.detail}</span>
+                </div>
+                <div style={{ height: 4, background: LINE, borderRadius: 2, marginTop: 4 }}>
+                  <div style={{ width: `${c.pct}%`, height: 4, borderRadius: 2, background: c.pct === 100 ? GREEN : c.pct >= 50 ? AMBER : RED }} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 14 }}>
+            {close.closedAt ? (
+              <span style={{ fontSize: 12, color: GREEN }}>
+                ✓ {lt ? 'Uždaryta' : 'Closed'} {close.closedAt.slice(0, 10)} · {close.closedBy} · {close.closedScore} %
+              </span>
+            ) : (
+              <button
+                onClick={() => { try { closePeriod(twin, ck.period, actor, { now, inbox, external }); } catch (e) { alert(e.message); } }}
+                disabled={!close.ready}
+                style={{
+                  background: close.ready ? GOLD : LINE, color: close.ready ? INK : DIM,
+                  border: 'none', borderRadius: 6, padding: '8px 18px', fontWeight: 700,
+                  cursor: close.ready ? 'pointer' : 'not-allowed', fontSize: 12,
+                }}>
+                {lt ? `Uždaryti ${ck.period}` : `Close ${ck.period}`}
+              </button>
+            )}
+            {!close.ready && !close.closedAt && (
+              <span style={{ fontSize: 11, color: DIM }}>
+                {close.blockers.length} {lt ? 'kliūčių · ~' : 'blockers · ~'}{close.etaMin} min
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Deadline radar */}
+        <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: 18 }}>
+          <div style={{ fontSize: 11, letterSpacing: 2, color: DIM }}>{lt ? 'TERMINAI · 30 D.' : 'DEADLINES · 30 D'}</div>
+          <div style={{ marginTop: 10 }}>
+            {ck.deadlines.length === 0 && <div style={{ fontSize: 12, color: DIM }}>{lt ? 'Artimiausių terminų nėra.' : 'Nothing due soon.'}</div>}
+            {ck.deadlines.map((d) => (
+              <div key={d.obligationId} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12 }}>
+                <span>{d.taxType} · {d.dueDate}</span>
+                <span style={{ color: d.overdue ? RED : d.daysLeft <= 5 ? AMBER : TEXT }}>
+                  €{d.amount.toLocaleString('lt-LT')} · {d.overdue ? (lt ? `vėluoja ${-d.daysLeft} d.` : `${-d.daysLeft}d late`) : (lt ? `liko ${d.daysLeft} d.` : `${d.daysLeft}d left`)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+  return ExecutiveCockpit;
+})();
+
+/* ── Twin UI · TreasuryDesk (Wave reference component) ── */
+const TreasuryDesk = (() => {
+  const { buildForecast, SCENARIOS, buildCashView } = FinTwin;
+// =============================================================================
+// TreasuryDesk.jsx — reference UI for Wave 5 (Forecasting + 13-week cash)
+// -----------------------------------------------------------------------------
+// Inline styles on purpose — restyle on merge. No chart libraries: the weekly
+// bars are plain CSS so this drops into the Vite build with zero deps.
+//
+// Props:
+//   twin — twin instance
+//   lang — 'lt' | 'en'
+//   now  — 'YYYY-MM-DD'
+// =============================================================================
+
+
+const INK = '#0B0F14', PANEL = '#11161D', LINE = '#1E2630', GOLD = '#E8B339', TEXT = '#D7DEE7', DIM = '#7E8A99';
+const GREEN = '#4E9A6F', RED = '#E5484D', AMBER = '#E8923A';
+const eur = (v) => '€' + (v ?? 0).toLocaleString('lt-LT', { maximumFractionDigits: 0 });
+
+function TreasuryDesk({ twin, lang = 'lt', now }) {
+  const [tick, force] = useState(0);
+  const [scenarioId, setScenarioId] = useState('base');
+  useEffect(() => twin.subscribe(() => force((n) => n + 1)), [twin]);
+  const lt = lang === 'lt';
+
+  const scenario = SCENARIOS.find((s) => s.id === scenarioId);
+  const fc = useMemo(() => buildForecast(twin, { now, scenario }), [twin, now, scenarioId, tick]);
+  const tre = useMemo(() => buildCashView(twin, { now, forecast: fc }), [twin, now, fc, tick]);
+
+  const maxAbs = Math.max(1, ...tre.weeks.map((w) => Math.abs(w.cum)));
+
+  return (
+    <div style={{ background: INK, color: TEXT, minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 32px' }}>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: GOLD }}>{lt ? 'IŽDAS IR PROGNOZĖS' : 'TREASURY & FORECAST'} · {tre.asOf}</div>
+
+      {/* Ratio strip */}
+      <div style={{ display: 'flex', gap: 24, margin: '14px 0', fontSize: 12, color: DIM, flexWrap: 'wrap' }}>
+        <span>{lt ? 'Pinigai' : 'Cash'} <b style={{ color: TEXT }}>{eur(tre.cash)}</b></span>
+        <span>DSO <b style={{ color: TEXT }}>{tre.dso ?? '—'} d.</b></span>
+        <span>DPO <b style={{ color: TEXT }}>{tre.dpo ?? '—'} d.</b></span>
+        <span>{lt ? 'Apyvartinis kapitalas' : 'Working capital'} <b style={{ color: tre.workingCapital >= 0 ? TEXT : RED }}>{eur(tre.workingCapital)}</b></span>
+        <span>{lt ? 'Einamasis likvidumas' : 'Current ratio'} <b style={{ color: TEXT }}>{tre.currentRatio ?? '—'}</b></span>
+      </div>
+
+      {/* 13-week cumulative cash */}
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 11, letterSpacing: 2, color: DIM }}>{lt ? '13 SAVAIČIŲ PINIGAI (KUMULIATYVIAI)' : '13-WEEK CASH (CUMULATIVE)'}</div>
+          <div style={{ fontSize: 12, color: tre.breachWeek ? RED : GREEN }}>
+            {tre.breachWeek
+              ? (lt ? `NEIGIAMA nuo ${tre.breachWeek}` : `NEGATIVE from ${tre.breachWeek}`)
+              : (lt ? `min ${eur(tre.minWeek.cum)} (${tre.minWeek.label})` : `min ${eur(tre.minWeek.cum)} (${tre.minWeek.label})`)}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 140, marginTop: 14 }}>
+          {tre.weeks.map((w) => (
+            <div key={w.label} title={`${w.label} · +${eur(w.inflow)} / −${eur(w.outflow)} · ${eur(w.cum)}`}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{
+                width: '100%', height: `${Math.max(3, (Math.abs(w.cum) / maxAbs) * 110)}px`,
+                background: w.cum < 0 ? RED : w === tre.minWeek ? AMBER : '#2E6B4F',
+                borderRadius: 3,
+              }} />
+              <div style={{ fontSize: 9, color: DIM }}>{w.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Stress tests */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginTop: 16 }}>
+        {tre.stress.map((s) => (
+          <div key={s.id} style={{ background: PANEL, border: `1px solid ${LINE}`, borderLeft: `3px solid ${s.breachWeek ? RED : GREEN}`, borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>{lt ? s.lt : s.en}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: s.min < 0 ? RED : TEXT, marginTop: 6 }}>{eur(s.min)}</div>
+            <div style={{ fontSize: 11, color: DIM }}>{s.breachWeek ? (lt ? `neigiama nuo ${s.breachWeek}` : `negative from ${s.breachWeek}`) : (lt ? 'be pažeidimo' : 'no breach')}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Forecast */}
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: 18, marginTop: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: 11, letterSpacing: 2, color: DIM }}>{lt ? 'PROGNOZĖ · 6 MĖN.' : 'FORECAST · 6 MO'}</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {SCENARIOS.map((s) => (
+              <button key={s.id} onClick={() => setScenarioId(s.id)} style={{
+                background: scenarioId === s.id ? GOLD : 'transparent', color: scenarioId === s.id ? INK : DIM,
+                border: `1px solid ${scenarioId === s.id ? GOLD : LINE}`, borderRadius: 4, padding: '3px 10px', fontSize: 11, cursor: 'pointer',
+              }}>{lt ? s.lt : s.en}</button>
+            ))}
+          </div>
+        </div>
+        {!fc && <div style={{ fontSize: 12, color: DIM, marginTop: 12 }}>{lt ? 'Per mažai istorijos prognozei.' : 'Not enough history to forecast.'}</div>}
+        {fc && (
+          <>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: DIM, textAlign: 'right', fontSize: 10, letterSpacing: 1 }}>
+                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>{lt ? 'Mėnuo' : 'Month'}</th>
+                  <th style={{ padding: '6px 8px' }}>{lt ? 'Pajamos' : 'Revenue'}</th>
+                  <th style={{ padding: '6px 8px' }}>±1σ</th>
+                  <th style={{ padding: '6px 8px' }}>{lt ? 'Sąnaudos' : 'Expenses'}</th>
+                  <th style={{ padding: '6px 8px' }}>PVM</th>
+                  <th style={{ padding: '6px 8px' }}>{lt ? 'Rezultatas' : 'Net'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fc.rows.map((r) => (
+                  <tr key={r.ym} style={{ borderTop: `1px solid ${LINE}`, textAlign: 'right' }}>
+                    <td style={{ textAlign: 'left', padding: '6px 8px' }}>{r.ym}</td>
+                    <td style={{ padding: '6px 8px', color: GOLD }}>{eur(r.revenue)}</td>
+                    <td style={{ padding: '6px 8px', color: DIM }}>{eur(r.revenueWorst)}–{eur(r.revenueBest)}</td>
+                    <td style={{ padding: '6px 8px' }}>{eur(r.expenses)}</td>
+                    <td style={{ padding: '6px 8px' }}>{eur(r.netVat)}</td>
+                    <td style={{ padding: '6px 8px', color: r.net >= 0 ? GREEN : RED }}>{eur(r.net)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 11, color: DIM, marginTop: 10 }}>
+              {lt ? fc.basisLt : fc.basisEn}
+              {fc.accuracy != null && ` · ${lt ? 'tikslumas' : 'accuracy'}: ${fc.accuracy} %`}
+              {` · ${lt ? 'deginimas' : 'burn'}: €${fc.monthlyBurn}/mėn. (${fc.burnBasis})`}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Assumptions — what is fact and what is model */}
+      <div style={{ fontSize: 11, color: DIM, marginTop: 14, lineHeight: 1.7, maxWidth: 860 }}>
+        {tre.assumptions.map((a, i) => <div key={i}>· {a}</div>)}
+      </div>
+    </div>
+  );
+}
+
+  return TreasuryDesk;
+})();
+
+/* ── Twin UI · CfoCopilot (Wave reference component) ── */
+const CfoCopilot = (() => {
+  const { askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, scanFraud } = FinTwin;
+// =============================================================================
+// CfoCopilot.jsx — reference UI for the Wave 6 copilot + fraud scan
+// -----------------------------------------------------------------------------
+// Inline styles on purpose — restyle on merge. Deterministic answers render
+// instantly; the "AI" button only appears when no intent matched, handing
+// buildCopilotContext to your server-side Gemini function.
+//
+// Props: twin, inbox?, forecast?, treasury?, lang, now, onAskLlm(context)?
+// =============================================================================
+
+
+const INK = '#0B0F14', PANEL = '#11161D', LINE = '#1E2630', GOLD = '#E8B339', TEXT = '#D7DEE7', DIM = '#7E8A99';
+const SEV = { Critical: '#E5484D', High: '#E8923A', Medium: '#E8B339' };
+
+function CfoCopilot({ twin, inbox, forecast, treasury, lang = 'lt', now, onAskLlm }) {
+  const [tick, force] = useState(0);
+  useEffect(() => twin.subscribe(() => force((n) => n + 1)), [twin]);
+  const lt = lang === 'lt';
+
+  const [question, setQuestion] = useState('');
+  const [thread, setThread] = useState([]); // [{ q, r }]
+  const fraud = useMemo(() => scanFraud(twin, { inbox, now }), [twin, inbox, now, tick]);
+
+  const ask = (q) => {
+    if (!q.trim()) return;
+    const r = askCopilot(twin, q, { now, inbox, forecast, treasury, lang: undefined });
+    setThread((th) => [{ q, r }, ...th]);
+    setQuestion('');
+  };
+
+  return (
+    <div style={{ background: INK, color: TEXT, minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 32px', maxWidth: 920 }}>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: GOLD }}>{lt ? 'CFO KOPILOTAS' : 'CFO COPILOT'}</div>
+
+      {/* Fraud pulse */}
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderLeft: `3px solid ${fraud.score >= 35 ? SEV.Critical : fraud.score > 0 ? SEV.High : '#4E9A6F'}`, borderRadius: 8, padding: '12px 16px', margin: '14px 0', fontSize: 12 }}>
+        <b>{lt ? 'Sukčiavimo pulsas' : 'Fraud pulse'}: {fraud.score}/100</b>
+        {fraud.items.length === 0 && <span style={{ color: DIM }}> · {lt ? 'portfelio požymių nerasta' : 'no portfolio signals'}</span>}
+        {fraud.items.slice(0, 3).map((i) => (
+          <div key={i.id} style={{ marginTop: 6, color: DIM }}>
+            <span style={{ color: SEV[i.severity] }}>[{i.severity}]</span> {lt ? i.lt : i.en} <span style={{ opacity: 0.7 }}>— {i.detail}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Ask */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={question} onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && ask(question)}
+          placeholder={lt ? 'Klauskite savo knygų…' : 'Ask your books…'}
+          style={{ flex: 1, background: PANEL, border: `1px solid ${LINE}`, color: TEXT, borderRadius: 8, padding: '12px 14px', fontSize: 14 }} />
+        <button onClick={() => ask(question)} style={{ background: GOLD, color: INK, border: 'none', borderRadius: 8, padding: '0 22px', fontWeight: 700, cursor: 'pointer' }}>→</button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+        {COPILOT_SUGGESTIONS.map((s) => (
+          <button key={s.intent} onClick={() => ask(lt ? s.lt : s.en)} style={{
+            background: 'transparent', color: DIM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '4px 12px', fontSize: 11, cursor: 'pointer',
+          }}>{lt ? s.lt : s.en}</button>
+        ))}
+      </div>
+
+      {/* Thread */}
+      <div style={{ marginTop: 18, display: 'grid', gap: 12 }}>
+        {thread.map(({ q, r }, i) => (
+          <div key={i} style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8, padding: '14px 16px' }}>
+            <div style={{ fontSize: 12, color: DIM }}>{q}</div>
+            <div style={{ fontSize: 14, lineHeight: 1.7, marginTop: 8 }}>{r.answer}</div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 8 }}>
+              <span style={{ fontSize: 10, letterSpacing: 1, color: r.needsLlm ? '#E8923A' : '#4E9A6F' }}>
+                {r.needsLlm ? (lt ? 'INTENTAS NERASTAS' : 'NO INTENT MATCHED') : (lt ? `DETERMINISTINIS · ${r.intent}` : `DETERMINISTIC · ${r.intent}`)}
+              </span>
+              {r.needsLlm && onAskLlm && (
+                <button onClick={() => onAskLlm(buildCopilotContext(twin, q, { now, inbox, forecast, treasury }))} style={{
+                  background: 'transparent', color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 4, padding: '3px 10px', fontSize: 11, cursor: 'pointer',
+                }}>{lt ? '◆ Klausti AI (su faktais)' : '◆ Ask AI (with facts)'}</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+  return CfoCopilot;
+})();
+
+/* ── Twin UI · KnowledgeGraph (Wave reference component) ── */
+const KnowledgeGraph = (() => {
+  const { buildGraphView, REL_TYPES } = FinTwin;
+// =============================================================================
+// KnowledgeGraph.jsx — reference UI for the Wave 6 graph explorer
+// -----------------------------------------------------------------------------
+// Pure SVG, no layout libraries: the focus sits in the center, depth-1
+// neighbors on the inner ring, depth-2 on the outer. Click any node to
+// refocus. Inline styles on purpose — restyle on merge.
+//
+// Props: twin, lang, now, initialFocus ('type:id')
+// =============================================================================
+
+
+const INK = '#0B0F14', PANEL = '#11161D', LINE = '#1E2630', GOLD = '#E8B339', TEXT = '#D7DEE7', DIM = '#7E8A99';
+const TYPE_COLOR = {
+  company: GOLD, customer: '#5BA8E0', vendor: '#9B7EDE', invoice: '#4E9A6F',
+  payment: '#3FBFB0', bankAccount: '#E0C45B', obligation: '#E5484D',
+  employee: '#E08FB8', asset: '#B0B0B0', contract: '#8FA3B8',
+};
+const eur = (v) => (v == null ? '' : '€' + v.toLocaleString('lt-LT', { maximumFractionDigits: 0 }));
+
+function KnowledgeGraph({ twin, lang = 'lt', now, initialFocus = 'company:self' }) {
+  const [tick, force] = useState(0);
+  useEffect(() => twin.subscribe(() => force((n) => n + 1)), [twin]);
+  const lt = lang === 'lt';
+
+  const [focus, setFocus] = useState(initialFocus);
+  const [depth, setDepth] = useState(2);
+  const g = useMemo(() => buildGraphView(twin, { focus, depth, now }), [twin, focus, depth, now, tick]);
+
+  // Radial layout: focus center, ring per distance
+  const W = 880;
+  const H = 560;
+  const cx = W / 2;
+  const cy = H / 2;
+  const positions = useMemo(() => {
+    const pos = new Map();
+    const rings = [0, 150, 260];
+    for (let ring = 0; ring <= depth; ring++) {
+      const ringNodes = g.nodes.filter((n) => n.ring === ring);
+      ringNodes.forEach((n, i) => {
+        if (ring === 0) { pos.set(n.key, { x: cx, y: cy }); return; }
+        const angle = (2 * Math.PI * i) / ringNodes.length - Math.PI / 2;
+        pos.set(n.key, { x: cx + rings[Math.min(ring, 2)] * Math.cos(angle), y: cy + rings[Math.min(ring, 2)] * Math.sin(angle) });
+      });
+    }
+    return pos;
+  }, [g, depth]);
+
+  const focusNode = g.nodes.find((n) => n.key === focus);
+
+  return (
+    <div style={{ background: INK, color: TEXT, minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', padding: '24px 32px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div style={{ fontSize: 11, letterSpacing: 2, color: GOLD }}>{lt ? 'ŽINIŲ GRAFAS' : 'KNOWLEDGE GRAPH'}</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11, color: DIM }}>
+          <span>{lt ? 'gylis' : 'depth'}</span>
+          {[1, 2].map((d) => (
+            <button key={d} onClick={() => setDepth(d)} style={{
+              background: depth === d ? GOLD : 'transparent', color: depth === d ? INK : DIM,
+              border: `1px solid ${depth === d ? GOLD : LINE}`, borderRadius: 4, padding: '2px 10px', cursor: 'pointer',
+            }}>{d}</button>
+          ))}
+          <button onClick={() => setFocus('company:self')} style={{ background: 'transparent', color: DIM, border: `1px solid ${LINE}`, borderRadius: 4, padding: '2px 10px', cursor: 'pointer' }}>
+            ⌂ {lt ? 'įmonė' : 'company'}
+          </button>
+          {g.truncated && <span style={{ color: '#E8923A' }}>{lt ? 'apkarpyta' : 'truncated'}</span>}
+        </div>
+      </div>
+
+      {focusNode && (
+        <div style={{ fontSize: 12, color: DIM, margin: '10px 0' }}>
+          {lt ? 'Fokusas' : 'Focus'}: <b style={{ color: TYPE_COLOR[focusNode.type] || TEXT }}>{focusNode.label}</b>
+          {focusNode.value != null && <> · {eur(focusNode.value)}</>}
+          {focusNode.status && <> · {focusNode.status}</>}
+          {focusNode.risks.length > 0 && <> · <span style={{ color: '#E5484D' }}>{focusNode.risks.map((r) => r.id).join(' ')}</span></>}
+          {' '}· {g.edges.length} {lt ? 'ryšiai' : 'links'}
+        </div>
+      )}
+
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 8 }}>
+        {g.edges.map((e, i) => {
+          const a = positions.get(e.from);
+          const b = positions.get(e.to);
+          if (!a || !b) return null;
+          const mx = (a.x + b.x) / 2;
+          const my = (a.y + b.y) / 2;
+          const rel = REL_TYPES[e.relType];
+          return (
+            <g key={i}>
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={LINE} strokeWidth="1.2" />
+              <text x={mx} y={my - 3} fontSize="8" fill={DIM} textAnchor="middle">{rel ? (lt ? rel.lt : rel.en) : e.relType}</text>
+            </g>
+          );
+        })}
+        {g.nodes.map((n) => {
+          const p = positions.get(n.key);
+          if (!p) return null;
+          const r = n.ring === 0 ? 26 : Math.min(20, 10 + n.degree * 1.5);
+          return (
+            <g key={n.key} onClick={() => setFocus(n.key)} style={{ cursor: 'pointer' }}>
+              <circle cx={p.x} cy={p.y} r={r} fill={INK} stroke={TYPE_COLOR[n.type] || DIM} strokeWidth={n.ring === 0 ? 2.5 : 1.5} />
+              {n.risks.length > 0 && <circle cx={p.x + r - 3} cy={p.y - r + 3} r="4.5" fill="#E5484D" />}
+              <text x={p.x} y={p.y + 3} fontSize="9" fill={TEXT} textAnchor="middle">
+                {n.label.length > 14 ? `${n.label.slice(0, 13)}…` : n.label}
+              </text>
+              {n.value != null && (
+                <text x={p.x} y={p.y + r + 11} fontSize="8" fill={GOLD} textAnchor="middle">{eur(n.value)}</text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+
+      <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 10, color: DIM, flexWrap: 'wrap' }}>
+        {Object.entries(TYPE_COLOR).map(([type, color]) => (
+          <span key={type}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, border: `1.5px solid ${color}`, marginRight: 4 }} />{type}</span>
+        ))}
+        <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: '#E5484D', marginRight: 4 }} />{lt ? 'rizika' : 'risk'}</span>
+      </div>
+    </div>
+  );
+}
+
+  return KnowledgeGraph;
+})();
+
+/* ── SAF-T → Twin bridge: feed the app's parsed file into the event log.
+      Deterministic event ids make re-importing the same file a no-op. ── */
+function ftIngestSaft(twin, parsed) {
+  const out = { sales: 0, purchases: 0, skipped: 0, errors: 0 };
+  if (!parsed) return out;
+  const nameOf = (list, id) => { const hit = (list || []).find((p) => (p.customerID || p.supplierID || p.id) === id); return (hit && (hit.name || hit.companyName)) || id || "?"; };
+  const run = (items, kind) => {
+    for (const i of items || []) {
+      try {
+        const dt = i.documentTotals || {};
+        const vat = dt.taxPayable != null ? dt.taxPayable : 0;
+        const gross = dt.grossTotal != null ? dt.grossTotal : (dt.netTotal != null ? dt.netTotal + vat : null);
+        const net = dt.netTotal != null ? dt.netTotal : (gross != null ? gross - vat : null);
+        const invoiceId = i.invoiceNo || i.id;
+        if (gross == null || net == null || !invoiceId || !i.invoiceDate) { out.skipped++; continue; }
+        const eventId = "evt_saft_" + kind + "_" + String(invoiceId).replace(/[^\w.-]+/g, "_");
+        if (twin.getEvent(eventId)) { out.skipped++; continue; }
+        const party = kind === "sales"
+          ? { customer: { name: nameOf(parsed.customers, i.customerID), code: i.customerID || "" } }
+          : { vendor: { name: nameOf(parsed.suppliers, i.supplierID), code: i.supplierID || "" } };
+        twin.ingest(kind === "sales" ? "sales.invoice.issued" : "purchase.invoice.received", {
+          invoiceId, ...party,
+          net: FinTwin.round2(net), vat: FinTwin.round2(vat), total: FinTwin.round2(gross),
+          date: String(i.invoiceDate).slice(0, 10), dueDate: "",
+        }, { id: eventId, source: "saft-import" });
+        out[kind]++;
+      } catch (e) { out.errors++; }
+    }
+  };
+  run(parsed.sales && parsed.sales.items, "sales");
+  run(parsed.purchases && parsed.purchases.items, "purchases");
+  return out;
+}
+
+/* ── FinancialTwinView: the "Twin" main view — one twin per client, persisted
+      in localStorage, inbox with autopilot, all seven Wave screens as tabs,
+      AI buttons routed through the app's existing /api/ai proxy. ── */
+function FinancialTwinView({ lang, parsed, setToast }) {
+  const LT = lang === "lt";
+  const [clientId, setClientId] = useState(() => { try { return localStorage.getItem("ft_client") || "default"; } catch { return "default"; } });
+  const [autopilot, setAutopilot] = useState(false);
+  const [tab, setTab] = useState("cockpit");
+  const [aiPanel, setAiPanel] = useState(null); // { title, text, busy }
+  const [, force] = useState(0);
+
+  const twin = useMemo(() => {
+    const adapter = FinTwin.createLocalStorageAdapter(clientId);
+    try { const loaded = FinTwin.loadTwin(adapter, FinTwin.createTwin); if (loaded) return loaded; } catch (e) { /* corrupt save -> fresh twin */ }
+    return FinTwin.createTwin({ clientId });
+  }, [clientId]);
+
+  const inbox = useMemo(
+    () => FinTwin.createInbox(twin, { autopilot, forecast: (t) => { try { return FinTwin.buildForecast(t); } catch { return null; } } }),
+    [twin, autopilot]
+  );
+
+  useEffect(() => {
+    try { localStorage.setItem("ft_client", clientId); } catch {}
+    let timer = null;
+    const unsub = twin.subscribe(() => {
+      force((n) => n + 1);
+      clearTimeout(timer);
+      timer = setTimeout(() => { try { FinTwin.saveTwin(twin, FinTwin.createLocalStorageAdapter(clientId)); } catch {} }, 800);
+    });
+    return () => { clearTimeout(timer); unsub(); inbox.destroy && inbox.destroy(); };
+  }, [twin, inbox, clientId]);
+
+  const fc = useMemo(() => { try { return FinTwin.buildForecast(twin); } catch { return null; } }, [twin, twin.eventCount()]);
+  const tre = useMemo(() => { try { return FinTwin.buildCashView(twin, { forecast: fc }); } catch { return null; } }, [twin, fc]);
+
+  const narrate = async (title, ctx) => {
+    setAiPanel({ title, text: "", busy: true });
+    try {
+      const text = await callAI(
+        (ctx && ctx.instructions) || "Tu esi finansų direktorius (CFO). Atsakyk glaustai lietuviškai, naudok TIK pateiktus faktus.",
+        "FAKTAI (JSON):\n" + JSON.stringify(ctx).slice(0, 28000), [], []
+      );
+      setAiPanel({ title, text, busy: false });
+    } catch (e) { setAiPanel({ title, text: (LT ? "AI klaida: " : "AI error: ") + e.message, busy: false }); }
+  };
+
+  const importSaft = () => {
+    if (!parsed) { setToast && setToast(LT ? "Pirmiausia įkelkite SAF-T failą (SAF-T vaizdas)." : "Upload a SAF-T file first (SAF-T view)."); return; }
+    const r = ftIngestSaft(twin, parsed);
+    setToast && setToast(LT
+      ? `Dvynys: +${r.sales} pardavimo, +${r.purchases} pirkimo SF · praleista ${r.skipped} · klaidų ${r.errors}`
+      : `Twin: +${r.sales} sales, +${r.purchases} purchase invoices · skipped ${r.skipped} · errors ${r.errors}`);
+  };
+
+  const TABS = [
+    ["cockpit", LT ? "Kabina" : "Cockpit"], ["inbox", LT ? "Dėžutė" : "Inbox"], ["explorer", LT ? "Dvynys" : "Twin"],
+    ["payroll", LT ? "Algos" : "Payroll"], ["treasury", LT ? "Iždas" : "Treasury"], ["copilot", "Copilot"], ["graph", LT ? "Grafas" : "Graph"],
+  ];
+  const btn = (active) => ({ background: active ? "#E8B339" : "transparent", color: active ? "#0B0F14" : "#7E8A99", border: `1px solid ${active ? "#E8B339" : "#1E2630"}`, borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#0B0F14" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "14px 24px", borderBottom: "1px solid #1E2630", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, letterSpacing: 2, color: "#E8B339" }}>{LT ? "FINANSŲ DVYNYS" : "FINANCIAL TWIN"} · v{FinTwin.VERSION}</span>
+        <input value={clientId} onChange={(e) => setClientId(e.target.value.trim() || "default")} title={LT ? "Klientas (biuro režimas)" : "Client (bureau mode)"}
+          style={{ background: "#11161D", border: "1px solid #1E2630", color: "#D7DEE7", borderRadius: 6, padding: "6px 10px", fontSize: 12, width: 140 }} />
+        <label style={{ fontSize: 12, color: "#7E8A99", display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+          <input type="checkbox" checked={autopilot} onChange={(e) => setAutopilot(e.target.checked)} />
+          {LT ? "Autopilotas (auto-verdiktai registruojami)" : "Autopilot (auto verdicts post)"}
+        </label>
+        <button onClick={importSaft} style={btn(false)}>{LT ? "⇪ Importuoti iš SAF-T" : "⇪ Import from SAF-T"}</button>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: "#7E8A99" }}>
+          {twin.eventCount()} {LT ? "įvykių" : "events"} · {inbox.stats().total} inbox
+        </span>
+        <div style={{ display: "flex", gap: 6, width: "100%", marginTop: 8 }}>
+          {TABS.map(([id, l]) => <button key={id} onClick={() => setTab(id)} style={btn(tab === id)}>{l}</button>)}
+        </div>
+      </div>
+
+      {aiPanel && (
+        <div style={{ margin: "12px 24px 0", background: "#11161D", border: "1px solid #E8B339", borderRadius: 8, padding: "12px 16px", fontSize: 13, color: "#D7DEE7" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+            <b style={{ color: "#E8B339" }}>◆ {aiPanel.title}</b>
+            <button onClick={() => setAiPanel(null)} style={{ background: "transparent", border: "none", color: "#7E8A99", cursor: "pointer" }}>✕</button>
+          </div>
+          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{aiPanel.busy ? (LT ? "Galvoju…" : "Thinking…") : aiPanel.text}</div>
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {tab === "cockpit" && <ExecutiveCockpit twin={twin} inbox={inbox} lang={lang}
+          onAiMemo={(ctx) => narrate(LT ? "Rytinis AI memo" : "AI morning memo", ctx)} />}
+        {tab === "inbox" && <AgentInbox twin={twin} inbox={inbox} lang={lang} actor="buhalterė"
+          onEscalate={(item) => narrate(LT ? "CFO komentaras" : "CFO narrative", FinTwin.buildEscalationContext(twin, item))} />}
+        {tab === "explorer" && <TwinExplorer twin={twin} lang={lang} />}
+        {tab === "payroll" && <PayrollRunner twin={twin} lang={lang} company={{ name: (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || clientId }} />}
+        {tab === "treasury" && <TreasuryDesk twin={twin} lang={lang} />}
+        {tab === "copilot" && <CfoCopilot twin={twin} inbox={inbox} forecast={fc} treasury={tre} lang={lang}
+          onAskLlm={(ctx) => narrate("CFO Copilot · AI", ctx)} />}
+        {tab === "graph" && <KnowledgeGraph twin={twin} lang={lang} />}
+      </div>
+    </div>
+  );
+}
+
 function TAXAI({ onExit, initialView } = {}) {
   const [view, setView] = useState(initialView || "home");
   const [lang, setLang] = useState("lt");
@@ -16249,6 +21736,7 @@ function TAXAI({ onExit, initialView } = {}) {
     { id: "integrations", l: lang === "lt" ? "Integracijos" : "Integrations", ic: "⇄" },
     { id: "einvoicing", l: lang === "lt" ? "E. sąskaitos" : "E-Invoicing", ic: "✉" },
     { id: "eaccountant", l: lang === "lt" ? "E. buhalteris" : "E-Accountant", ic: "⬡" },
+    { id: "twin", l: lang === "lt" ? "Fin. dvynys" : "Fin. Twin", ic: "◬" },
     { id: "kb", l: lang === "lt" ? "Žinių bankas" : "Knowledge Bank", ic: "▤" },
     { id: "eauditor", l: lang === "lt" ? "E-Auditorius" : "E-Auditor", ic: "◉" },
     { id: "agents", l: `${t.agents} (${AGENTS.length})`, ic: "◎" },
@@ -16380,6 +21868,7 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "integrations", lbl: lang === "lt" ? "ERP integracijos" : "ERP integrations", hint: "view", run: () => setView("integrations") },
           { k: "einvoicing", lbl: lang === "lt" ? "E. sąskaitų centras" : "E-Invoicing hub", hint: "view", run: () => setView("einvoicing") },
           { k: "eaccountant", lbl: lang === "lt" ? "E. buhalteris (Finance OS)" : "E-Accountant (Finance OS)", hint: "view", run: () => setView("eaccountant") },
+          { k: "twin", lbl: lang === "lt" ? "Finansų dvynys (Waves 1–6)" : "Financial Twin (Waves 1–6)", hint: "view", run: () => setView("twin") },
           { k: "arch", lbl: lang === "lt" ? "Architektūra" : "Architecture", hint: "view", run: () => setView("arch") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
           { k: "logs", lbl: lang === "lt" ? "Audito žurnalas" : "Audit log", hint: "view", run: () => setView("logs") },
@@ -17808,6 +23297,10 @@ function TAXAI({ onExit, initialView } = {}) {
 
         {view === "eaccountant" && <div key="eaccountant" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
           <EAccountantTab lang={lang} t={t} audit={audit} parsed={fileData?.parsed} fileName={fileName} runResult={runResult} findings={findings} recon={reconResult} isaf={isafData} erp={erp} einv={einv} eacc={eacc} setEacc={setEacc} setToast={setToast} openView={setView} />
+        </div>}
+
+        {view === "twin" && <div key="twin" style={{ flex: 1, display: "flex", overflow: "hidden", animation: "fadeUp .4s ease" }}>
+          <FinancialTwinView lang={lang} parsed={fileData?.parsed} setToast={setToast} />
         </div>}
 
         {view === "kb" && <div key="kb" style={{ flex: 1, overflow: "hidden", animation: "fadeUp .4s ease" }}>
