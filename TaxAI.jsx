@@ -22802,6 +22802,500 @@ function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
   return EAuditorView;
 })();
 
+/* ── Twin UI · EAccountantView (Wave reference component) ── */
+const EAccountantView = (() => {
+  const { round2, daysBetween, createTwin, createInbox, createLocalStorageAdapter, loadTwin, saveTwin, buildForecast, buildCashView, closeReadiness, buildGraphView, scanFraud, askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, askAuditor, ltAssessment, deriveFindings, AUDITOR_QUESTIONS, AGENT_CATALOG, createPayrollEngine, PARAMS_2026 } = FinTwin;
+// =============================================================================
+// EAccountantView.jsx — E-Accountant, Finance OS (vertical product)
+// -----------------------------------------------------------------------------
+// The same vertical-sidebar treatment as E-Auditor, in the host's native dark
+// tokens. Mirrors the AFOS layout (Command Center, AI Agents, Transactions,
+// Invoices, Knowledge Graph, Digital Twin, Compliance, AI Advisor, Company,
+// Integrations, SAF-T Import, Settings) plus E-Accountant's own engine views
+// (Forecast, Treasury, Payroll, Close). Everything runs on ONE live event twin,
+// shared with E-Auditor via the same storage key. Numbers are engine-computed;
+// the LLM only narrates. No fabricated "synced 2 min ago" — status is derived
+// from real data, and when data is missing the screens say so.
+// Props: lang, parsed, external{runResult,recon,isaf,einv}, setToast, onAi(sys,usr)
+// =============================================================================
+
+
+const LINE = (typeof EACC_LINE !== 'undefined' ? EACC_LINE : '#26261f');
+const CARD = 'var(--bg2)', GOLD = '#ffd43b', GREEN = '#22C55E', RED = '#EF4444', AMBER = '#F59E0B',
+  TXT = '#e6e6e2', DIM = '#8a8a85', MONO = 'var(--m, ui-monospace, monospace)';
+const eur = (v) => '€' + round2(v ?? 0).toLocaleString('lt-LT');
+const STC = { ok: GREEN, pass: GREEN, warn: AMBER, fail: RED, unknown: DIM };
+const inp = { background: 'transparent', border: `1px solid ${LINE}`, color: TXT, padding: '8px 11px', fontSize: 12.5, fontFamily: 'inherit' };
+
+const H = ({ t, sub, right }) => (
+  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
+    <div style={{ flex: 1 }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: '#fff', letterSpacing: '-.01em' }}>{t}</div>
+      {sub && <div style={{ fontSize: 12, color: DIM, marginTop: 4 }}>{sub}</div>}
+    </div>
+    {right}
+  </div>
+);
+const Btn = ({ onClick, children, primary, danger, disabled, small }) => (
+  <button onClick={onClick} disabled={disabled} style={{
+    background: primary ? GOLD : danger ? 'transparent' : 'transparent', color: primary ? '#000' : danger ? RED : '#bcbcb8',
+    border: `1px solid ${primary ? GOLD : danger ? RED + '88' : LINE}`, padding: small ? '5px 11px' : '8px 15px', fontFamily: MONO,
+    fontSize: small ? 10.5 : 11.5, fontWeight: 700, letterSpacing: '.04em', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
+  }}>{children}</button>
+);
+const Chip = ({ active, onClick, children, badge }) => (
+  <button onClick={onClick} style={{
+    background: active ? '#fff' : 'transparent', color: active ? '#000' : '#bcbcb8',
+    border: `1px solid ${active ? '#fff' : LINE}`, padding: '6px 13px', fontFamily: MONO, fontSize: 11, cursor: 'pointer', display: 'inline-flex', gap: 6, alignItems: 'center',
+  }}>{children}{badge != null && badge > 0 && <span style={{ background: active ? '#000' : RED, color: '#fff', fontSize: 9, padding: '0 6px', fontWeight: 700 }}>{badge}</span>}</button>
+);
+const Kpi = ({ l, v, c, sub }) => (
+  <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: '14px 16px' }}>
+    <div style={{ fontSize: 9.5, letterSpacing: '.13em', color: DIM, fontFamily: MONO, textTransform: 'uppercase' }}>{l}</div>
+    <div style={{ fontSize: 23, fontWeight: 800, color: c || TXT, marginTop: 6 }}>{v}</div>
+    {sub && <div style={{ fontSize: 10.5, color: DIM, marginTop: 4, fontFamily: MONO }}>{sub}</div>}
+  </div>
+);
+const Dot = ({ c }) => <span style={{ display: 'inline-block', width: 8, height: 8, background: c, marginRight: 8, flexShrink: 0 }} />;
+const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 10 }}>{children}</div>;
+
+function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
+  const LT = lang === 'lt';
+  const [view, setView] = useState('cmd');
+  const [, force] = useState(0);
+
+  // ── One live twin, shared with E-Auditor through the same storage key ──
+  const clientId = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || 'default';
+  const twin = useMemo(() => {
+    const a = createLocalStorageAdapter(clientId);
+    try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
+    return createTwin({ clientId });
+  }, [clientId]);
+  const inbox = useMemo(() => createInbox(twin, { forecast: (t) => { try { return buildForecast(t); } catch (e) { return null; } } }), [twin]);
+  useEffect(() => {
+    let tm = null;
+    const u = twin.subscribe(() => { force((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { saveTwin(twin, createLocalStorageAdapter(clientId)); } catch (e) {} }, 800); });
+    if (parsed && typeof ftIngestSaft === 'function') { try { ftIngestSaft(twin, parsed); } catch (e) {} }
+    return () => { clearTimeout(tm); u(); inbox.destroy && inbox.destroy(); };
+  }, [twin, inbox, clientId, parsed]);
+
+  // ── Persisted UI state (company profile, settings) per client ──
+  const SKEY = `eacc_os_${clientId}`;
+  const [st, setSt] = useState(() => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { return {}; } });
+  const up = (patch) => setSt((p) => { const n = { ...p, ...patch }; try { localStorage.setItem(SKEY, JSON.stringify(n)); } catch (e) {} return n; });
+
+  const ext = useMemo(() => {
+    const e = {};
+    const rr = external && external.runResult;
+    if (rr) { const errs = rr.errors || rr.schemaErrors || rr.xsdErrors; const ok = rr.ok != null ? !!rr.ok : Array.isArray(errs) ? errs.length === 0 : rr.errorCount != null ? rr.errorCount === 0 : null; if (ok != null) { e.xsdOk = ok; e.xsdDetail = ok ? 'Schema atitinka' : `${(Array.isArray(errs) ? errs.length : rr.errorCount) || ''} klaidos`; } }
+    const rc = external && external.recon; if (rc) { const d = rc.delta != null ? rc.delta : rc.netDelta != null ? rc.netDelta : rc.diff; if (typeof d === 'number') e.isafDelta = d; }
+    if (external && external.einv) e.einvOk = true;
+    return e;
+  }, [external]);
+
+  // ── Live engine computations ──
+  const tick = twin.eventCount();
+  const snap = useMemo(() => { try { return twin.getSnapshot({}); } catch (e) { return null; } }, [twin, tick]);
+  const fc = useMemo(() => { try { return buildForecast(twin); } catch (e) { return null; } }, [twin, tick]);
+  const tre = useMemo(() => { try { return buildCashView(twin, { forecast: fc }); } catch (e) { return null; } }, [twin, fc, tick]);
+  const fraud = useMemo(() => { try { return scanFraud(twin, { inbox }); } catch (e) { return { items: [] }; } }, [twin, inbox, tick]);
+  const close = useMemo(() => { try { return closeReadiness(twin, { inbox, external: ext }); } catch (e) { return null; } }, [twin, inbox, ext, tick]);
+  const sumVals = (o) => Object.values(o || {}).reduce((a, b) => a + (b || 0), 0);
+  const totRev = snap ? sumVals(snap.revenueByMonth) : 0;
+  const totExp = snap ? sumVals(snap.expensesByMonth) : 0;
+
+  // ── Global ask bar (quick copilot) ──
+  const [ask, setAsk] = useState('');
+  const [askR, setAskR] = useState(null);
+  const runAsk = (q) => { if (!q.trim()) return; setAskR({ q, r: askCopilot(twin, q, { inbox, forecast: fc, treasury: tre }) }); };
+  const aiFallback = async (q, r, set) => { try { const text = await onAi('Tu esi CFO copilot. Naudok TIK pateiktus faktus.', JSON.stringify(buildCopilotContext(twin, q, { inbox, forecast: fc, treasury: tre })).slice(0, 27000)); set(text); } catch (e) { setToast && setToast('AI: ' + e.message); } };
+
+  // ════════════════════════════ VIEWS ════════════════════════════
+  const Cmd = () => {
+    const deadlines = (twin.listEntities('obligation') || []).filter((o) => o.status === 'open').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')).slice(0, 3);
+    const now = new Date().toISOString().slice(0, 10);
+    return <>
+      <H t={LT ? 'Komandų centras' : 'Command Center'} sub={LT ? 'Gyvas finansų vaizdas — iš įvykių dvynio' : 'Live financial picture — from the event twin'} />
+      <Grid>
+        <Kpi l={LT ? 'Pajamos' : 'Revenue'} v={eur(totRev)} c={GREEN} />
+        <Kpi l={LT ? 'Sąnaudos' : 'Expenses'} v={eur(totExp)} />
+        <Kpi l={LT ? 'Pelnas' : 'Net profit'} v={eur(totRev - totExp)} c={totRev - totExp >= 0 ? GREEN : RED} />
+        <Kpi l={LT ? 'Pinigai' : 'Cash'} v={eur(snap ? snap.cash : 0)} c={GOLD} />
+        <Kpi l={LT ? 'Pirkėjų skolos' : 'Receivables'} v={eur(snap ? snap.receivables : 0)} />
+        <Kpi l={LT ? 'Skolos tiekėjams' : 'Payables'} v={eur(snap ? snap.payables : 0)} />
+        <Kpi l={LT ? 'Uždarymo parengtis' : 'Close readiness'} v={close ? `${close.score} %` : '—'} c={close && close.score >= (close.target || 95) ? GREEN : AMBER} />
+        <Kpi l={LT ? 'Sukčiavimo žymės' : 'Fraud flags'} v={(fraud.items || []).length} c={(fraud.items || []).length ? AMBER : GREEN} />
+      </Grid>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
+        <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16 }}>
+          <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>{LT ? 'NUOLATINIS UŽDARYMAS' : 'CONTINUOUS CLOSE'}</div>
+          <div style={{ fontSize: 30, fontWeight: 800, color: close && close.score >= (close.target || 95) ? GREEN : AMBER, margin: '8px 0' }}>{close ? `${close.score} %` : '—'}</div>
+          {(close ? close.blockers || [] : []).slice(0, 4).map((b, i) => <div key={i} style={{ fontSize: 12, color: DIM, padding: '3px 0' }}>· {LT ? b.lt : b.en}</div>)}
+          {close && !(close.blockers || []).length && <div style={{ fontSize: 12, color: GREEN }}>{LT ? 'Kliūčių nėra — galima uždaryti.' : 'No blockers — ready to close.'}</div>}
+        </div>
+        <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16 }}>
+          <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>{LT ? 'ARTIMIAUSI TERMINAI' : 'UPCOMING DEADLINES'}</div>
+          {deadlines.map((o) => <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5 }}>
+            <span>{o.taxType} {o.period || ''}</span><span style={{ fontFamily: MONO, color: daysBetween(now, o.dueDate) < 7 ? AMBER : DIM }}>{o.dueDate} · {Math.max(0, daysBetween(now, o.dueDate))}d</span>
+          </div>)}
+          {!deadlines.length && <div style={{ fontSize: 12, color: DIM, marginTop: 8 }}>{LT ? 'Artimų terminų nėra.' : 'Nothing due soon.'}</div>}
+        </div>
+      </div>
+    </>;
+  };
+
+  const Agents = () => {
+    const pending = inbox.list({ open: true });
+    const ctx = { tx: twin.listEntities('payment').length, inv: twin.listEntities('invoice').length, pendingTx: pending.length, fraud: (fraud.items || []).length, overdue: twin.listEntities('invoice').filter((i) => i.dueDate && daysBetween(new Date().toISOString().slice(0, 10), i.dueDate) < 0 && i.status !== 'paid').length };
+    const decide = (id, decision) => { try { inbox.decide(id, decision, 'cfo', decision === 'dismiss' ? (LT ? 'Atmesta CFO' : 'Rejected by CFO') : ''); setToast && setToast(decision === 'approve' ? (LT ? 'Patvirtinta' : 'Approved') : (LT ? 'Atmesta' : 'Rejected')); } catch (e) { setToast && setToast(e.message); } };
+    return <>
+      <H t={LT ? 'AI agentų ekosistema' : 'AI Agent Ecosystem'} sub={LT ? `Deterministiniai agentai — kiekviena analizė pagrįsta jūsų duomenimis · ${ctx.tx} operacijų` : `Deterministic agents — every analysis grounded in your data · ${ctx.tx} transactions`}
+        right={<span style={{ display: 'flex', gap: 8 }}><span style={{ border: `1px solid ${AMBER}66`, color: AMBER, padding: '5px 11px', fontSize: 10, fontFamily: MONO }}>{pending.length} {LT ? 'LAUKIA' : 'PENDING'}</span><span style={{ border: `1px solid ${GREEN}66`, color: GREEN, padding: '5px 11px', fontSize: 10, fontFamily: MONO }}>● {LT ? 'GYVI DUOMENYS' : 'LIVE DATA'}</span></span>} />
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, borderLeft: `2px solid ${GOLD}`, padding: '12px 16px', marginBottom: 14, fontSize: 12.5 }}>
+        <b style={{ color: '#fff' }}>{LT ? 'Architektūra be haliucinacijų:' : 'Hallucination-free architecture:'}</b> {LT ? `Visi agentai remiasi gyvąja baze (${ctx.tx} operacijų, ${ctx.inv} sąskaitų). Agentai naudoja tik tikrus skaičius — jei duomenų nėra, taip ir pasako. Didelės rizikos sprendimai reikalauja žmogaus patvirtinimo.` : `All agents are grounded in your live database (${ctx.tx} transactions, ${ctx.inv} invoices). They reference real numbers only — if data is missing, they say so. High-risk decisions require human approval.`}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 10 }}>
+        <div>
+          <div style={{ background: CARD, border: `1px solid ${LINE}`, borderLeft: `2px solid ${AMBER}`, padding: 16, marginBottom: 10 }}>
+            <div style={{ fontSize: 11, letterSpacing: '.1em', color: AMBER, fontFamily: MONO, marginBottom: 8 }}>{LT ? 'VEIKSMAI, REIKALAUJANTYS PATVIRTINIMO' : 'ACTIONS REQUIRING HUMAN APPROVAL'}</div>
+            {pending.map((it) => <div key={it.id} style={{ borderTop: `1px solid ${LINE}`, padding: '11px 0', fontSize: 12.5 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <span style={{ flex: 1 }}><b>{it.titleLt ? (LT ? it.titleLt : it.titleEn || it.titleLt) : it.id}</b>{it.reason ? <div style={{ color: DIM, marginTop: 3 }}>{it.reason}</div> : null}{it.amount ? <div style={{ color: AMBER, fontFamily: MONO, fontSize: 11, marginTop: 4 }}>{LT ? 'Poveikis' : 'Impact'}: {eur(it.amount)}</div> : null}</span>
+                <span style={{ display: 'flex', gap: 6 }}><Btn small onClick={() => decide(it.id, 'approve')} >✓ {LT ? 'Tvirtinti' : 'Approve'}</Btn><Btn small danger onClick={() => decide(it.id, 'dismiss')}>✕ {LT ? 'Atmesti' : 'Reject'}</Btn></span>
+              </div>
+            </div>)}
+            {!pending.length && <div style={{ color: GREEN, fontSize: 12.5, paddingTop: 6 }}>{LT ? 'Laukiančių patvirtinimų nėra.' : 'No pending approvals.'}</div>}
+          </div>
+          {AGENT_CATALOG.filter((a) => a.id !== 'cfo').map((a) => <div key={a.id} style={{ background: CARD, border: `1px solid ${LINE}`, padding: '13px 16px', marginBottom: 8, display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span style={{ width: 34, height: 34, border: `1px solid ${LINE}`, color: GOLD, display: 'grid', placeItems: 'center', fontSize: 15 }}>{a.icon}</span>
+            <span style={{ flex: 1 }}><b style={{ fontSize: 13 }}>{LT ? a.lt : a.en} {LT ? 'agentas' : 'Agent'}</b><div style={{ color: DIM, fontSize: 11.5, marginTop: 2 }}>{LT ? a.domainLt : a.domainEn}</div></span>
+            <span style={{ fontSize: 10, fontFamily: MONO, color: GREEN, border: `1px solid ${GREEN}44`, padding: '3px 9px' }}>● {LT ? 'PARUOŠTA' : 'READY'}</span>
+          </div>)}
+        </div>
+        <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, alignSelf: 'flex-start' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', marginBottom: 10 }}>{LT ? 'Gyvų duomenų kontekstas' : 'Live Data Context'}</div>
+          {[[LT ? 'Operacijų įkelta' : 'Transactions loaded', ctx.tx], [LT ? 'Sąskaitų įkelta' : 'Invoices loaded', ctx.inv], [LT ? 'Laukia patvirtinimo' : 'Pending', ctx.pendingTx], [LT ? 'Sukčiavimo žymės' : 'Fraud-flagged', ctx.fraud], [LT ? 'Pradelstos sąskaitos' : 'Overdue invoices', ctx.overdue]].map(([l, v], i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5 }}><span style={{ color: DIM }}>{l}</span><b style={{ fontFamily: MONO }}>{v}</b></div>)}
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 12.5 }}><span style={{ color: DIM }}>{LT ? 'Įmonės profilis' : 'Company profile'}</span><b style={{ fontFamily: MONO, color: st.company && st.company.name ? GREEN : AMBER }}>{st.company && st.company.name ? '✓' : (LT ? '△ Nenustatyta' : '△ Not set')}</b></div>
+        </div>
+      </div>
+    </>;
+  };
+
+  const Graph = () => {
+    const g = useMemo(() => { try { return buildGraphView(twin, {}); } catch (e) { return { nodes: [], edges: [] }; } }, [twin, tick]);
+    const nodes = g.nodes || []; const edges = g.edges || [];
+    const W = 760, Hh = 460, cx = W / 2, cy = Hh / 2, R = Math.min(cx, cy) - 60;
+    const pos = {}; nodes.forEach((n, i) => { const a = (i / Math.max(1, nodes.length)) * Math.PI * 2 - Math.PI / 2; pos[n.key] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) }; });
+    const COL = { company: GOLD, customer: GREEN, vendor: '#60A5FA', invoice: '#A78BFA', payment: '#F472B6', obligation: AMBER, employee: '#34D399', bankAccount: '#22D3EE', asset: '#FBBF24' };
+    return <>
+      <H t={LT ? 'Žinių grafas' : 'Knowledge Graph'} sub={LT ? `Subjektai ir ryšiai iš dvynio · ${nodes.length} mazgų · ${edges.length} ryšių` : `Entities and relationships from the twin · ${nodes.length} nodes · ${edges.length} edges`} />
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 12, overflow: 'auto' }}>
+        {nodes.length ? <svg viewBox={`0 0 ${W} ${Hh}`} style={{ width: '100%', minWidth: 600 }}>
+          {edges.map((e, i) => { const a = pos[e.from], b = pos[e.to]; if (!a || !b) return null; return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={LINE} strokeWidth="1" />; })}
+          {nodes.map((n) => { const p = pos[n.key]; if (!p) return null; const r = 6 + Math.min(14, (n.degree || 0) * 2); return <g key={n.key}>
+            <circle cx={p.x} cy={p.y} r={r} fill={COL[n.type] || DIM} opacity="0.85" />
+            <text x={p.x} y={p.y - r - 4} fill={TXT} fontSize="10" fontFamily="var(--m, monospace)" textAnchor="middle">{(n.label || n.id || '').slice(0, 18)}</text>
+          </g>; })}
+        </svg> : <div style={{ color: DIM, fontSize: 12.5, padding: 30, textAlign: 'center' }}>{LT ? 'Grafas tuščias — įkelkite SAF-T arba pridėkite operacijų.' : 'Graph is empty — load SAF-T or add transactions.'}</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
+        {Object.entries(COL).filter(([k]) => nodes.some((n) => n.type === k)).map(([k, c]) => <span key={k} style={{ fontSize: 11, fontFamily: MONO, color: DIM, display: 'inline-flex', alignItems: 'center' }}><Dot c={c} />{k}</span>)}
+      </div>
+    </>;
+  };
+
+  const Forecast = () => {
+    const rows = (fc && fc.rows) || [];
+    return <>
+      <H t={LT ? 'Prognozė' : 'Forecast'} sub={LT ? `Pajamų, sąnaudų ir grynųjų projekcija · tikslumas ${fc ? fc.accuracy : '—'}` : `Revenue, cost and cash projection · accuracy ${fc ? fc.accuracy : '—'}`} />
+      <Grid>
+        <Kpi l={LT ? 'Kito mėn. pajamos' : 'Next-month revenue'} v={eur(fc ? fc.nextRevenue : 0)} c={GREEN} />
+        <Kpi l={LT ? 'Kito mėn. sąnaudos' : 'Next-month expenses'} v={eur(fc ? fc.nextExpenses : 0)} />
+        <Kpi l={LT ? 'Deginimas /mėn.' : 'Monthly burn'} v={eur(fc ? fc.monthlyBurn : 0)} c={fc && fc.monthlyBurn > 0 ? RED : GREEN} sub={fc ? fc.burnBasis : ''} />
+        <Kpi l={LT ? 'Grynas PVM' : 'Net VAT'} v={eur(fc ? fc.nextNetVat : 0)} />
+      </Grid>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 8 }}>{LT ? 'MĖNESINĖ PROJEKCIJA' : 'MONTHLY PROJECTION'}</div>
+        {rows.length ? rows.map((r, i) => { const rev = r.revenue ?? r.rev ?? 0, exp = r.expenses ?? r.costs ?? r.exp ?? 0, net = r.net ?? round2(rev - exp); return <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 1fr', gap: 8, padding: '7px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5, fontFamily: MONO }}>
+          <span style={{ color: DIM }}>{r.month || r.label || r.period || `M${i + 1}`}{r.projected ? ' ◇' : ''}</span>
+          <span style={{ color: GREEN }}>{eur(rev)}</span><span>{eur(exp)}</span><span style={{ color: net >= 0 ? GREEN : RED }}>{eur(net)}</span>
+        </div>; }) : <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Nepakanka istorijos projekcijai.' : 'Not enough history to project.'}</div>}
+        {fc && <div style={{ color: DIM, fontSize: 10.5, marginTop: 10 }}>{LT ? fc.basisLt : fc.basisEn}</div>}
+      </div>
+    </>;
+  };
+
+  const Treasury = () => {
+    const weeks = (tre && tre.weeks) || [];
+    const maxAbs = Math.max(1, ...weeks.map((w) => Math.abs(w.cum)));
+    return <>
+      <H t={LT ? 'Iždas' : 'Treasury'} sub={LT ? '13 savaičių pinigų srautas — su likvidumo įspėjimu' : '13-week cash flow — with liquidity warning'} />
+      <Grid>
+        <Kpi l={LT ? 'Pinigai dabar' : 'Cash now'} v={eur(tre ? tre.cash : 0)} c={GOLD} />
+        <Kpi l={LT ? 'Min. 13 sav.' : 'Min 13w'} v={tre && tre.minWeek ? eur(tre.minWeek.cum) : '—'} c={tre && tre.breachWeek ? RED : GREEN} sub={tre && tre.minWeek ? tre.minWeek.label : ''} />
+        <Kpi l="DSO / DPO" v={tre ? `${tre.dso ?? '—'} / ${tre.dpo ?? '—'}` : '—'} sub={LT ? 'dienos' : 'days'} />
+        <Kpi l={LT ? 'Einamasis koef.' : 'Current ratio'} v={tre && tre.currentRatio != null ? tre.currentRatio : '—'} />
+      </Grid>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 10 }}>{LT ? 'SUKAUPTI PINIGAI PAGAL SAVAITĘ' : 'CUMULATIVE CASH BY WEEK'}</div>
+        {weeks.map((w) => <div key={w.w} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 0', fontSize: 11.5, fontFamily: MONO }}>
+          <span style={{ width: 34, color: DIM }}>{w.label}</span>
+          <div style={{ flex: 1, height: 16, background: 'rgba(255,255,255,0.04)', position: 'relative' }}><div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${(Math.abs(w.cum) / maxAbs) * 100}%`, background: w.cum < 0 ? RED : w.w === (tre && tre.breachWeek) ? AMBER : GREEN, opacity: 0.8 }} /></div>
+          <span style={{ width: 90, textAlign: 'right', color: w.cum < 0 ? RED : TXT }}>{eur(w.cum)}</span>
+        </div>)}
+        {tre && tre.breachWeek && <div style={{ color: RED, fontSize: 12, marginTop: 10 }}>⚠ {LT ? `Pinigai neigiami nuo ${tre.breachWeek}` : `Cash turns negative at week ${tre.breachWeek}`}</div>}
+        {!weeks.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Nėra pinigų srautų duomenų.' : 'No cash-flow data.'}</div>}
+      </div>
+    </>;
+  };
+
+  const Payroll = () => {
+    const pe = useMemo(() => createPayrollEngine(PARAMS_2026), []);
+    const emps = twin.listEntities('employee').filter((e) => e.status !== 'terminated');
+    const lines = emps.map((e) => { try { return pe.calcEmployee({ employeeId: e.id, name: e.name, gross: e.gross || 0 }); } catch (x) { return null; } }).filter(Boolean);
+    const tot = lines.reduce((a, l) => ({ gross: a.gross + l.gross, net: a.net + l.net, gpm: a.gpm + l.gpm, cost: a.cost + l.employerCost }), { gross: 0, net: 0, gpm: 0, cost: 0 });
+    return <>
+      <H t={LT ? 'Darbo užmokestis' : 'Payroll'} sub={LT ? 'GPM + Sodra aritmetika pagal 2026 m. parametrus' : 'GPM + Sodra arithmetic on 2026 parameters'} />
+      <Grid>
+        <Kpi l={LT ? 'Darbuotojai' : 'Headcount'} v={lines.length} />
+        <Kpi l={LT ? 'Bruto /mėn.' : 'Gross /mo'} v={eur(tot.gross)} />
+        <Kpi l={LT ? 'Neto /mėn.' : 'Net /mo'} v={eur(tot.net)} c={GREEN} />
+        <Kpi l={LT ? 'Darbdavio kaina' : 'Employer cost'} v={eur(tot.cost)} c={AMBER} sub={LT ? `GPM €${round2(tot.gpm)}` : `GPM €${round2(tot.gpm)}`} />
+      </Grid>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
+        {lines.length ? <><div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr', gap: 8, fontSize: 10, color: DIM, fontFamily: MONO, padding: '0 0 8px', textTransform: 'uppercase' }}><span>{LT ? 'Darbuotojas' : 'Employee'}</span><span>Bruto</span><span>GPM</span><span>Neto</span><span>{LT ? 'Kaina' : 'Cost'}</span></div>
+          {lines.map((l, i) => <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr', gap: 8, padding: '7px 0', borderTop: `1px solid ${LINE}`, fontSize: 12, fontFamily: MONO }}>
+            <span>{l.name || l.employeeId}</span><span>{eur(l.gross)}</span><span style={{ color: AMBER }}>{eur(l.gpm)}</span><span style={{ color: GREEN }}>{eur(l.net)}</span><span>{eur(l.employerCost)}</span>
+          </div>)}</> : <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Darbuotojų dvyniuose nėra. DU įvykiai (payroll.run) užpildys šį vaizdą.' : 'No employees in the twin. Payroll events will populate this view.'}</div>}
+      </div>
+    </>;
+  };
+
+  const Close = () => {
+    const tb = useMemo(() => { try { return twin.trialBalance(); } catch (e) { return null; } }, [twin, tick]);
+    return <>
+      <H t={LT ? 'Periodo uždarymas' : 'Period Close'} sub={LT ? 'Nuolatinis uždarymas — kliūtys ir parengtis' : 'Continuous close — blockers and readiness'} />
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18 }}>
+        <div style={{ display: 'flex', gap: 18, alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 34, fontWeight: 800, color: close && close.score >= (close.target || 95) ? GREEN : AMBER }}>{close ? `${close.score} %` : '—'}</span>
+          <span style={{ color: DIM, fontFamily: MONO, fontSize: 11.5 }}>{LT ? 'tikslas' : 'target'} ≥ {close ? close.target || 95 : 95} % · GL {tb && tb.balanced ? (LT ? 'subalansuota' : 'balanced') : (LT ? `skirtumas €${tb ? tb.difference : '?'}` : `diff €${tb ? tb.difference : '?'}`)}</span>
+        </div>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, margin: '16px 0 8px' }}>{LT ? 'KLIŪTYS' : 'BLOCKERS'}</div>
+        {(close ? close.blockers || [] : []).map((b, i) => <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5 }}><Dot c={AMBER} /><span style={{ flex: 1 }}>{LT ? b.lt : b.en}</span><span style={{ color: DIM, fontFamily: MONO, fontSize: 11 }}>{b.detail}</span></div>)}
+        {close && !(close.blockers || []).length && <div style={{ color: GREEN, fontSize: 13 }}>✓ {LT ? 'Visi patikrinimai praeiti — mėnesį galima uždaryti.' : 'All checks pass — the period can be closed.'}</div>}
+      </div>
+    </>;
+  };
+
+  const Compliance = () => {
+    const a = ltAssessment(twin, { external: ext });
+    const now = new Date().toISOString().slice(0, 10);
+    const obls = twin.listEntities('obligation') || [];
+    const dl = obls.filter((o) => o.status === 'open').sort((x, y) => (x.dueDate || '').localeCompare(y.dueDate || '')).slice(0, 3);
+    const score = Math.round((Object.values(a).filter((s) => s.status === 'ok').length / Object.keys(a).length) * 100);
+    const oblItems = (types) => obls.filter((o) => types.includes(o.taxType)).map((o) => ({ lt: `${o.taxType} ${o.period || ''}`, en: `${o.taxType} ${o.period || ''}`, status: daysBetween(now, o.dueDate) < 0 ? 'fail' : 'pending', note: `${o.dueDate} · ${Math.max(0, daysBetween(now, o.dueDate))}d` }));
+    const SYS = [
+      { name: 'VMI', sub: LT ? 'Mokesčių inspekcija' : 'Tax Authority', k: 'vmi', items: [...oblItems(['VAT', 'CIT']), { lt: 'Kainų nustatymas FR0020', en: 'Transfer Pricing FR0020', status: 'na', note: 'N/A' }] },
+      { name: 'i.MAS', sub: LT ? 'Elektroninės sąskaitos' : 'Electronic Invoicing', k: 'imas', items: [{ lt: 'i.SAF pardavimai', en: 'i.SAF Sales', status: parsed ? 'ok' : 'unknown', note: parsed ? (LT ? 'iš SAF-T' : 'from SAF-T') : (LT ? 'nėra duomenų' : 'no data') }, { lt: 'i.SAF pirkimai', en: 'i.SAF Purchases', status: parsed ? 'ok' : 'unknown', note: parsed ? (LT ? 'iš SAF-T' : 'from SAF-T') : (LT ? 'nėra duomenų' : 'no data') }, { lt: 'i.VAZ važtaraščiai', en: 'i.VAZ Waybills', status: 'na', note: 'N/A' }] },
+      { name: 'Sodra', sub: LT ? 'Socialinis draudimas' : 'Social Insurance', k: 'sodra', items: [...oblItems(['SODRA', 'GPM']), { lt: 'Darbuotojų registracija', en: 'Employee Registrations', status: twin.listEntities('employee').length ? 'ok' : 'unknown', note: LT ? 'realiu laiku' : 'real-time' }] },
+      { name: 'Registrų Centras', sub: LT ? 'Juridinių asmenų registras' : 'Registry', k: 'rc', items: [{ lt: 'Metinės FA', en: 'Annual Financial Statements', status: 'unknown', note: LT ? 'iš įrašų' : 'from records' }, { lt: 'Naudos gavėjai', en: 'Beneficial Owners', status: 'unknown', note: LT ? 'iš įrašų' : 'from records' }] },
+    ];
+    return <>
+      <H t={LT ? 'Lietuvos ir ES atitiktis' : 'Lithuanian & EU Compliance'} sub={LT ? 'Reguliacinė žvalgyba — sistemų būklė iš tikrų duomenų' : 'Regulatory intelligence — system status from real data'}
+        right={<span style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Btn onClick={() => { force((n) => n + 1); setToast && setToast(LT ? 'Atitiktis perskaičiuota' : 'Compliance recomputed'); }}>◈ {LT ? 'AI atitikties skenavimas' : 'AI Compliance Scan'}</Btn><span style={{ border: `1px solid ${score >= 80 ? GREEN : AMBER}66`, color: score >= 80 ? GREEN : AMBER, padding: '5px 12px', fontSize: 10.5, fontFamily: MONO }}>{LT ? 'ATITIKTIS' : 'COMPLIANCE'}: {score}%</span></span>} />
+      <div style={{ background: CARD, border: `1px solid ${AMBER}55`, padding: 14, marginBottom: 12 }}>
+        <div style={{ fontSize: 11, letterSpacing: '.1em', color: AMBER, fontFamily: MONO, marginBottom: 8 }}>◷ {LT ? 'ARTIMIAUSI TERMINAI' : 'UPCOMING DEADLINES'}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          {dl.map((o) => <div key={o.id} style={{ border: `1px solid ${LINE}`, padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><span style={{ fontSize: 12 }}><b>{o.taxType} {o.period || ''}</b><div style={{ color: DIM, fontSize: 10.5 }}>VMI / Sodra</div></span><span style={{ textAlign: 'right', fontFamily: MONO, fontSize: 11 }}><b style={{ color: daysBetween(now, o.dueDate) < 7 ? AMBER : TXT }}>{Math.max(0, daysBetween(now, o.dueDate))}d</b><div style={{ color: DIM, fontSize: 10 }}>{o.dueDate}</div></span></div>)}
+          {!dl.length && <div style={{ color: DIM, fontSize: 12 }}>{LT ? 'Artimų terminų nėra.' : 'Nothing due soon.'}</div>}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', margin: '4px 0 10px' }}>{LT ? 'Lietuvos valstybinės sistemos' : 'Lithuanian Government Systems'}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 10 }}>
+        {SYS.map((s) => <div key={s.name} style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}><Dot c={STC[(a[s.k] && a[s.k].status) || 'unknown']} /><b style={{ flex: 1, fontSize: 13.5 }}>{s.name}</b><span style={{ fontSize: 10, fontFamily: MONO, color: STC[(a[s.k] && a[s.k].status) || 'unknown'] }}>{(a[s.k] && a[s.k].status) === 'ok' ? (LT ? 'jungta' : 'connected') : (a[s.k] && a[s.k].status) === 'unknown' ? (LT ? 'nėra duomenų' : 'no data') : (a[s.k] && a[s.k].status || '').toUpperCase()}</span></div>
+          <div style={{ color: DIM, fontSize: 11, marginBottom: 8 }}>{s.sub}</div>
+          {s.items.map((it, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: `1px solid ${LINE}`, fontSize: 12 }}><span><span style={{ color: it.status === 'fail' ? RED : it.status === 'ok' ? GREEN : DIM }}>{it.status === 'ok' ? '✓ ' : it.status === 'fail' ? '⊗ ' : it.status === 'pending' ? '◷ ' : '○ '}</span>{LT ? it.lt : it.en}</span><span style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{it.note}</span></div>)}
+        </div>)}
+      </div>
+    </>;
+  };
+
+  const Advisor = () => {
+    const [q, setQ] = useState('');
+    const [thread, setThread] = useState([]);
+    const sugg = [...COPILOT_SUGGESTIONS, ...AUDITOR_QUESTIONS.filter((x) => ['vmi', 'taxrisk', 'sodra'].includes(x.id))];
+    const ask = (question) => { if (!question.trim()) return; const isAudit = /vmi|audit|sukč|fraud|sodra|saf-?t|rizik/i.test(question); const r = isAudit ? askAuditor(twin, question, { inbox, external: ext, lang }) : askCopilot(twin, question, { inbox, forecast: fc, treasury: tre }); setThread((th) => [{ q: question, r }, ...th]); setQ(''); };
+    return <>
+      <H t={LT ? 'AI finansų patarėjas' : 'AI Finance Advisor'} sub={LT ? `Gyvas kontekstas · ${eur(totRev)} pajamų · ${(fraud.items || []).length} sukčiavimo žymės` : `Live context · ${eur(totRev)} revenue · ${(fraud.items || []).length} fraud flags`}
+        right={<span style={{ border: `1px solid ${GREEN}55`, color: GREEN, padding: '5px 11px', fontSize: 10, fontFamily: MONO }}>◈ CLAUDE</span>} />
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: '14px 16px', fontSize: 12.5, lineHeight: 1.6 }}>
+        {LT ? 'Esu jūsų AI finansų patarėjas — CFO, vyr. buhalterio, mokesčių patarėjo ir auditoriaus kompetencija viename. Turiu pilną jūsų gyvų finansų, Lietuvos mokesčių (VMI, Sodra, i.MAS) ir IFRS kontekstą.' : "I'm your AI Finance Advisor — combining a CFO, Chief Accountant, Tax Advisor, and Auditor. I have full context of your live financials, Lithuanian tax rules (VMI, Sodra, i.MAS), and IFRS."}
+        <div style={{ fontWeight: 700, color: '#fff', marginTop: 6 }}>{LT ? 'Klauskite bet ko apie finansus, mokesčius, atitiktį ar strategiją.' : 'Ask me anything about finances, tax, compliance, forecasts, or strategy.'}</div>
+      </div>
+      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', margin: '12px 0' }}>{sugg.map((s, i) => <button key={i} onClick={() => ask(LT ? s.lt : s.en)} style={{ background: CARD, border: `1px solid ${LINE}`, color: TXT, padding: '7px 12px', fontSize: 11.5, cursor: 'pointer' }}>{LT ? s.lt : s.en}</button>)}</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask(q)} placeholder={LT ? 'Klauskite apie finansus, mokesčius, prognozes…' : 'Ask about finances, tax, forecasts…'} style={{ ...inp, flex: 1, padding: '11px 13px' }} />
+        <Btn primary onClick={() => ask(q)}>→</Btn>
+      </div>
+      <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+        {thread.map(({ q: qq, r }, i) => <div key={i} style={{ background: CARD, border: `1px solid ${LINE}`, padding: '12px 14px', fontSize: 12.5 }}>
+          <div style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{qq} · {r.needsLlm ? (LT ? 'intentas nerastas' : 'no intent') : r.intent}</div>
+          <div style={{ marginTop: 6, lineHeight: 1.65 }}>{r.answer}</div>
+          {r.needsLlm && onAi && <div style={{ marginTop: 8 }}><Btn small onClick={() => aiFallback(qq, r, (text) => setThread((th) => th.map((x, j) => j === i ? { q: qq, r: { ...r, answer: text, needsLlm: false, intent: 'AI' } } : x)))}>◆ {LT ? 'Klausti AI (su faktais)' : 'Ask AI (with facts)'}</Btn></div>}
+        </div>)}
+      </div>
+    </>;
+  };
+
+  const Company = () => {
+    const c = st.company || {};
+    const [f, setF] = useState({ name: c.name || clientId !== 'default' ? c.name || clientId : '', code: c.code || '', vat: c.vat || '', legalForm: c.legalForm || 'UAB', industry: c.industry || '', address: c.address || '', city: c.city || '', country: c.country || 'Lithuania', standard: c.standard || 'Lithuanian GAAP', vatPeriod: c.vatPeriod || 'Monthly', employees: c.employees || '', revenue: c.revenue || '' });
+    const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+    const Field = ({ k, label, type, options }) => <label style={{ display: 'block' }}>
+      <div style={{ fontSize: 9.5, letterSpacing: '.12em', color: DIM, fontFamily: MONO, textTransform: 'uppercase', marginBottom: 5 }}>{label}</div>
+      {options ? <select value={f[k]} onChange={(e) => set(k, e.target.value)} style={{ ...inp, width: '100%' }}>{options.map((o) => <option key={o} value={o}>{o}</option>)}</select>
+        : <input type={type || 'text'} value={f[k]} onChange={(e) => set(k, e.target.value)} style={{ ...inp, width: '100%' }} />}
+    </label>;
+    return <>
+      <H t={LT ? 'Įmonės profilis' : 'Company Profile'} sub={LT ? 'Sukonfigūruokite subjektą finansų sistemai' : 'Configure your entity for the finance operating system'}
+        right={<Btn primary onClick={() => { up({ company: f }); setToast && setToast(LT ? 'Profilis išsaugotas' : 'Profile saved'); }}>⌷ {LT ? 'Išsaugoti' : 'Save'}</Btn>} />
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', marginBottom: 14 }}>▤ {LT ? 'Bendra informacija' : 'General Information'}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <Field k="name" label={LT ? 'Įmonės pavadinimas' : 'Company name'} /><Field k="code" label={LT ? 'Įmonės kodas' : 'Company code'} />
+          <Field k="vat" label={LT ? 'PVM kodas' : 'VAT code'} /><Field k="legalForm" label={LT ? 'Teisinė forma' : 'Legal form'} options={['UAB', 'AB', 'MB', 'IĮ', 'VšĮ']} />
+          <Field k="industry" label={LT ? 'Veikla' : 'Industry'} /><Field k="address" label={LT ? 'Adresas' : 'Address'} />
+          <Field k="city" label={LT ? 'Miestas' : 'City'} /><Field k="country" label={LT ? 'Šalis' : 'Country'} />
+        </div>
+      </div>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', marginBottom: 14 }}>{LT ? 'Finansų konfigūracija' : 'Financial Configuration'}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <Field k="standard" label={LT ? 'Apskaitos standartas' : 'Accounting standard'} options={['Lithuanian GAAP', 'IFRS', 'IFRS for SMEs']} /><Field k="vatPeriod" label={LT ? 'PVM periodas' : 'VAT period'} options={['Monthly', 'Quarterly', 'Semi-annual']} />
+          <Field k="employees" label={LT ? 'Darbuotojų skaičius' : 'Employee count'} type="number" /><Field k="revenue" label={LT ? 'Metinės pajamos (EUR)' : 'Annual revenue (EUR)'} type="number" />
+        </div>
+      </div>
+    </>;
+  };
+
+  const Integrations = () => {
+    const has = (type) => twin.listEntities(type).length > 0;
+    const ROWS = [
+      { name: LT ? 'Bankas (PSD2)' : 'Bank (PSD2)', on: has('bankAccount'), note: has('bankAccount') ? (LT ? 'sąskaitos iš SAF-T' : 'accounts from SAF-T') : (LT ? 'neprijungta' : 'not connected') },
+      { name: 'VMI', on: has('obligation'), note: has('obligation') ? (LT ? 'prievolės sekamos' : 'obligations tracked') : (LT ? 'nėra prievolių' : 'no obligations') },
+      { name: 'Sodra', on: twin.listEntities('obligation').some((o) => o.taxType === 'SODRA' || o.taxType === 'GPM'), note: LT ? 'DU prievolės' : 'payroll obligations' },
+      { name: 'i.MAS / e-Sąskaita', on: !!(external && external.einv), note: external && external.einv ? (LT ? 'el. sąskaitos' : 'e-invoices') : (LT ? 'neprijungta' : 'not connected') },
+      { name: 'SAF-T', on: !!parsed, note: parsed ? (LT ? 'failas įkeltas' : 'file loaded') : (LT ? 'failas neįkeltas' : 'no file') },
+    ];
+    return <>
+      <H t={LT ? 'Integracijos' : 'Integrations'} sub={LT ? 'Jungtys — būklė iš tikrų duomenų, be fiktyvių laikų' : 'Connectors — status derived from real data, no fake sync times'} />
+      {ROWS.map((r) => <div key={r.name} style={{ background: CARD, border: `1px solid ${LINE}`, padding: '13px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <Dot c={r.on ? GREEN : DIM} /><b style={{ flex: 1, fontSize: 13 }}>{r.name}</b><span style={{ color: DIM, fontFamily: MONO, fontSize: 11 }}>{r.note}</span>
+        <span style={{ fontSize: 10, fontFamily: MONO, color: r.on ? GREEN : DIM, border: `1px solid ${r.on ? GREEN + '44' : LINE}`, padding: '3px 10px' }}>{r.on ? (LT ? 'AKTYVI' : 'ACTIVE') : (LT ? 'NEAKTYVI' : 'INACTIVE')}</span>
+      </div>)}
+    </>;
+  };
+
+  const Saft = () => {
+    const counts = { sales: twin.listEntities('invoice').filter((i) => i.kind === 'sales').length, purchases: twin.listEntities('invoice').filter((i) => i.kind === 'purchase').length };
+    return <>
+      <H t={LT ? 'SAF-T importas' : 'SAF-T Import'} sub={LT ? 'Failas tampa įvykiais dvyniui — pakartotinis importas idempotentiškas' : 'The file becomes events for the twin — re-import is idempotent'}
+        right={parsed && <Btn primary onClick={() => { if (typeof ftIngestSaft === 'function') { const r = ftIngestSaft(twin, parsed); setToast && setToast(LT ? `Sinchronizuota: +${r.sales + r.purchases} SF` : `Synced: +${r.sales + r.purchases} invoices`); } }}>↺ {LT ? 'Sinchronizuoti iš naujo' : 'Re-sync'}</Btn>} />
+      <Grid>
+        <Kpi l={LT ? 'Įmonė' : 'Company'} v={clientId} />
+        <Kpi l={LT ? 'Įvykiai' : 'Events'} v={twin.eventCount()} c={GOLD} />
+        <Kpi l={LT ? 'Pardavimo SF' : 'Sales invoices'} v={counts.sales} c={GREEN} />
+        <Kpi l={LT ? 'Pirkimo SF' : 'Purchase invoices'} v={counts.purchases} />
+      </Grid>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, marginTop: 12, fontSize: 12.5 }}>
+        {parsed ? <div style={{ color: GREEN }}>✓ {LT ? 'SAF-T failas įkeltas ir sinchronizuotas su gyvuoju dvyniu. Tie patys subjektai matomi E-Auditoriuje.' : 'SAF-T file loaded and synced to the live twin. The same entities appear in E-Auditor.'}</div>
+          : <div style={{ color: DIM }}>{LT ? 'SAF-T failas dar neįkeltas. Įkelkite jį per kairę įrankių juostą (failo įkėlimas) — duomenys automatiškai pasieks šį vaizdą.' : 'No SAF-T file yet. Upload one via the left toolbar — data flows here automatically.'}</div>}
+      </div>
+    </>;
+  };
+
+  const Settings = () => <>
+    <H t={LT ? 'Nustatymai' : 'Settings'} sub={LT ? 'Sistemos parinktys ir duomenys' : 'System options and data'} />
+    <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, fontSize: 12.5, display: 'grid', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${LINE}`, paddingBottom: 10 }}><span style={{ color: DIM }}>{LT ? 'Kalba' : 'Language'}</span><b style={{ fontFamily: MONO }}>{LT ? 'Lietuvių' : 'English'} ({LT ? 'keičiama įrankių juostoje' : 'set in the toolbar'})</b></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${LINE}`, paddingBottom: 10 }}><span style={{ color: DIM }}>{LT ? 'Įmonė' : 'Company'}</span><b style={{ fontFamily: MONO }}>{clientId}</b></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${LINE}`, paddingBottom: 10 }}><span style={{ color: DIM }}>{LT ? 'Dvynio įvykiai' : 'Twin events'}</span><b style={{ fontFamily: MONO }}>{twin.eventCount()}</b></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ color: DIM }}>{LT ? 'Išvalyti šios įmonės UI būseną' : 'Clear this company UI state'}</span><Btn danger small onClick={() => { try { localStorage.removeItem(SKEY); } catch (e) {} setSt({}); setToast && setToast(LT ? 'Išvalyta' : 'Cleared'); }}>{LT ? 'Išvalyti' : 'Clear'}</Btn></div>
+    </div>
+  </>;
+
+  // ════════════════════════════ SHELL ════════════════════════════
+  const NAVI = [
+    ['cmd', LT ? 'Komandų centras' : 'Command Center', '▦'], ['agents', LT ? 'AI agentai' : 'AI Agents', '◉'],
+    ['tx', LT ? 'Operacijos' : 'Transactions', '❖'], ['inv', LT ? 'Sąskaitos' : 'Invoices', '▤'],
+    ['graph', LT ? 'Žinių grafas' : 'Knowledge Graph', '✦'], ['twin', LT ? 'Skaitmeninis dvynys' : 'Digital Twin', '∿'],
+    ['fc', LT ? 'Prognozė' : 'Forecast', '▱'], ['tre', LT ? 'Iždas' : 'Treasury', '◷'],
+    ['pay', LT ? 'Darbo užmokestis' : 'Payroll', '◰'], ['close', LT ? 'Uždarymas' : 'Close', '✓'],
+    ['comp', LT ? 'Atitiktis' : 'Compliance', '§'], ['advisor', LT ? 'AI patarėjas' : 'AI Advisor', '◈'],
+    ['company', LT ? 'Įmonė' : 'Company', '⬡'], ['integrations', LT ? 'Integracijos' : 'Integrations', '⇄'],
+    ['saft', LT ? 'SAF-T importas' : 'SAF-T Import', '⬇'], ['settings', LT ? 'Nustatymai' : 'Settings', '⚙'],
+  ];
+  const agentsActive = AGENT_CATALOG.length;
+  return (
+    <div style={{ display: 'flex', border: `1px solid ${LINE}`, minHeight: '80vh', color: TXT, background: 'transparent' }}>
+      <aside style={{ width: 218, background: CARD, borderRight: `1px solid ${LINE}`, padding: '14px 8px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 14px' }}>
+          <span style={{ width: 30, height: 30, border: `1px solid ${GOLD}`, color: GOLD, display: 'grid', placeItems: 'center', fontSize: 15, fontWeight: 800 }}>⬡</span>
+          <span><div style={{ fontWeight: 800, fontSize: 13, letterSpacing: '.04em' }}>E-ACCOUNTANT</div><div style={{ fontSize: 8.5, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>FINANCE OS</div></span>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {NAVI.map(([id, l, ic]) => <button key={id} onClick={() => { setView(id); setAskR(null); }} style={{
+            display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+            background: view === id ? '#fff' : 'transparent', color: view === id ? '#000' : '#bcbcb8',
+            border: `1px solid ${view === id ? '#fff' : 'transparent'}`, padding: '8px 11px', fontSize: 12,
+            fontFamily: MONO, fontWeight: view === id ? 700 : 500, letterSpacing: '.02em', cursor: 'pointer', marginBottom: 2,
+          }}><span style={{ width: 15, textAlign: 'center' }}>{ic}</span>{l}</button>)}
+        </div>
+        <div style={{ borderTop: `1px solid ${LINE}`, padding: '11px 11px 2px', fontSize: 9.5, color: DIM, fontFamily: MONO }}>
+          <span style={{ color: GOLD }}>● {LT ? 'SISTEMA' : 'SYSTEM'}</span><div style={{ marginTop: 4 }}>{agentsActive} {LT ? 'agentai · uždarymas ĮJ' : 'agents · close ON'}</div><div style={{ marginTop: 2 }}>{clientId} · {twin.eventCount()} {LT ? 'įvykių' : 'events'}</div>
+        </div>
+      </aside>
+      <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* AFOS-style top bar: quick ask + live badge */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 22px', borderBottom: `1px solid ${LINE}` }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, background: 'rgba(255,255,255,0.03)', border: `1px solid ${LINE}`, padding: '8px 13px' }}>
+            <span style={{ color: DIM }}>◎</span>
+            <input value={ask} onChange={(e) => setAsk(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ask.trim()) { runAsk(ask); } }} placeholder={LT ? 'Klauskite bet ko apie savo finansus…' : 'Ask anything about your finances…'} style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: TXT, fontSize: 12.5, fontFamily: MONO }} />
+          </div>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${GREEN}55`, color: GREEN, padding: '7px 12px', fontSize: 10, fontFamily: MONO, letterSpacing: '.06em' }}>● {LT ? 'GYVA' : 'LIVE'} · {twin.eventCount()}</span>
+        </div>
+        {askR && <div style={{ margin: '12px 22px 0', border: `1px solid ${LINE}`, background: CARD, padding: '11px 14px', fontSize: 12.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><span style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{askR.q} · {askR.r.needsLlm ? (LT ? 'intentas nerastas' : 'no intent') : askR.r.intent}</span><button onClick={() => setAskR(null)} style={{ background: 'transparent', border: 'none', color: DIM, cursor: 'pointer' }}>✕</button></div>
+          <div style={{ marginTop: 6, lineHeight: 1.65 }}>{askR.r.answer}</div>
+          {askR.r.needsLlm && onAi && <div style={{ marginTop: 8 }}><Btn small onClick={() => aiFallback(askR.q, askR.r, (text) => setAskR((p) => ({ q: p.q, r: { ...p.r, answer: text, needsLlm: false, intent: 'AI' } })))}>◆ {LT ? 'Klausti AI (su faktais)' : 'Ask AI (with facts)'}</Btn></div>}
+        </div>}
+        <div style={{ flex: 1, minWidth: 0, padding: '18px 22px', overflowX: 'hidden' }}>
+          {view === 'cmd' && <Cmd />}
+          {view === 'agents' && <Agents />}
+          {view === 'tx' && (typeof TransactionsDesk === 'function' ? <TransactionsDesk twin={twin} inbox={inbox} lang={lang} actor="buhalterė" /> : <div style={{ color: DIM }}>Transactions desk unavailable.</div>)}
+          {view === 'inv' && (typeof InvoiceDesk === 'function' ? <InvoiceDesk twin={twin} inbox={inbox} lang={lang} /> : <div style={{ color: DIM }}>Invoice desk unavailable.</div>)}
+          {view === 'graph' && <Graph />}
+          {view === 'twin' && (typeof ScenarioLab === 'function' ? <ScenarioLab twin={twin} lang={lang} onAiTranslate={(txt) => onAi('Konvertuok verslo scenarijų į JSON parametrus. Atsakyk TIK grynu JSON: {"revMul":n,"costMul":n,"wageMul":n,"hires":n,"hireGross":n,"vatRate":n,"loseTop":n,"monthlyCostDelta":n}. Praleisk neminimus raktus.', 'SCENARIJUS: ' + txt)} /> : <div style={{ color: DIM }}>Scenario lab unavailable.</div>)}
+          {view === 'fc' && <Forecast />}
+          {view === 'tre' && <Treasury />}
+          {view === 'pay' && <Payroll />}
+          {view === 'close' && <Close />}
+          {view === 'comp' && <Compliance />}
+          {view === 'advisor' && <Advisor />}
+          {view === 'company' && <Company />}
+          {view === 'integrations' && <Integrations />}
+          {view === 'saft' && <Saft />}
+          {view === 'settings' && <Settings />}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+  return EAccountantView;
+})();
+
 /* ── SAF-T → Twin bridge: feed the app's parsed file into the event log.
       Deterministic event ids make re-importing the same file a no-op. ── */
 function ftIngestSaft(twin, parsed) {
@@ -23521,7 +24015,6 @@ function TAXAI({ onExit, initialView } = {}) {
           { k: "integrations", lbl: lang === "lt" ? "ERP integracijos" : "ERP integrations", hint: "view", run: () => setView("integrations") },
           { k: "einvoicing", lbl: lang === "lt" ? "E. sąskaitų centras" : "E-Invoicing hub", hint: "view", run: () => setView("einvoicing") },
           { k: "eaccountant", lbl: lang === "lt" ? "E. buhalteris (Finance OS)" : "E-Accountant (Finance OS)", hint: "view", run: () => setView("eaccountant") },
-          { k: "ftsim", lbl: lang === "lt" ? "Simuliacijos (E. buhalteris)" : "Scenarios (E-Accountant)", hint: "view", run: () => { setEacc(s => ({ ...s, tab: "ftsim" })); setView("eaccountant"); } },
           { k: "eauditor", lbl: lang === "lt" ? "E. auditorius (Audito parengtis)" : "E-Auditor (Audit Readiness)", hint: "view", run: () => setView("eauditor") },
           { k: "arch", lbl: lang === "lt" ? "Architektūra" : "Architecture", hint: "view", run: () => setView("arch") },
           { k: "agents", lbl: lang === "lt" ? "Agentai" : "Agents", hint: "view", run: () => setView("agents") },
@@ -24950,7 +25443,7 @@ function TAXAI({ onExit, initialView } = {}) {
         </div>}
 
         {view === "eaccountant" && <div key="eaccountant" style={{ flex: 1, overflow: "auto", padding: "32px 40px", animation: "fadeUp .4s ease" }}>
-          <EAccountantTab lang={lang} t={t} audit={audit} parsed={fileData?.parsed} fileName={fileName} runResult={runResult} findings={findings} recon={reconResult} isaf={isafData} erp={erp} einv={einv} eacc={eacc} setEacc={setEacc} setToast={setToast} openView={setView} />
+          <EAccountantView lang={lang} parsed={fileData?.parsed} external={{ runResult, recon: reconResult, isaf: isafData, einv }} setToast={setToast} onAi={(s, u) => callAI(s, u, [], [])} />
         </div>}
 
         {view === "eauditor" && <div key="eauditor" style={{ flex: 1, overflow: "auto", padding: "26px 32px", animation: "fadeUp .4s ease" }}>
