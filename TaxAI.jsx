@@ -798,6 +798,10 @@ const AGENTS = [
   { id: "doc-qa", name: "Document Q&A", nameLt: "Dokumentų klausimai", icon: "❓" },
   { id: "ner", name: "Entity Extraction", nameLt: "Esybių ištraukimas", icon: "⊡" },
   { id: "next-action", name: "Next-Best-Action", nameLt: "Kitas geriausias veiksmas", icon: "➤" },
+  { id: "gl-anomaly", name: "GL Anomaly (Isolation Forest)", nameLt: "DK anomalijos (miškas)", icon: "◊" },
+  { id: "invoice-ae", name: "Invoice Anomaly (Autoencoder)", nameLt: "Sąskaitų anomalijos (AE)", icon: "◈" },
+  { id: "exposure", name: "Exposure Simulation (Monte Carlo)", nameLt: "Ekspozicijos simuliacija", icon: "▴" },
+  { id: "cross-period", name: "Cross-Period Review", nameLt: "Periodų analizė", icon: "≈" },
 ];
 
 const BASE_PROMPT = `You are a Lithuanian tax intelligence expert. CRITICAL RULES:
@@ -871,6 +875,10 @@ function routeAgents(m) {
   if (/supplier|vies|shell/.test(t)) r.push("supplier");
   if (/workpaper/.test(t)) r.push("auditdoc");
   if (/report|summar/.test(t)) r.push("reporting");
+  if (/anomal|outlier|nukrypim|forest|miškas|dk anomal|ledger anomal/.test(t)) r.push("gl-anomaly");
+  if (/invoice anomal|sąskait.*anomal|saskait.*anomal|autoencoder|autoenkoder/.test(t)) r.push("invoice-ae");
+  if (/exposure|ekspozicij|monte ?carlo|bauda|delspinig|penalty/.test(t)) r.push("exposure");
+  if (/cross.?period|periodų|tendencij|\btrend\b/.test(t)) r.push("cross-period");
   if (/semantic|legal search|ieškoti teis|prasm|embedding/.test(t)) r.push("semantic-search");
   if (/document|dokument|q&a|pdf|aktas|letter|laišk|sutart/.test(t)) r.push("doc-qa");
   if (/entit|extract|rekvizit|esyb|article ref|straipsni|ištrauk/.test(t)) r.push("ner");
@@ -2910,6 +2918,43 @@ function auditCopilotAnswer(query, ctx) {
   const F = ctx.findings || [];
   const ids = [];
   const reply = (text) => ({ handled: true, text, ruleIds: [...new Set(ids)].slice(0, 8) });
+  // ── ML engines, callable inline from chat (deterministic — engines decide, the LLM is not invoked) ──
+  const _mp = ctx.parsed;
+  if (_mp && /(anomal|outlier|nukrypim|itartin|suspici|forest|misk|autoencoder|autoenkoder|flagged|pazym)/.test(q)) {
+    try {
+      const _gl = MLIntel.glAnomalyScore(_mp, ctx.lang), _ae = MLIntel.invoiceAnomalyScore(_mp, ctx.lang);
+      const _fz = MLIntel.fuseAnomalies(_gl, _ae), _both = _fz.filter((x) => x.both).length;
+      if (!_fz.length) return reply(lt ? "Anomalijų varikliai (izoliacijos miškas + autoenkoderis) nerado pažymėtų įrašų šioje rinkmenoje." : "The anomaly engines (isolation forest + autoencoder) found no flagged entries in this file.");
+      return reply((lt ? `Anomalijų varikliai pažymėjo ${_fz.length} įrašus: ${_both} aukšto prioriteto (sutampa abu kanalai).` : `The anomaly engines flagged ${_fz.length} entries: ${_both} high-priority (both channels agree).`) + "\n" +
+        _fz.slice(0, 8).map((x, i) => `${i + 1}. ${x.id} — ${(x.combined * 100).toFixed(0)}/100 [${x.channels.join("+")}${x.both ? "+BOTH" : ""}] ${x.why}`).join("\n") +
+        (lt ? "\n\nVisas reitinguotas sąrašas — skirtuke „Žvalgyba“ → Anomalijos." : "\n\nFull ranked list — Intelligence tab → Anomalies."));
+    } catch (e) { return reply(lt ? "Nepavyko paleisti anomalijų variklio šiai rinkmenai." : "Could not run the anomaly engine on this file."); }
+  }
+  if (_mp && /(ekspozicij|exposure|monte ?carlo|bauda|baudos|delspinig|penalty|questioned tax)/.test(q)) {
+    try {
+      const _cur = MLIntel.summarizePeriod(_mp);
+      const _ex = MLIntel.simulateExposure(MLIntel.findingsToExposure(F, _cur), {});
+      const _eur = (n) => "€" + Math.round(n || 0).toLocaleString("lt-LT");
+      return reply((lt ? "Mokestinės ekspozicijos simuliacija (8 000 atkartojamų scenarijų; MAĮ 139/140):" : "Tax-exposure simulation (8,000 reproducible scenarios; MAĮ 139/140):") +
+        `\n• ${lt ? "tikėtina" : "expected"}: ${_eur(_ex.mean)}` +
+        `\n• ${lt ? "mediana P50" : "median P50"}: ${_eur(_ex.p50)}` +
+        `\n• ${lt ? "blogesnis P90" : "downside P90"}: ${_eur(_ex.p90)}` +
+        `\n• ${lt ? "blogiausias" : "worst"}: ${_eur(_ex.max)}` +
+        (lt ? "\n\nOrientacinis modelis (prielaidos — „Žvalgyba“ → Ekspozicija)." : "\n\nIndicative model (assumptions — Intelligence tab → Exposure)."));
+    } catch (e) { return reply(lt ? "Nepavyko apskaičiuoti ekspozicijos." : "Could not compute exposure."); }
+  }
+  if (_mp && /(tendencij|\btrend\b|periodu|cross.?period|men.*pokyt|month.?over.?month)/.test(q)) {
+    try {
+      const _m = MLIntel.summarizePeriod(_mp).metrics, _eur = (n) => "€" + Math.round(n || 0).toLocaleString("lt-LT");
+      return reply((lt ? "Periodo rodikliai (kryžminei periodų analizei reikia ~4 ankstesnių periodų iš Biuro režimo):" : "Period metrics (cross-period analysis needs ~4 prior periods from Bureau Mode):") +
+        `\n• ${lt ? "Pardavimo PVM" : "Output VAT"}: ${_eur(_m.outputVat)}` +
+        `\n• ${lt ? "Pirkimo PVM" : "Input VAT"}: ${_eur(_m.inputVat)}` +
+        `\n• ${lt ? "Mokėtinas PVM" : "Net VAT"}: ${_eur(_m.netVat)}` +
+        `\n• ${lt ? "Atskaitos santykis" : "Deduction ratio"}: ${(_m.deductionRatio || 0).toFixed(1)}%` +
+        `\n• ${lt ? "Savaitgalio įrašai" : "Weekend entries"}: ${_m.weekendJe}`);
+    } catch (e) { return reply(lt ? "Nepavyko apskaičiuoti periodo rodiklių." : "Could not compute period metrics."); }
+  }
+
   const fLine = (f) => `[${f.severity}] ${f.rule_id} — ${(lt ? (f.ruleMeta && f.ruleMeta.titleLt) : (f.ruleMeta && f.ruleMeta.titleEn)) || f.title}`;
 
   // explicit rule mention → full WHAT/WHY/HOW explanation
