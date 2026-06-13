@@ -277,6 +277,219 @@ const MLIntel = (function () {
 const IntelligencePanel = MLIntel.Panel;
 const _mlIntelCache = new Map();
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  ML PLUS LAYER  —  semantic legal search · document Q&A · deterministic NER
+//                   · next-best-action.  All wired into TAXAI; neural parts
+//  lazy-load a multilingual embedding model from CDN (bundler-proof dynamic
+//  import) and fall back to the existing keyword search if it can't load, so
+//  nothing here can break the app offline. ML proposes; rules decide.
+// ═══════════════════════════════════════════════════════════════════════════
+const MLPlus = (function () {
+  const C = { ink: "#0a0a0a", panel: "#0e1013", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff" };
+  const MONO = "var(--m)";
+  // bundler-proof runtime import of a CDN ESM module (hidden from Vite/esbuild)
+  const dynImport = (u) => (new Function("u", "return import(u)"))(u);
+
+  // ════════ Deterministic NER (pure JS, glass-box — no model) ════════
+  function extractEntities(text) {
+    const s = String(text || ""), out = { lawRefs: [], amounts: [], dates: [], ibans: [], vatCodes: [], codes: [] };
+    let m;
+    const lawRe = /\b(PVM[ĮI]?|PM[ĮI]?|GPM[ĮI]?|MA[ĮI]?|PVM[ĮI]?|SAF-?T|ATAD|VA-\d{1,3})\s*(?:įstatymo\s*)?(\d{1,3})?\s*str\.?(?:\s*(\d{1,2})\s*d\.?)?/gi;
+    while ((m = lawRe.exec(s))) { if (m[2] || /VA-/.test(m[1])) out.lawRefs.push({ raw: m[0].replace(/\s+/g, " ").trim(), law: m[1], article: (m[2] ? m[2] + " str." : "") + (m[3] ? " " + m[3] + " d." : "") }); if (lawRe.lastIndex === m.index) lawRe.lastIndex++; }
+    const moneyRe = /(?:€|\bEUR\b)\s?(\d[\d.,\s]*\d|\d)|(\d[\d.,\s]*\d|\d)\s?(?:€|\bEUR\b)/g;
+    while ((m = moneyRe.exec(s))) out.amounts.push(m[0].replace(/\s+/g, " ").trim());
+    const dateRe = /\b(\d{4}[-.]\d{2}[-.]\d{2}|\d{2}\.\d{2}\.\d{4})\b/g;
+    while ((m = dateRe.exec(s))) out.dates.push(m[1]);
+    const ibanRe = /\bLT\d{18}\b/g; while ((m = ibanRe.exec(s))) out.ibans.push(m[0]);
+    const vatRe = /\bLT\d{9}(?:\d{3})?\b/g; while ((m = vatRe.exec(s))) out.vatCodes.push(m[0]);
+    const codeRe = /\b\d{9}\b/g; while ((m = codeRe.exec(s))) out.codes.push(m[0]);
+    const dedupe = (a) => { const seen = new Set(), r = []; for (const x of a) { const k = typeof x === "string" ? x : JSON.stringify(x); if (!seen.has(k)) { seen.add(k); r.push(x); } } return r; };
+    Object.keys(out).forEach((k) => (out[k] = dedupe(out[k]).slice(0, 40)));
+    out.codes = out.codes.filter((c) => !out.vatCodes.includes("LT" + c));
+    return out;
+  }
+
+  // ════════ Next-best-action (heuristic now; choices logged for future RL) ════════
+  function recommendActions(ctx) {
+    const L = (lt, en) => (ctx.lang === "lt" ? lt : en), recs = [];
+    if (ctx.gate && ctx.gate.verdict === "rejected") recs.push({ id: "fix-blocking", prio: 1, action: L("Pašalinti blokuojančias XSD/technines klaidas (Auto-taisymas)", "Clear blocking XSD/technical errors (Auto-Fix)"), why: L("i.SAF-T atmestų šią rinkmeną", "i.SAF-T would reject this file"), tab: "fix" });
+    const both = (ctx.fused || []).filter((f) => f.both).length;
+    if (both) recs.push({ id: "review-both", prio: 2, action: L(both + " sandoriai pažymėti abiejų variklių — peržiūrėti pirmiausia", "Review the " + both + " transactions flagged by both engines first"), why: L("Didžiausio pasitikėjimo anomalijos", "Highest-confidence anomalies"), tab: "insights" });
+    const fl = (ctx.fused || []).length;
+    if (!both && fl) recs.push({ id: "triage", prio: 4, action: L("Peržiūrėti " + fl + " pažymėtus įrašus žvalgyboje", "Triage the " + fl + " flagged entries in Intelligence"), why: L("ML pasiūlė; sprendžia taisyklės", "ML proposed; rules decide"), tab: "insights" });
+    if (ctx.risk && (ctx.risk.band === "high" || ctx.risk.band === "elevated")) recs.push({ id: "top-rules", prio: 3, action: L("Spręsti didžiausios rizikos taisykles", "Resolve the top risk-weighted rules"), why: L("Rizikos juosta: ", "Risk band: ") + ctx.risk.band, tab: "tests" });
+    if (!recs.length) recs.push({ id: "export", prio: 9, action: L("Eksportuoti audito ataskaitą / VMI atsakymą", "Export the audit report / VMI reply"), why: L("Rinkmena atrodo švari", "File looks clean"), tab: "tests" });
+    return recs.sort((a, b) => a.prio - b.prio);
+  }
+
+  // ════════ Semantic engine — lazy multilingual embeddings (e5-small, q8) ════════
+  const Sem = {
+    ready: false, loading: null, extractor: null, index: null, err: null,
+    async ensure(onStatus) {
+      if (this.ready) return true;
+      if (this.loading) return this.loading;
+      this.loading = (async () => {
+        try {
+          onStatus && onStatus("loading-model");
+          const mod = await dynImport("https://esm.sh/@huggingface/transformers@3");
+          this.extractor = await mod.pipeline("feature-extraction", "Xenova/multilingual-e5-small", { dtype: "q8" });
+          this.ready = true; return true;
+        } catch (e) { this.err = String(e && e.message || e); this.loading = null; return false; }
+      })();
+      return this.loading;
+    },
+    async embed(texts, kind) { const pref = kind === "query" ? "query: " : "passage: "; const o = await this.extractor(texts.map((t) => pref + t), { pooling: "mean", normalize: true }); return o.tolist(); },
+    async buildIndex(docs, onStatus) { if (this.index && this.index.n === docs.length) return true; const ok = await this.ensure(onStatus); if (!ok) return false; onStatus && onStatus("embedding"); const vecs = await this.embed(docs.map((d) => d.text), "passage"); this.index = { n: docs.length, docs, vecs }; return true; },
+    cos(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; },
+    async search(query, k, onStatus) { const ok = await this.ensure(onStatus); if (!ok) return { error: this.err || "model unavailable" }; if (!this.index) return { error: "index not built" }; const qv = (await this.embed([query], "query"))[0]; const scored = this.index.docs.map((d, i) => ({ doc: d, score: this.cos(qv, this.index.vecs[i]) })).sort((a, b) => b.score - a.score).slice(0, k || 6); return { results: scored }; },
+  };
+
+  // ════════ Document Q&A helpers ════════
+  function chunkText(text, size, overlap) {
+    const words = String(text).split(/\s+/).filter(Boolean), chunks = []; let id = 0;
+    for (let i = 0; i < words.length; i += Math.max(1, size - overlap)) { const slice = words.slice(i, i + size).join(" "); if (slice.trim()) { const pm = slice.match(/\[p\.(\d+)\]/); chunks.push({ id: id++, page: pm ? +pm[1] : null, text: slice }); } if (i + size >= words.length) break; }
+    return chunks;
+  }
+  async function extractPdf(file, onStatus) {
+    const pdfjs = await dynImport("https://esm.sh/pdfjs-dist@4");
+    try { pdfjs.GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@4/build/pdf.worker.min.mjs"; } catch (e) { }
+    const buf = await file.arrayBuffer(), pdf = await pdfjs.getDocument({ data: buf }).promise, pages = [];
+    for (let p = 1; p <= pdf.numPages; p++) { onStatus && onStatus("page " + p + "/" + pdf.numPages); const pg = await pdf.getPage(p), tc = await pg.getTextContent(); pages.push({ page: p, text: tc.items.map((it) => it.str).join(" ") }); }
+    return pages;
+  }
+  async function answerDoc(chunks, question, callAIFn, lang, onStatus) {
+    const ok = await Sem.ensure(onStatus); if (!ok) return { error: Sem.err || "model unavailable" };
+    onStatus && onStatus("embedding");
+    const cv = await Sem.embed(chunks.map((c) => c.text), "passage"), qv = (await Sem.embed([question], "query"))[0];
+    const top = chunks.map((c, i) => ({ c, s: Sem.cos(qv, cv[i]) })).sort((a, b) => b.s - a.s).slice(0, 5);
+    const context = top.map((t) => "[" + (t.c.page ? "p." + t.c.page : "#" + t.c.id) + "] " + t.c.text).join("\n\n");
+    const sys = lang === "lt"
+      ? "Atsakyk TIK iš pateiktų dokumento ištraukų. Cituok šaltinį [p.N]. Jei atsakymo dokumente nėra, aiškiai pasakyk. Nehaliucinuok."
+      : "Answer ONLY from the provided document excerpts. Cite the source as [p.N]. If the answer is not in the document, say so clearly. Do not hallucinate.";
+    onStatus && onStatus("answering");
+    const ans = await callAIFn(sys, "DOCUMENT EXCERPTS:\n" + context + "\n\nQUESTION: " + question, [], []);
+    return { answer: ans, sources: top.map((t) => ({ page: t.c.page, id: t.c.id, score: t.s })) };
+  }
+
+  // ════════ shared UI bits ════════
+  const chip = (txt, col) => <span style={{ fontFamily: MONO, fontSize: 10, color: col, border: "1px solid " + col, padding: "2px 7px", marginRight: 6, marginBottom: 6, display: "inline-block" }}>{txt}</span>;
+  function EntityStrip(props) {
+    const e = props.ents, lang = props.lang, L = (lt, en) => (lang === "lt" ? lt : en);
+    if (!e) return null;
+    const total = e.lawRefs.length + e.amounts.length + e.dates.length + e.ibans.length + e.vatCodes.length + e.codes.length;
+    if (!total) return null;
+    return (<div style={{ marginTop: 10, padding: "10px 12px", border: "1px solid " + C.soft, background: C.panel }}>
+      <div style={{ fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, marginBottom: 8 }}>{L("Ištrauktos esybės (taisyklėmis, be modelio)", "Extracted entities (rule-based, no model)")}</div>
+      <div>{e.lawRefs.map((r, i) => <span key={"l" + i}>{chip((r.law + " " + r.article).trim(), C.cold)}</span>)}{e.amounts.map((a, i) => <span key={"a" + i}>{chip(a, C.green)}</span>)}{e.dates.map((d, i) => <span key={"d" + i}>{chip(d, C.amber)}</span>)}{e.vatCodes.map((v, i) => <span key={"v" + i}>{chip(v, C.text)}</span>)}{e.ibans.map((b, i) => <span key={"b" + i}>{chip(b, C.muted)}</span>)}{e.codes.map((c, i) => <span key={"c" + i}>{chip(c, C.muted)}</span>)}</div>
+    </div>);
+  }
+
+  // ════════ Legal Search panel (semantic, keyword fallback) ════════
+  function LegalSearchPanel(props) {
+    const lang = props.lang || "lt", L = (lt, en) => (lang === "lt" ? lt : en);
+    const [q, setQ] = useState(""); const [status, setStatus] = useState(""); const [busy, setBusy] = useState(false); const [res, setRes] = useState(null); const [ents, setEnts] = useState(null);
+    const statusText = (s) => s === "loading-model" ? L("Kraunamas modelis (~110MB, tik pirmą kartą)…", "Loading model (~110MB, first time only)…") : s === "embedding" ? L("Indeksuojama…", "Indexing…") : s;
+    const run = async () => {
+      if (!q.trim()) return; setBusy(true); setRes(null); setEnts(extractEntities(q));
+      const corpus = LEGAL_DB.map((d) => ({ id: d.id, text: (lang === "lt" ? d.text : d.textEn) || d.text, law: d.law, article: d.article, penalty: d.penalty }));
+      try {
+        const built = await Sem.buildIndex(corpus, (s) => setStatus(statusText(s)));
+        if (!built) throw new Error(Sem.err || "model unavailable");
+        setStatus(L("Ieškoma…", "Searching…"));
+        const r = await Sem.search(q, 6, (s) => setStatus(statusText(s)));
+        if (r.error) throw new Error(r.error);
+        setRes({ items: r.results }); setStatus("");
+      } catch (e) {
+        const kw = (typeof searchLegalDB === "function" ? searchLegalDB(q) : []).slice(0, 6);
+        setRes({ fallback: true, items: kw.map((x) => ({ doc: { law: x.law, article: x.article, text: (lang === "lt" ? x.text : x.textEn) || x.text, penalty: x.penalty }, score: null })) });
+        setStatus(L("Neuroninis modelis nepasiekiamas — raktažodžių paieška", "Neural model unavailable — keyword search"));
+      }
+      setBusy(false);
+    };
+    const inp = { width: "100%", boxSizing: "border-box", background: "#000", border: "1px solid " + C.line, color: C.text, fontFamily: MONO, fontSize: 13, padding: "10px 12px", outline: "none" };
+    return (<div style={{ fontFamily: MONO, color: C.text }}>
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>{L("Semantinė teisės paieška per teisės aktų bazę — randa pagal prasmę, ne tik raktažodžius (LT + EN).", "Semantic search over the legal database — finds by meaning, not just keywords (LT + EN).")}</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") run(); }} placeholder={L("pvz. atvirkštinis PVM statybose", "e.g. reverse charge on construction")} style={{ ...inp, flex: "1 1 280px" }} />
+        <button onClick={run} disabled={busy} style={{ fontFamily: MONO, cursor: busy ? "default" : "pointer", background: "#fff", color: "#000", border: "none", padding: "10px 18px", fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", opacity: busy ? 0.5 : 1 }}>{busy ? L("Dirbu…", "Working…") : L("Ieškoti", "Search")}</button>
+      </div>
+      {status && <div style={{ fontSize: 11, color: C.amber, marginTop: 10 }}>{status}</div>}
+      <EntityStrip ents={ents} lang={lang} />
+      {res && <div style={{ marginTop: 14, border: "1px solid " + C.line }}>
+        {res.fallback && <div style={{ padding: "8px 13px", background: C.panel2, fontSize: 10, color: C.amber, borderBottom: "1px solid " + C.soft }}>{L("Atsarginė raktažodžių paieška", "Keyword fallback results")}</div>}
+        {res.items.length === 0 && <div style={{ padding: 16, color: C.muted, fontSize: 13 }}>{L("Nieko nerasta.", "Nothing found.")}</div>}
+        {res.items.map((it, i) => <div key={i} style={{ padding: "12px 14px", borderTop: i ? "1px solid " + C.soft : "none" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+            <span style={{ color: C.cold, fontWeight: 700, fontSize: 12.5 }}>{it.doc.law} {it.doc.article}</span>
+            {it.score != null && <span style={{ fontSize: 10, color: C.muted }}>{L("atitiktis", "match")} {(it.score * 100).toFixed(0)}%</span>}
+          </div>
+          {it.score != null && <div style={{ height: 3, background: C.soft, marginTop: 6 }}><div style={{ height: "100%", width: Math.max(3, it.score * 100) + "%", background: C.cold }} /></div>}
+          <div style={{ fontSize: 12, color: "#c9ccd2", marginTop: 8, lineHeight: 1.55 }}>{it.doc.text}</div>
+          {it.doc.penalty && <div style={{ fontSize: 10.5, color: C.amber, marginTop: 6 }}>⚠ {it.doc.penalty}</div>}
+        </div>)}
+      </div>}
+    </div>);
+  }
+
+  // ════════ Document Q&A panel (paste / .txt / lazy PDF) ════════
+  function DocQAPanel(props) {
+    const lang = props.lang || "lt", L = (lt, en) => (lang === "lt" ? lt : en);
+    const [docText, setDocText] = useState(""); const [fileName, setFileName] = useState(""); const [q, setQ] = useState(""); const [status, setStatus] = useState(""); const [busy, setBusy] = useState(false); const [ans, setAns] = useState(null); const [ents, setEnts] = useState(null);
+    const statusText = (s) => s === "loading-model" ? L("Kraunamas modelis…", "Loading model…") : s === "embedding" ? L("Ieškoma dokumente…", "Searching the document…") : s === "answering" ? L("Rengiamas atsakymas…", "Composing the answer…") : s;
+    const onFile = async (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return; setFileName(f.name); setStatus("");
+      try { if (/\.pdf$/i.test(f.name)) { setStatus(L("Skaitomas PDF…", "Reading PDF…")); const pages = await extractPdf(f, (s) => setStatus(s)); setDocText(pages.map((p) => "[p." + p.page + "] " + p.text).join("\n\n")); setStatus(L("PDF nuskaitytas (" + pages.length + " psl.)", "PDF read (" + pages.length + " pages)")); } else { setDocText(await f.text()); setStatus(""); } }
+      catch (err) { setStatus(L("Nepavyko nuskaityti PDF — įklijuokite tekstą ranka", "Could not read PDF — paste the text manually")); }
+    };
+    const ask = async () => {
+      if (!docText.trim() || !q.trim()) return; setBusy(true); setAns(null); setEnts(extractEntities(docText));
+      try { const chunks = chunkText(docText, 180, 40); const out = await answerDoc(chunks, q, callAI, lang, (s) => setStatus(statusText(s))); setAns(out.error ? { error: out.error } : out); setStatus(""); }
+      catch (e) { setAns({ error: String(e && e.message || e).slice(0, 160) }); }
+      setBusy(false);
+    };
+    const inp = { width: "100%", boxSizing: "border-box", background: "#000", border: "1px solid " + C.line, color: C.text, fontFamily: MONO, fontSize: 12.5, padding: "10px 12px", outline: "none" };
+    return (<div style={{ fontFamily: MONO, color: C.text }}>
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>{L("Klauskite apie dokumentą (VMI raštą, sutartį, aktą). Atsakymas grindžiamas TIK įkeltu tekstu su [p.N] nuorodomis.", "Ask about a document (a VMI letter, contract, act). The answer is grounded ONLY in the uploaded text with [p.N] citations.")}</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+        <label style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.cold, border: "1px solid " + C.cold, padding: "8px 14px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".05em", textTransform: "uppercase" }}>{L("Įkelti PDF / .txt", "Upload PDF / .txt")}<input type="file" accept=".pdf,.txt,.md" onChange={onFile} style={{ display: "none" }} /></label>
+        {fileName && <span style={{ fontSize: 11, color: C.muted }}>{fileName}</span>}
+      </div>
+      <textarea value={docText} onChange={(e) => setDocText(e.target.value)} placeholder={L("…arba įklijuokite dokumento tekstą čia", "…or paste the document text here")} spellCheck={false} style={{ ...inp, minHeight: 120, resize: "vertical", fontSize: 11.5, lineHeight: 1.5 }} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} placeholder={L("Klausimas apie dokumentą…", "A question about the document…")} style={{ ...inp, flex: "1 1 280px" }} />
+        <button onClick={ask} disabled={busy} style={{ fontFamily: MONO, cursor: busy ? "default" : "pointer", background: "#fff", color: "#000", border: "none", padding: "10px 18px", fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", opacity: busy ? 0.5 : 1 }}>{busy ? L("Dirbu…", "Working…") : L("Klausti", "Ask")}</button>
+      </div>
+      {status && <div style={{ fontSize: 11, color: C.amber, marginTop: 10 }}>{status}</div>}
+      {ans && ans.error && <div style={{ fontSize: 12, color: C.red, marginTop: 12 }}>{L("Klaida: ", "Error: ") + ans.error}{L(" — galite įklijuoti tekstą ir bandyti dar kartą.", " — you can paste text and try again.")}</div>}
+      {ans && ans.answer && <div style={{ marginTop: 12, border: "1px solid " + C.line, background: C.panel, padding: "14px 16px" }}>
+        <div style={{ fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.cold, marginBottom: 8 }}>{L("Atsakymas (iš dokumento)", "Answer (grounded in the document)")}</div>
+        <div style={{ fontSize: 13, color: "#dfe2e7", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{ans.answer}</div>
+        {ans.sources && ans.sources.length > 0 && <div style={{ marginTop: 10, fontSize: 10.5, color: C.muted }}>{L("Šaltiniai: ", "Sources: ")}{ans.sources.map((s, i) => (s.page ? "p." + s.page : "#" + s.id) + " (" + (s.score * 100).toFixed(0) + "%)").join(" · ")}</div>}
+      </div>}
+      <EntityStrip ents={ents} lang={lang} />
+    </div>);
+  }
+
+  // ════════ Next-best-action card (rendered on the Intelligence tab) ════════
+  function NextActions(props) {
+    const recs = props.recs || [], lang = props.lang || "lt", L = (lt, en) => (lang === "lt" ? lt : en);
+    if (!recs.length) return null;
+    return (<div style={{ fontFamily: MONO, border: "1px solid " + C.line, background: C.panel, marginBottom: 16 }}>
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid " + C.soft, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: C.cold, fontWeight: 700 }}>{L("Rekomenduojami veiksmai", "Recommended next steps")}</div>
+      {recs.slice(0, 4).map((r, i) => <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderTop: i ? "1px solid " + C.soft : "none" }}>
+        <span style={{ width: 20, height: 20, flex: "0 0 20px", border: "1px solid " + C.cold, color: C.cold, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, color: C.text }}>{r.action}</div><div style={{ fontSize: 10.5, color: C.muted, marginTop: 2 }}>{r.why}</div></div>
+        {r.tab && <button onClick={() => { if (props.audit && props.audit.log) props.audit.log("NEXT_ACTION_CHOSEN", r.id); props.onGo && props.onGo(r.tab); }} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.cold, border: "1px solid " + C.cold, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".05em", textTransform: "uppercase" }}>{L("Eiti →", "Go →")}</button>}
+      </div>)}
+    </div>);
+  }
+
+  return { extractEntities, recommendActions, Sem, LegalSearchPanel, DocQAPanel, NextActions };
+})();
+const LegalSearchPanel = MLPlus.LegalSearchPanel;
+const DocQAPanel = MLPlus.DocQAPanel;
+
+
 
 const LEGAL_DB = [
 // ── PVM ──
@@ -456,6 +669,10 @@ const AGENTS = [
   { id: "supplier", name: "Supplier Risk", nameLt: "Tiekėjų rizika", icon: "◖" },
   { id: "auditdoc", name: "Audit Documentation", nameLt: "Audito dokumentai", icon: "◗" },
   { id: "reporting", name: "AI Reporting", nameLt: "Ataskaitų generavimas", icon: "◙" },
+  { id: "semantic-search", name: "Semantic Legal Search", nameLt: "Semantinė teisinė paieška", icon: "⌕" },
+  { id: "doc-qa", name: "Document Q&A", nameLt: "Dokumentų klausimai", icon: "❓" },
+  { id: "ner", name: "Entity Extraction", nameLt: "Esybių ištraukimas", icon: "⊡" },
+  { id: "next-action", name: "Next-Best-Action", nameLt: "Kitas geriausias veiksmas", icon: "➤" },
 ];
 
 const BASE_PROMPT = `You are a Lithuanian tax intelligence expert. CRITICAL RULES:
@@ -529,6 +746,10 @@ function routeAgents(m) {
   if (/supplier|vies|shell/.test(t)) r.push("supplier");
   if (/workpaper/.test(t)) r.push("auditdoc");
   if (/report|summar/.test(t)) r.push("reporting");
+  if (/semantic|legal search|ieškoti teis|prasm|embedding/.test(t)) r.push("semantic-search");
+  if (/document|dokument|q&a|pdf|aktas|letter|laišk|sutart/.test(t)) r.push("doc-qa");
+  if (/entit|extract|rekvizit|esyb|article ref|straipsni|ištrauk/.test(t)) r.push("ner");
+  if (/next.?best|next step|recommend|rekomend|ką daryti|veiksm/.test(t)) r.push("next-action");
   return r.length ? [...new Set(r)] : ["tax"];
 }
 
@@ -24531,6 +24752,8 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "reconcile", grpLt: "Procesas", grpEn: "Process", en: `i.SAF Reconcile${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}`, lt: `i.SAF sutikrinimas${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}` },
                   { id: "vatclose", grpLt: "Procesas", grpEn: "Process", en: `VAT Close${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}`, lt: `PVM uždarymas${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}` },
                                   { id: "insights", grpLt: "Analizė", grpEn: "Intelligence", en: "Intelligence", lt: "Žvalgyba" },
+                  { id: "legalsearch", grpLt: "Analizė", grpEn: "Intelligence", en: "Legal Search", lt: "Teisinė paieška" },
+                  { id: "docqa", grpLt: "Analizė", grpEn: "Intelligence", en: "Doc Q&A", lt: "Dok. klausimai" },
                 ].flatMap((tab, ti, arr) => [(ti === 0 || arr[ti - 1].grpLt !== tab.grpLt) && <span key={"g-" + tab.id} style={{ alignSelf: "stretch", display: "inline-flex", alignItems: "center", padding: "0 10px 0 16px", fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".14em", color: "#6b6b66", textTransform: "uppercase", borderLeft: ti === 0 ? "none" : `1px solid ${PL_LINE}`, marginLeft: ti === 0 ? 0 : 10 }}>{lang === "lt" ? tab.grpLt : tab.grpEn}</span>,
                   <button key={tab.id} onClick={() => {
                     setSaftTab(tab.id);
@@ -24700,8 +24923,13 @@ function TAXAI({ onExit, initialView } = {}) {
                 let mc = _mlIntelCache.get(ck);
                 if (!mc) { try { mc = { gl: MLIntel.glAnomalyScore(parsed, lang), ae: MLIntel.invoiceAnomalyScore(parsed, lang), cur: MLIntel.summarizePeriod(parsed) }; } catch (e) { mc = { gl: [], ae: [], cur: { metrics: {} } }; } _mlIntelCache.set(ck, mc); }
                 let g = null, rk = null; try { g = simulateAcceptanceGate(parsed, findings); rk = computeRiskScore(findings); } catch (e) { }
-                return <IntelligencePanel glScored={mc.gl} aeScored={mc.ae} findings={findings} priorSummaries={[]} currentSummary={mc.cur} gate={g} risk={rk} lang={lang} audit={audit} />;
+                const fused = MLIntel.fuseAnomalies(mc.gl, mc.ae); const recs = MLPlus.recommendActions({ gate: g, risk: rk, fused: fused, lang: lang });
+                return (<div><MLPlus.NextActions recs={recs} lang={lang} audit={audit} onGo={(tb) => setSaftTab(tb)} /><IntelligencePanel glScored={mc.gl} aeScored={mc.ae} findings={findings} priorSummaries={[]} currentSummary={mc.cur} gate={g} risk={rk} lang={lang} audit={audit} /></div>);
               })()}
+
+              {saftTab === "legalsearch" && <div style={panel}><LegalSearchPanel lang={lang} /></div>}
+
+              {saftTab === "docqa" && <div style={panel}><DocQAPanel lang={lang} /></div>}
 
               {saftTab === "ai" && <div style={panel}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
