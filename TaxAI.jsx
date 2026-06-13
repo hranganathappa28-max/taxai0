@@ -613,6 +613,1357 @@ const ComplianceUI = (function () {
 const ComplianceDashboard = ComplianceUI.Dashboard;
 const COMPLIANCE_API = ComplianceUI.API;
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  AUDIT LIFECYCLE LAYER  —  TAS/ISA 200..720 decision-support, wired into TAXAI.
+//  Standards the engine already computes auto-populate from the loaded file;
+//  everything else is an explicit auditor-judgment node. Materiality is a SUGGESTED
+//  benchmark to confirm; the opinion is INDICATIVE support the auditor signs off —
+//  never the machine deciding. Plus 3 deterministic CAATs (fuzzy dup / related-party
+//  graph / classical variables sampling). Dependency-free; no D3 (monolith can't import it).
+// ═══════════════════════════════════════════════════════════════════════════
+const AuditLifecycle = (function () {
+  const C = { ink: "#0a0a0a", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff", violet: "#b197fc" };
+  const MONO = "var(--m)";
+  const eur = (n) => "€" + Math.round(Number(n) || 0).toLocaleString("lt-LT");
+  function rng(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) % 1e6) / 1e6; }; }
+  function lev(a, b) { a = String(a); b = String(b); const m = a.length, n = b.length; if (!m) return n; if (!n) return m; const d = Array.from({ length: n + 1 }, (_, i) => i); for (let i = 1; i <= m; i++) { let prev = d[0]; d[0] = i; for (let j = 1; j <= n; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t; } } return d[n]; }
+  const sim = (a, b) => { const L = Math.max(String(a).length, String(b).length) || 1; return 1 - lev(a, b) / L; };
+
+  // ── The 27 standards (TAS = Lithuanian adoption of ISA; numbering matches ISA) ──
+  // auto: which engine signal feeds it (null = auditor input). phase groups the lifecycle.
+  const TAS_STANDARDS = [
+    { code: "TAS 200", phase: "accept", auto: null, lt: "Bendrieji tikslai", en: "Overall objectives", art: "Engagement memo" },
+    { code: "TAS 210", phase: "accept", auto: null, lt: "Užduoties sąlygos", en: "Terms of engagement", art: "Engagement letter" },
+    { code: "TAS 220", phase: "accept", auto: null, lt: "Kokybės valdymas (EQCR)", en: "Quality management (EQCR)", art: "EQCR checklist" },
+    { code: "TAS 300", phase: "plan", auto: "plan", lt: "Planavimas", en: "Planning", art: "Audit plan" },
+    { code: "TAS 315", phase: "plan", auto: "risk", lt: "Rizikos nustatymas", en: "Risk identification", art: "Risk matrix" },
+    { code: "TAS 320", phase: "plan", auto: "materiality", lt: "Reikšmingumas", en: "Materiality", art: "Materiality memo" },
+    { code: "TAS 230", phase: "plan", auto: "workpapers", lt: "Dokumentavimas", en: "Documentation", art: "Workpaper index" },
+    { code: "TAS 240", phase: "risk", auto: "fraud", lt: "Sukčiavimo rizika", en: "Fraud risk", art: "Fraud CAATs" },
+    { code: "TAS 250", phase: "risk", auto: null, lt: "Įstatymai ir reglamentai", en: "Laws & regulations", art: "Compliance checklist" },
+    { code: "TAS 265", phase: "risk", auto: "controls", lt: "Kontrolės trūkumai", en: "Control deficiencies", art: "COSO mapping" },
+    { code: "TAS 330", phase: "risk", auto: null, lt: "Atsakas į riziką", en: "Responses to risk", art: "Procedure plan" },
+    { code: "TAS 402", phase: "evidence", auto: null, lt: "Grupės / paslaugų org.", en: "Service org. / group", art: "Consolidation checks" },
+    { code: "TAS 501", phase: "evidence", auto: null, lt: "Audito įrodymai", en: "Audit evidence", art: "Evidence file" },
+    { code: "TAS 505", phase: "evidence", auto: null, lt: "Išorės patvirtinimai", en: "External confirmations", art: "Bank confirmations" },
+    { code: "TAS 510", phase: "evidence", auto: null, lt: "Pradiniai likučiai", en: "Opening balances", art: "Opening-balance memo" },
+    { code: "TAS 520", phase: "evidence", auto: "analytics", lt: "Analitinės procedūros", en: "Analytical procedures", art: "Analytics workpaper" },
+    { code: "TAS 530", phase: "evidence", auto: "sampling", lt: "Atranka", en: "Audit sampling", art: "Sampling plan" },
+    { code: "TAS 540", phase: "evidence", auto: null, lt: "Apskaitiniai vertinimai", en: "Accounting estimates", art: "Estimates testing" },
+    { code: "TAS 550", phase: "evidence", auto: "relatedparty", lt: "Susiję šalys", en: "Related parties", art: "Related-party map" },
+    { code: "TAS 260", phase: "complete", auto: null, lt: "Bendravimas su vadovybe", en: "Communication w/ TCWG", art: "Management letter" },
+    { code: "TAS 560", phase: "complete", auto: null, lt: "Vėlesni įvykiai", en: "Subsequent events", art: "Post-B/S review" },
+    { code: "TAS 570", phase: "complete", auto: "goingconcern", lt: "Veiklos tęstinumas", en: "Going concern", art: "Going-concern memo" },
+    { code: "TAS 580", phase: "complete", auto: null, lt: "Rašytiniai patvirtinimai", en: "Written representations", art: "Representation letter" },
+    { code: "TAS 600", phase: "report", auto: null, lt: "Specialūs atvejai", en: "Special considerations", art: "NGO/public-sector annex" },
+    { code: "TAS 700", phase: "report", auto: "opinion", lt: "Nuomonės formavimas", en: "Forming the opinion", art: "Auditor's report" },
+    { code: "TAS 705", phase: "report", auto: "opinion", lt: "Modifikuota nuomonė", en: "Modified opinion", art: "Basis for modification" },
+    { code: "TAS 720", phase: "report", auto: null, lt: "Kita informacija", en: "Other information", art: "Mgmt-report consistency" },
+  ];
+  const PHASES = [
+    { id: "accept", lt: "1 · Priėmimas ir sąlygos", en: "1 · Acceptance & Terms" },
+    { id: "plan", lt: "2 · Planavimas", en: "2 · Planning" },
+    { id: "risk", lt: "3 · Rizika ir kontrolės", en: "3 · Risk & Controls" },
+    { id: "evidence", lt: "4 · Įrodymai ir procedūros", en: "4 · Evidence & Procedures" },
+    { id: "complete", lt: "5 · Užbaigimas", en: "5 · Completion" },
+    { id: "report", lt: "6 · Atskaitomybė", en: "6 · Reporting" },
+  ];
+
+  // ── CAAT 1: fuzzy near-duplicate detection (same party + amount + close date, different invoice no) ──
+  function nearDuplicates(parsed) {
+    const recs = [];
+    const push = (arr, kind) => (arr || []).forEach((iv) => {
+      const party = iv.customerID || iv.supplierID || "?";
+      const g = (iv.documentTotals && (iv.documentTotals.grossTotal || iv.documentTotals.netTotal)) || 0;
+      if (g > 0 && iv.invoiceNo) recs.push({ no: String(iv.invoiceNo), date: iv.invoiceDate || "", party: String(party), gross: g, kind });
+    });
+    push(parsed && parsed.sales && parsed.sales.items, "sale");
+    push(parsed && parsed.purchases && parsed.purchases.items, "purchase");
+    const buckets = {};
+    recs.forEach((r) => { const k = r.kind + "|" + r.party + "|" + Math.round(r.gross); (buckets[k] = buckets[k] || []).push(r); });
+    const clusters = [];
+    Object.values(buckets).forEach((g) => {
+      if (g.length < 2) return;
+      // distinct invoice numbers only (exact dup is caught elsewhere); flag same amount+party+near date
+      const nos = [...new Set(g.map((x) => x.no))];
+      if (nos.length < 2) return;
+      let maxSim = 0, near = false;
+      for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) {
+        if (g[i].no === g[j].no) continue;
+        const dd = Math.abs((new Date(g[i].date) - new Date(g[j].date)) / 86400000);
+        if (isFinite(dd) && dd <= 31) near = true;
+        maxSim = Math.max(maxSim, sim(g[i].no, g[j].no));
+      }
+      if (!near && maxSim < 0.6) return;
+      clusters.push({ party: g[0].party, kind: g[0].kind, gross: g[0].gross, count: g.length, nos: nos.slice(0, 6), maxSim: +maxSim.toFixed(2), dates: [...new Set(g.map((x) => x.date))].slice(0, 6) });
+    });
+    clusters.sort((a, b) => (b.maxSim + b.count / 10) - (a.maxSim + a.count / 10));
+    return clusters.slice(0, 40);
+  }
+
+  // ── CAAT 2: related-party / counterparty relationship map (reciprocal + concentration) ──
+  function relatedPartyGraph(parsed) {
+    const cust = {}, supp = {}, val = {};
+    const add = (m, iv) => { const id = iv.customerID || iv.supplierID; if (!id) return; m[id] = (m[id] || 0) + 1; val[id] = (val[id] || 0) + ((iv.documentTotals && (iv.documentTotals.grossTotal || iv.documentTotals.netTotal)) || 0); };
+    (parsed && parsed.sales && parsed.sales.items || []).forEach((iv) => add(cust, iv));
+    (parsed && parsed.purchases && parsed.purchases.items || []).forEach((iv) => add(supp, iv));
+    const ids = [...new Set([...Object.keys(cust), ...Object.keys(supp)])];
+    const totalVal = Object.values(val).reduce((a, b) => a + b, 0) || 1;
+    let nodes = ids.map((id) => ({ id, asCust: cust[id] || 0, asSupp: supp[id] || 0, both: !!(cust[id] && supp[id]), value: val[id] || 0, share: (val[id] || 0) / totalVal }));
+    nodes.sort((a, b) => b.value - a.value);
+    nodes = nodes.slice(0, 40); // cap for layout
+    const center = { id: "__ENTITY__", center: true, value: totalVal };
+    const flags = [];
+    nodes.forEach((n) => { if (n.both) flags.push({ id: n.id, type: "reciprocal", msg: "Both customer and supplier (related-party / circular-flow candidate)" }); });
+    nodes.filter((n) => n.share >= 0.1).forEach((n) => flags.push({ id: n.id, type: "concentration", msg: "Concentration: " + (n.share * 100).toFixed(0) + "% of counterparty value" }));
+    // edges: entity ↔ each counterparty
+    const edges = nodes.map((n) => ({ a: "__ENTITY__", b: n.id, both: n.both }));
+    return { nodes: [center, ...nodes], edges, flags: flags.slice(0, 20), totalCounterparties: ids.length };
+  }
+  function forceLayout(nodes, edges, W, H, seed) {
+    const r = rng(seed || 7);
+    const pos = {};
+    nodes.forEach((n) => { pos[n.id] = n.center ? { x: W / 2, y: H / 2 } : { x: W * (0.15 + 0.7 * r()), y: H * (0.15 + 0.7 * r()) }; });
+    const k = Math.sqrt((W * H) / Math.max(nodes.length, 1)) * 0.55;
+    for (let it = 0; it < 60; it++) {
+      const disp = {}; nodes.forEach((n) => (disp[n.id] = { x: 0, y: 0 }));
+      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+        const a = pos[nodes[i].id], b = pos[nodes[j].id]; let dx = a.x - b.x, dy = a.y - b.y; let d = Math.hypot(dx, dy) || 0.01;
+        const f = (k * k) / d; disp[nodes[i].id].x += (dx / d) * f; disp[nodes[i].id].y += (dy / d) * f; disp[nodes[j].id].x -= (dx / d) * f; disp[nodes[j].id].y -= (dy / d) * f;
+      }
+      edges.forEach((e) => { const a = pos[e.a], b = pos[e.b]; if (!a || !b) return; let dx = a.x - b.x, dy = a.y - b.y; let d = Math.hypot(dx, dy) || 0.01; const f = (d * d) / k; disp[e.a].x -= (dx / d) * f; disp[e.a].y -= (dy / d) * f; disp[e.b].x += (dx / d) * f; disp[e.b].y += (dy / d) * f; });
+      const t = 12 * (1 - it / 60);
+      nodes.forEach((n) => { if (n.center) return; const dp = disp[n.id]; const dl = Math.hypot(dp.x, dp.y) || 0.01; pos[n.id].x = Math.max(24, Math.min(W - 24, pos[n.id].x + (dp.x / dl) * Math.min(dl, t))); pos[n.id].y = Math.max(24, Math.min(H - 24, pos[n.id].y + (dp.y / dl) * Math.min(dl, t))); });
+    }
+    return pos;
+  }
+
+  // ── CAAT 3: classical variables sampling (mean-per-unit estimation) ──
+  function classicalVariablesSampling(parsed, materiality) {
+    const vals = [];
+    const grab = (arr) => (arr || []).forEach((iv) => { const v = (iv.documentTotals && (iv.documentTotals.netTotal || iv.documentTotals.grossTotal)) || 0; if (v > 0) vals.push(v); });
+    grab(parsed && parsed.sales && parsed.sales.items); grab(parsed && parsed.purchases && parsed.purchases.items);
+    const N = vals.length;
+    if (N < 2) return { ok: false };
+    const mean = vals.reduce((a, b) => a + b, 0) / N;
+    const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (N - 1)) || 1;
+    const Z = 1.96; // 95%
+    const A = materiality || (mean * N * 0.01); // tolerable error: materiality, else 1% of population
+    const n0 = Math.pow((N * Z * sd) / A, 2);
+    const n = Math.max(5, Math.min(N, Math.ceil(n0 / (1 + n0 / N))));
+    const r = rng(1337); const idx = new Set(); while (idx.size < n) idx.add(Math.floor(r() * N));
+    const samp = [...idx].map((i) => vals[i]);
+    const sm = samp.reduce((a, b) => a + b, 0) / n;
+    const ssd = Math.sqrt(samp.reduce((a, b) => a + (b - sm) * (b - sm), 0) / Math.max(n - 1, 1)) || sd;
+    const projected = N * sm;
+    const precision = N * Z * (ssd / Math.sqrt(n)) * Math.sqrt(Math.max(1 - n / N, 0));
+    return { ok: true, N, mean, sd, n, A, projected, precision, popTotal: mean * N, lower: projected - precision, upper: projected + precision };
+  }
+
+  function suggestMateriality(parsed) {
+    const rev = (parsed && parsed.sales && parsed.sales.items || []).reduce((a, iv) => a + ((iv.documentTotals && iv.documentTotals.netTotal) || 0), 0);
+    if (rev <= 0) return null;
+    const planning = rev * 0.0075; // 0.5–1% revenue benchmark → midpoint 0.75%
+    return { revenue: rev, lowPct: 0.005, highPct: 0.01, planning, performance: planning * 0.75 };
+  }
+
+  // ── Lifecycle assessment: deterministic status per standard + rollup ──
+  function assessLifecycle(ctx) {
+    const parsed = ctx.parsed || {}, F = ctx.findings || [], risk = ctx.risk || {}, gate = ctx.gate || {};
+    const lt = ctx.lang === "lt";
+    const crit = F.filter((f) => f.severity === "Critical").length, high = F.filter((f) => f.severity === "High").length;
+    const fraudHits = F.filter((f) => /fraud|benford|duplicate|sukci/i.test([f.category, f.rule_id, f.title].join(" "))).length;
+    const rp = relatedPartyGraph(parsed), dups = nearDuplicates(parsed), mat = suggestMateriality(parsed);
+    const band = risk.band || "clean";
+    const opinionAttention = crit > 0 || gate.verdict === "rejected";
+
+    const sig = {
+      risk: { st: band === "high" || band === "elevated" ? "attention" : "auto", d: (lt ? "Rizikos balas " : "Risk score ") + (risk.score != null ? risk.score : "—") + (risk.perRule && risk.perRule[0] ? " · " + risk.perRule[0].rule_id : "") },
+      materiality: { st: "progress", d: mat ? (lt ? "Siūloma planavimo riba " : "Suggested planning materiality ") + eur(mat.planning) + " (0.75% " + (lt ? "pajamų — patvirtinkite" : "revenue — confirm") + ")" : (lt ? "Reikia pajamų bazės" : "Need a revenue base") },
+      fraud: { st: fraudHits || dups.length || rp.flags.some((f) => f.type === "reciprocal") ? "attention" : "auto", d: (lt ? "Benford/dublikatai: " : "Benford/dup findings: ") + fraudHits + " · " + (lt ? "panašūs dublikatai " : "near-dups ") + dups.length + " · " + (lt ? "abipusės šalys " : "reciprocal ") + rp.flags.filter((f) => f.type === "reciprocal").length },
+      analytics: { st: "auto", d: lt ? "Periodų analitika ir kryžminė peržiūra paruoštos" : "Period analytics + cross-period review ready" },
+      sampling: { st: "auto", d: lt ? "MUS + klasikinė kintamųjų atranka prieinamos" : "MUS + classical variables sampling available" },
+      relatedparty: { st: rp.flags.length ? "attention" : "auto", d: (lt ? "Sandorio šalys: " : "Counterparties: ") + rp.totalCounterparties + " · " + (lt ? "žymos " : "flags ") + rp.flags.length },
+      workpapers: { st: F.length ? "progress" : "input", d: (lt ? "Darbo dokumentai iš " : "Workpapers from ") + F.length + (lt ? " radinių" : " findings") },
+      goingconcern: { st: band === "high" ? "attention" : "input", d: lt ? "Reikia auditoriaus vertinimo (scenarijai)" : "Auditor assessment required (scenarios)" },
+      controls: { st: "input", d: lt ? "COSO 5 komponentų sąsaja — auditoriaus įvestis" : "COSO 5-component mapping — auditor input" },
+      plan: { st: F.length ? "progress" : "input", d: lt ? "Rizikos matrica iš variklio; planą patvirtina auditorius" : "Risk matrix from engine; plan confirmed by auditor" },
+      opinion: { st: opinionAttention ? "attention" : "progress", d: opinionAttention ? (lt ? "Svarstytina modifikuota nuomonė (kritinių: " + crit + ", vartai: " + (gate.label ? gate.label[lt ? 1 : 0] : "—") + ") — sprendžia auditorius" : "Consider modified opinion (criticals: " + crit + ", gate: " + (gate.label ? gate.label[0] : "—") + ") — auditor decides") : (lt ? "Nemodifikuota nuomonė preliminariai galima — patvirtina auditorius" : "Unmodified opinion provisionally supportable — auditor confirms") },
+    };
+
+    const standards = TAS_STANDARDS.map((s) => {
+      const a = s.auto && sig[s.auto];
+      return { ...s, status: a ? a.st : "input", detail: a ? a.d : (lt ? "Auditoriaus įvestis ir darbo dokumentas" : "Auditor input & workpaper") };
+    });
+    const score = { auto: 0, attention: 0, progress: 0, input: 0 };
+    standards.forEach((s) => score[s.status]++);
+    const completion = Math.round(((score.auto + score.progress * 0.5) / standards.length) * 100);
+    return { standards, rollup: { completion, attention: score.attention, autoFilled: score.auto, total: standards.length, blocking: opinionAttention }, caats: { dups, rp, sampling: classicalVariablesSampling(parsed, mat ? mat.planning : 0), materiality: mat } };
+  }
+
+  // ── Panel ──
+  const TONE = { auto: C.green, attention: C.red, progress: C.cold, input: C.faint };
+  const BADGE = { auto: "AUTO", attention: "ATTENTION", progress: "DRAFT", input: "AUDITOR" };
+
+  function Panel(props) {
+    const lang = props.lang || "lt"; const L = (a, b) => (lang === "lt" ? a : b);
+    const A = useMemo(() => assessLifecycle({ parsed: props.parsed, findings: props.findings, risk: props.risk, gate: props.gate, lang }), [props.parsed, props.findings, props.risk, props.gate, lang]);
+    const [tab, setTab] = useState("lifecycle");
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const tabBtn = (id, label) => <button onClick={() => setTab(id)} style={{ fontFamily: MONO, cursor: "pointer", background: tab === id ? C.cold : "transparent", color: tab === id ? "#001" : C.muted, border: "1px solid " + (tab === id ? C.cold : C.line), padding: "6px 13px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".05em" }}>{label}</button>;
+
+    const rp = A.caats.rp, pos = useMemo(() => forceLayout(rp.nodes, rp.edges, 640, 380, 7), [rp]);
+    const flagged = new Set(rp.flags.map((f) => f.id));
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid " + C.line, flexWrap: "wrap", gap: 10 }}>
+          <div><div style={eyebrow}>{L("Audito ciklas · TAS/ISA 200–720", "Audit lifecycle · TAS/ISA 200–720")}</div><div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{L("Užtikrinimo darbo eiga", "Assurance workflow")}</div></div>
+          <div style={{ display: "flex", gap: 8 }}>{tabBtn("lifecycle", L("Ciklas", "Lifecycle"))}{tabBtn("caats", L("CAAT analizė", "CAATs"))}</div>
+        </div>
+
+        {/* rollup */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 0, borderBottom: "1px solid " + C.line }}>
+          {[[L("Užbaigta", "Completion"), A.rollup.completion + "%", C.cold], [L("Auto-užpildyta", "Auto-filled"), A.rollup.autoFilled + "/" + A.rollup.total, C.green], [L("Reikia dėmesio", "Need attention"), String(A.rollup.attention), A.rollup.attention ? C.red : C.muted], [L("Nuomonė", "Opinion"), A.rollup.blocking ? L("Modifikuotina", "Modify?") : L("Nemodif.", "Unmod."), A.rollup.blocking ? C.red : C.green]].map((m, i) =>
+            <div key={i} style={{ flex: "1 1 140px", padding: "12px 18px", borderRight: i < 3 ? "1px solid " + C.soft : "none" }}>
+              <div style={{ fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted }}>{m[0]}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: m[2], marginTop: 3 }}>{m[1]}</div>
+            </div>)}
+        </div>
+
+        {tab === "lifecycle" && <div style={{ padding: "6px 0" }}>
+          {PHASES.map((ph) => <div key={ph.id}>
+            <div style={{ padding: "12px 18px 8px", fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: C.violet, fontWeight: 700 }}>{L(ph.lt, ph.en)}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "0 18px 10px" }}>
+              {A.standards.filter((s) => s.phase === ph.id).map((s) => <div key={s.code} style={{ flex: "1 1 280px", minWidth: 240, border: "1px solid " + C.line, borderLeft: "3px solid " + TONE[s.status], background: C.panel2, padding: "10px 12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 12.5 }}>{s.code} <span style={{ color: C.muted, fontWeight: 400 }}>· {L(s.lt, s.en)}</span></span>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".08em", color: TONE[s.status], border: "1px solid " + TONE[s.status], padding: "2px 6px", whiteSpace: "nowrap" }}>{BADGE[s.status]}</span>
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>{s.detail}</div>
+                <div style={{ fontSize: 9.5, color: C.faint, marginTop: 6 }}>▸ {s.art}</div>
+              </div>)}
+            </div>
+          </div>)}
+          <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+            {L("„AUTO“ = apskaičiuota iš šios rinkmenos. „DRAFT“ = preliminaru, tvirtina auditorius. „AUDITOR“ = reikia profesinio sprendimo. Reikšmingumas — orientacinė riba; nuomonė — sprendžiamoji parama, ne automatinė išvada.", "“AUTO” = computed from this file. “DRAFT” = provisional, auditor confirms. “AUDITOR” = professional judgment required. Materiality is an indicative benchmark; the opinion is decision-support, not an automated conclusion.")}
+          </div>
+        </div>}
+
+        {tab === "caats" && <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 18 }}>
+          {/* near-duplicates */}
+          <div style={{ border: "1px solid " + C.line, background: C.panel2 }}>
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid " + C.soft, fontSize: 11, fontWeight: 700 }}>{L("Neryškūs dublikatai (ta pati šalis · suma · artima data, skirtingas Nr.) — TAS 240", "Fuzzy near-duplicates (same party · amount · close date, different no.) — TAS 240")} <span style={{ color: C.amber }}>{A.caats.dups.length}</span></div>
+            {A.caats.dups.length === 0 && <div style={{ padding: 14, fontSize: 12, color: C.muted }}>{L("Įtartinų dublikatų nerasta.", "No suspicious near-duplicates found.")}</div>}
+            {A.caats.dups.slice(0, 12).map((d, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "9px 14px", borderTop: "1px solid " + C.soft, fontSize: 11.5 }}>
+              <span style={{ width: 70, color: d.kind === "sale" ? C.cold : C.violet, fontWeight: 700, textTransform: "uppercase" }}>{d.kind}</span>
+              <span style={{ width: 130, color: C.text }}>{d.party}</span>
+              <span style={{ width: 90, color: C.amber, textAlign: "right" }}>{eur(d.gross)}</span>
+              <span style={{ flex: 1, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.nos.join(" / ")}</span>
+              <span style={{ width: 60, textAlign: "right", color: d.maxSim > 0.8 ? C.red : C.faint }}>sim {d.maxSim}</span>
+            </div>)}
+          </div>
+
+          {/* related-party graph */}
+          <div style={{ border: "1px solid " + C.line, background: C.panel2 }}>
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid " + C.soft, fontSize: 11, fontWeight: 700 }}>{L("Sandorio šalių žemėlapis (abipusės · koncentracija) — TAS 550", "Counterparty relationship map (reciprocal · concentration) — TAS 550")}</div>
+            <svg viewBox="0 0 640 380" style={{ width: "100%", height: "auto", display: "block", background: C.ink }}>
+              {rp.edges.map((e, i) => { const a = pos[e.a], b = pos[e.b]; if (!a || !b) return null; return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={e.both ? C.red : C.soft} strokeWidth={e.both ? 1.4 : 0.6} />; })}
+              {rp.nodes.map((n, i) => { const p = pos[n.id]; if (!p) return null; if (n.center) return <g key={i}><circle cx={p.x} cy={p.y} r={11} fill={C.cold} /><text x={p.x} y={p.y - 15} fontSize="10" fill={C.cold} textAnchor="middle" fontFamily={MONO} fontWeight="700">{L("ĮMONĖ", "ENTITY")}</text></g>;
+                const rad = 4 + Math.min(10, (n.value ? Math.sqrt(n.value) / 40 : 0)); const fl = flagged.has(n.id);
+                return <g key={i}><circle cx={p.x} cy={p.y} r={rad} fill={n.both ? C.red : fl ? C.amber : C.muted} opacity={0.9} /><text x={p.x} y={p.y - rad - 3} fontSize="8" fill={fl ? C.amber : C.faint} textAnchor="middle" fontFamily={MONO}>{String(n.id).slice(0, 10)}</text></g>; })}
+            </svg>
+            <div style={{ padding: "8px 14px", fontSize: 10.5, color: C.muted, borderTop: "1px solid " + C.soft }}>
+              {rp.flags.length === 0 ? L("Susijusių šalių požymių nerasta.", "No related-party indicators.") : rp.flags.slice(0, 6).map((f, i) => <div key={i}><span style={{ color: f.type === "reciprocal" ? C.red : C.amber, fontWeight: 700 }}>{f.id}</span> — {f.msg}</div>)}
+            </div>
+          </div>
+
+          {/* classical variables sampling */}
+          <div style={{ border: "1px solid " + C.line, background: C.panel2 }}>
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid " + C.soft, fontSize: 11, fontWeight: 700 }}>{L("Klasikinė kintamųjų atranka (vidurkio metodas, 95%) — TAS 530", "Classical variables sampling (mean-per-unit, 95%) — TAS 530")}</div>
+            {!A.caats.sampling.ok ? <div style={{ padding: 14, fontSize: 12, color: C.muted }}>{L("Per mažai duomenų atrankai.", "Not enough data for sampling.")}</div> :
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 0 }}>
+                {[[L("Populiacija N", "Population N"), String(A.caats.sampling.N)], [L("Imtis n", "Sample n"), String(A.caats.sampling.n)], [L("Leistina paklaida", "Tolerable error"), eur(A.caats.sampling.A)], [L("Įvertinta suma", "Projected total"), eur(A.caats.sampling.projected)], [L("Tikslumas ±", "Precision ±"), eur(A.caats.sampling.precision)], [L("Pasikliov. intervalas", "Confidence interval"), eur(A.caats.sampling.lower) + " … " + eur(A.caats.sampling.upper)]].map((m, i) =>
+                  <div key={i} style={{ flex: "1 1 150px", padding: "11px 14px", borderRight: "1px solid " + C.soft, borderTop: i > 2 ? "1px solid " + C.soft : "none" }}>
+                    <div style={{ fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted }}>{m[0]}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 3 }}>{m[1]}</div>
+                  </div>)}
+              </div>}
+            <div style={{ padding: "8px 14px", fontSize: 10, color: C.faint, borderTop: "1px solid " + C.soft }}>{L("Imties dydis pagal leistiną paklaidą (reikšmingumą). Vertina populiacijos sumą; faktinį iškraipymą nustatote įvedę audituotas imties reikšmes.", "Sample size driven by tolerable error (materiality). Estimates the population total; actual misstatement is evaluated once you enter audited sample values.")}</div>
+          </div>
+        </div>}
+      </div>
+    );
+  }
+
+  return { assessLifecycle, nearDuplicates, relatedPartyGraph, classicalVariablesSampling, suggestMateriality, TAS_STANDARDS, Panel };
+})();
+const AuditLifecyclePanel = AuditLifecycle.Panel;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  COLLABORATIVE WORKSPACE UI  —  the AuditWorkspace panel wired into TAXAI.
+//  Talks ONLY to the audit-workspace proxy (RBAC, sign-offs, CRDT, evidence live
+//  server-side). Point it via window.__TAXAI_WORKSPACE_API__ (default :8788). A token
+//  comes from window.__TAXAI_WORKSPACE_TOKEN__ or the dev sign-in below (prod: SSO).
+//  "Create engagement from this file" reuses AuditLifecycle.assessLifecycle so the
+//  Lifecycle tab and the Workspace share one assessment. Degrades gracefully offline.
+// ═══════════════════════════════════════════════════════════════════════════
+const WorkspaceUI = (function () {
+  const C = { ink: "#0a0a0a", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff", violet: "#b197fc" };
+  const MONO = "var(--m)";
+  const API = (typeof window !== "undefined" && window.__TAXAI_WORKSPACE_API__) || "http://localhost:8788";
+  const STATE_FLOW = ["draft", "prepared", "reviewed", "eqcr", "released"];
+  const STATE_TONE = { draft: C.faint, prepared: C.cold, reviewed: C.violet, eqcr: C.amber, released: C.green };
+  const NEXT_CAP = { prepared: "state.prepared", reviewed: "state.reviewed", eqcr: "state.eqcr", released: "state.release" };
+  const CAP_ROLES = { "state.prepared": ["partner", "manager", "senior", "staff"], "state.reviewed": ["partner", "manager", "senior"], "state.eqcr": ["partner"], "state.release": ["partner"] };
+
+  function useWorkspace(apiBase, token, engagementId) {
+    const [data, setData] = useState({ engagement: null, workpapers: [], eqcr: [], deficiencies: [] });
+    const [presence, setPresence] = useState([]);
+    const [connected, setConnected] = useState(false);
+    const wsRef = useRef(null);
+    const H = useCallback(() => ({ "Content-Type": "application/json", Authorization: "Bearer " + (token || "") }), [token]);
+    const refresh = useCallback(async () => { if (!engagementId || !token) return; try { const r = await fetch(apiBase + "/engagements/" + engagementId, { headers: H() }); if (r.ok) setData(await r.json()); } catch (e) { } }, [apiBase, engagementId, token, H]);
+    useEffect(() => {
+      refresh(); if (!engagementId || !token) return;
+      let stop = false, poll = null;
+      const connect = () => {
+        try {
+          const ws = new WebSocket(apiBase.replace(/^http/, "ws") + "/ws?token=" + encodeURIComponent(token)); wsRef.current = ws;
+          ws.onopen = () => { setConnected(true); ws.send(JSON.stringify({ type: "join", room: "eng:" + engagementId })); if (poll) { clearInterval(poll); poll = null; } };
+          ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } if (m.type === "presence") setPresence(m.users || []); else if (m.type === "workpaper.state" || m.type === "annot.op" || m.type === "chat") refresh(); };
+          ws.onclose = () => { setConnected(false); if (!stop && !poll) poll = setInterval(refresh, 12000); if (!stop) setTimeout(connect, 5000); };
+          ws.onerror = () => { try { ws.close(); } catch (e) { } };
+        } catch (e) { if (!poll) poll = setInterval(refresh, 12000); }
+      };
+      connect();
+      return () => { stop = true; if (poll) clearInterval(poll); try { wsRef.current && wsRef.current.close(); } catch (e) { } };
+    }, [apiBase, engagementId, token, refresh]);
+    const transition = useCallback(async (wpId, to) => { const r = await fetch(apiBase + "/workpapers/" + wpId + "/transition", { method: "POST", headers: H(), body: JSON.stringify({ to }) }); const j = await r.json().catch(() => ({})); await refresh(); return { ok: r.ok, ...j }; }, [apiBase, H, refresh]);
+    const annotate = useCallback(async (target, op) => { if (wsRef.current && wsRef.current.readyState === 1) wsRef.current.send(JSON.stringify({ type: "annot.op", room: "eng:" + engagementId, op })); await fetch(apiBase + "/engagements/" + engagementId + "/annotations/" + encodeURIComponent(target) + "/op", { method: "POST", headers: H(), body: JSON.stringify({ op }) }); }, [apiBase, engagementId, H]);
+    const getAnnotations = useCallback(async (target) => { try { const r = await fetch(apiBase + "/engagements/" + engagementId + "/annotations/" + encodeURIComponent(target), { headers: H() }); return r.ok ? r.json() : { comments: [], flags: [] }; } catch (e) { return { comments: [], flags: [] }; } }, [apiBase, engagementId, H]);
+    const logTime = useCallback(async (tasCode, minutes) => { await fetch(apiBase + "/engagements/" + engagementId + "/time", { method: "POST", headers: H(), body: JSON.stringify({ tasCode, minutes }) }); }, [apiBase, engagementId, H]);
+    const toggleEqcr = useCallback(async (checkId, checked) => { await fetch(apiBase + "/eqcr/" + checkId + "/toggle", { method: "POST", headers: H(), body: JSON.stringify({ checked }) }); await refresh(); }, [apiBase, H, refresh]);
+    return { ...data, presence, connected, refresh, transition, annotate, getAnnotations, logTime, toggleEqcr };
+  }
+
+  function TimeLogger(props) {
+    const ws = props.ws, L = props.L; const [tas, setTas] = useState("TAS 315"), [min, setMin] = useState("30");
+    return <div style={{ display: "flex", gap: 6, padding: "10px 18px", flexWrap: "wrap" }}>
+      <input value={tas} onChange={(e) => setTas(e.target.value)} style={{ width: 90, fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: "6px 8px", fontSize: 11 }} />
+      <input value={min} onChange={(e) => setMin(e.target.value)} type="number" style={{ width: 64, fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: "6px 8px", fontSize: 11 }} />
+      <button onClick={() => ws.logTime(tas, parseInt(min, 10) || 0)} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.cold, border: "1px solid " + C.cold, padding: "6px 12px", fontSize: 10.5, fontWeight: 700 }}>{L("Žymėti min.", "Log min")}</button>
+    </div>;
+  }
+
+  function Board(props) {
+    const apiBase = props.apiBase, token = props.token, engagementId = props.engagementId, role = props.role || "staff", lang = props.lang || "lt";
+    const L = (a, b) => (lang === "lt" ? a : b);
+    const ws = useWorkspace(apiBase, token, engagementId);
+    const [sel, setSel] = useState(null), [ann, setAnn] = useState({ comments: [], flags: [] }), [draft, setDraft] = useState("");
+    useEffect(() => { if (sel) ws.getAnnotations(sel).then(setAnn); }, [sel, ws.workpapers]);
+    const canDo = (to) => (CAP_ROLES[NEXT_CAP[to]] || []).includes(role);
+    const nextState = (s) => STATE_FLOW[STATE_FLOW.indexOf(s) + 1];
+    const doTransition = async (wp) => { const to = nextState(wp.state); if (!to) return; const r = await ws.transition(wp.id, to); if (!r.ok) alert(r.error || "transition refused"); };
+    const addComment = async () => { if (!draft.trim() || !sel) return; const id = "c" + Date.now() + Math.random().toString(36).slice(2, 6); await ws.annotate(sel, { kind: "comment.add", id, value: { id, text: draft.trim(), role, ts: Date.now() } }); setDraft(""); setTimeout(() => ws.getAnnotations(sel).then(setAnn), 250); };
+    const toggleFlag = async (label) => { const id = "f_" + label; await ws.annotate(sel, { kind: "flag.add", id, value: label }); setTimeout(() => ws.getAnnotations(sel).then(setAnn), 250); };
+    const openEqcr = (ws.eqcr || []).filter((e) => !e.checked).length;
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, borderTop: "1px solid " + C.line }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 18px", borderBottom: "1px solid " + C.soft, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>{ws.engagement ? ws.engagement.client_name : engagementId}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 11, color: C.muted }}>
+            <span style={{ color: C.violet, fontWeight: 700 }}>{role.toUpperCase()}</span>
+            <span><span style={{ width: 8, height: 8, borderRadius: 8, background: ws.connected ? C.green : C.amber, display: "inline-block", marginRight: 6 }} />{ws.connected ? L("gyva", "live") : L("apklausa", "polling")}</span>
+            <span>{(ws.presence || []).length} 👁 {(ws.presence || []).slice(0, 4).map((u) => u.name).join(", ")}</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <div style={{ flex: "2 1 420px", borderRight: "1px solid " + C.line }}>
+            <div style={{ padding: "10px 18px", fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, borderBottom: "1px solid " + C.soft }}>{L("Darbo dokumentai · pasirašymo eiga (TAS 230/220)", "Workpapers · sign-off flow (TAS 230/220)")}</div>
+            {(ws.workpapers || []).length === 0 && <div style={{ padding: 16, fontSize: 12.5, color: C.muted }}>{L("Darbo dokumentų dar nėra.", "No workpapers yet.")}</div>}
+            {(ws.workpapers || []).map((wp) => <div key={wp.id} onClick={() => setSel("wp:" + wp.id)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "11px 18px", borderTop: "1px solid " + C.soft, background: sel === "wp:" + wp.id ? "rgba(124,196,255,0.06)" : "transparent", fontSize: 12 }}>
+              <span style={{ width: 46, color: C.text, fontWeight: 700 }}>{wp.index_code}</span>
+              <span style={{ width: 64, color: C.muted }}>{wp.tas_code}</span>
+              <span style={{ flex: 1, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wp.title}</span>
+              <span style={{ width: 78, fontSize: 9, fontWeight: 700, letterSpacing: ".06em", color: STATE_TONE[wp.state], border: "1px solid " + STATE_TONE[wp.state], padding: "2px 6px", textAlign: "center", textTransform: "uppercase" }}>{wp.state}</span>
+              {nextState(wp.state) && <button disabled={!canDo(nextState(wp.state))} onClick={(e) => { e.stopPropagation(); doTransition(wp); }} title={canDo(nextState(wp.state)) ? "" : L("nepakanka teisių", "insufficient role")} style={{ fontFamily: MONO, cursor: canDo(nextState(wp.state)) ? "pointer" : "not-allowed", background: "transparent", color: canDo(nextState(wp.state)) ? C.green : C.faint, border: "1px solid " + (canDo(nextState(wp.state)) ? C.green : C.faint), padding: "4px 8px", fontSize: 9.5, fontWeight: 700 }}>→ {nextState(wp.state)}</button>}
+            </div>)}
+            {sel && <div style={{ borderTop: "1px solid " + C.line, background: C.panel2 }}>
+              <div style={{ padding: "10px 18px", fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.violet }}>{L("Pastabos ir žymos", "Annotations & flags")} · {sel}</div>
+              <div style={{ padding: "0 18px 10px", display: "flex", gap: 6, flexWrap: "wrap" }}>{["follow-up", "reviewed", "query", "risk"].map((f) => <button key={f} onClick={() => toggleFlag(f)} style={{ fontFamily: MONO, cursor: "pointer", background: (ann.flags || []).includes(f) ? C.amber : "transparent", color: (ann.flags || []).includes(f) ? "#001" : C.muted, border: "1px solid " + ((ann.flags || []).includes(f) ? C.amber : C.line), padding: "3px 9px", fontSize: 10 }}>{f}</button>)}</div>
+              {(ann.comments || []).map((c, i) => <div key={i} style={{ padding: "8px 18px", borderTop: "1px solid " + C.soft, fontSize: 12 }}><span style={{ color: C.cold, fontWeight: 700, fontSize: 9.5, textTransform: "uppercase" }}>{c.role}</span> <span style={{ color: C.text }}>{c.text}</span></div>)}
+              <div style={{ display: "flex", gap: 8, padding: "10px 18px" }}>
+                <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addComment(); }} placeholder={L("Pridėti pastabą…", "Add a comment…")} style={{ flex: 1, fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: "7px 10px", fontSize: 12 }} />
+                <button onClick={addComment} style={{ fontFamily: MONO, cursor: "pointer", background: C.cold, color: "#001", border: "none", padding: "7px 14px", fontSize: 11, fontWeight: 700 }}>{L("Siųsti", "Send")}</button>
+              </div>
+            </div>}
+          </div>
+          <div style={{ flex: "1 1 280px" }}>
+            <div style={{ padding: "10px 18px", fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, borderBottom: "1px solid " + C.soft }}>{L("EQCR sąrašas (TAS 220)", "EQCR checklist (TAS 220)")} {openEqcr > 0 && <span style={{ color: C.amber }}>· {openEqcr} {L("liko", "open")}</span>}</div>
+            {(ws.eqcr || []).map((e) => <label key={e.id} style={{ display: "flex", gap: 9, padding: "9px 18px", borderTop: "1px solid " + C.soft, fontSize: 11.5, color: C.text, cursor: role === "partner" ? "pointer" : "default", alignItems: "flex-start" }}>
+              <input type="checkbox" checked={!!e.checked} disabled={role !== "partner"} onChange={(ev) => ws.toggleEqcr(e.id, ev.target.checked)} style={{ marginTop: 2 }} />
+              <span style={{ color: e.checked ? C.green : C.muted }}>{e.item}</span>
+            </label>)}
+            <div style={{ padding: "10px 18px", borderTop: "1px solid " + C.line, fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted }}>{L("Laiko žymėjimas", "Time tracking")}</div>
+            <TimeLogger ws={ws} L={L} />
+          </div>
+        </div>
+        <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+          {L("Teisės tikrinamos serveryje. EQCR recenzentas ≠ užduoties partneris; išleidimui reikia užbaigto EQCR.", "Permissions enforced server-side. EQCR reviewer ≠ engagement partner; release requires EQCR complete.")}
+        </div>
+      </div>
+    );
+  }
+
+  function Panel(props) {
+    const lang = props.lang || "lt"; const L = (a, b) => (lang === "lt" ? a : b);
+    const [token, setToken] = useState((typeof window !== "undefined" && window.__TAXAI_WORKSPACE_TOKEN__) || "");
+    const [eng, setEng] = useState((typeof window !== "undefined" && window.__TAXAI_WORKSPACE_ENG__) || "");
+    const [role, setRole] = useState("partner");
+    const [name, setName] = useState("Auditorius");
+    const [busy, setBusy] = useState("");
+
+    const devSignIn = async () => {
+      setBusy("login");
+      try { const r = await fetch(API + "/auth/dev-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sub: name || "user", name: name, role: role, eng: eng }) }); const j = await r.json().catch(() => ({})); if (j.token) setToken(j.token); else alert(j.error || L("Prisijungimas neprieinamas (gamyboje – SSO).", "Sign-in unavailable (prod uses SSO).")); }
+      catch (e) { alert(L("Atitikties tarnyba nepasiekiama.", "Workspace service unavailable.")); }
+      setBusy("");
+    };
+    const createEng = async () => {
+      if (!token) { alert(L("Pirma prisijunkite.", "Sign in first.")); return; }
+      if (!props.parsed) { alert(L("Įkelkite SAF-T rinkmeną.", "Load a SAF-T file first.")); return; }
+      setBusy("create");
+      try {
+        const lifecycle = AuditLifecycle.assessLifecycle({ parsed: props.parsed, findings: props.findings || [], risk: null, gate: null, lang: lang });
+        const co = props.parsed.header && props.parsed.header.company;
+        const r = await fetch(API + "/engagements", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ clientName: (co && (co.name || co.registrationNumber)) || "Engagement", imonesKodas: (co && co.registrationNumber) || null, period: (props.parsed.header && props.parsed.header.periodStart) || null, lifecycle: lifecycle.rollup }) });
+        const j = await r.json().catch(() => ({}));
+        if (j.id) { setEng(j.id); await fetch(API + "/engagements/" + j.id + "/workpapers/from-findings", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ findings: props.findings || [] }) }); }
+        else alert(j.error || L("Nepavyko sukurti užduoties.", "Could not create engagement."));
+      } catch (e) { alert(L("Nepavyko sukurti užduoties (ar veikia tarnyba?).", "Could not create engagement (is the service running?).")); }
+      setBusy("");
+    };
+
+    const inp = { fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: "7px 10px", fontSize: 12 };
+    const btn = (bg) => ({ fontFamily: MONO, cursor: "pointer", background: bg, color: "#001", border: "none", padding: "7px 13px", fontSize: 11, fontWeight: 700 });
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ padding: "16px 18px", borderBottom: "1px solid " + C.line }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 }}>{L("Bendra darbo erdvė", "Collaborative workspace")}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{L("Komandinis auditas realiu laiku", "Real-time team audit")}</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "12px 18px", borderBottom: "1px solid " + C.soft }}>
+          {!token && <>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={L("Vardas", "Name")} style={{ ...inp, width: 130 }} />
+            <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inp, width: 110 }}>{["partner", "manager", "senior", "staff", "client"].map((r) => <option key={r} value={r}>{r}</option>)}</select>
+            <button onClick={devSignIn} disabled={busy === "login"} style={btn(C.cold)}>{busy === "login" ? "…" : L("Prisijungti (dev)", "Sign in (dev)")}</button>
+            <span style={{ fontSize: 10, color: C.faint }}>{L("gamyboje – SSO", "prod: SSO")}</span>
+          </>}
+          {token && <>
+            <span style={{ fontSize: 11, color: C.green }}>✓ {L("prisijungta", "signed in")} · {role}</span>
+            <input value={eng} onChange={(e) => setEng(e.target.value)} placeholder={L("Užduoties ID", "Engagement ID")} style={{ ...inp, width: 280 }} />
+            <button onClick={createEng} disabled={busy === "create"} style={btn(C.green)}>{busy === "create" ? "…" : L("Sukurti iš šios rinkmenos", "Create from this file")}</button>
+            <button onClick={() => setToken("")} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.muted, border: "1px solid " + C.line, padding: "7px 11px", fontSize: 10.5 }}>{L("Atsijungti", "Sign out")}</button>
+          </>}
+        </div>
+        {token && eng
+          ? <Board apiBase={API} token={token} engagementId={eng} role={role} lang={lang} />
+          : <div style={{ padding: 18, fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{L("Prisijunkite ir pasirinkite arba sukurkite užduotį. „Sukurti iš šios rinkmenos“ paims šios SAF-T gyvavimo ciklo vertinimą ir sugeneruos darbo dokumentus iš radinių.", "Sign in, then select or create an engagement. “Create from this file” takes this SAF-T’s lifecycle assessment and generates workpapers from the findings.")}</div>}
+      </div>
+    );
+  }
+
+  return { Panel, API };
+})();
+const WorkspacePanel = WorkspaceUI.Panel;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ADVANCED CAATs (deterministic, dependency-free) — wired into TAXAI.
+//   • Revenue time-series decomposition (trend / residual / period-end cutoff) — TAS 240/520
+//   • Segment clustering (k-means over counterparties) — TAS 315 risk segmentation
+//   • Contract review (clause + risk extraction over pasted text) — TAS 501/550/560/720
+//  These compute from the loaded SAF-T (first two) or pasted text (third). No models,
+//  no network — rule-based + classical statistics, so results are explainable/auditable.
+// ═══════════════════════════════════════════════════════════════════════════
+const AdvCAATs = (function () {
+  const C = { ink: "#0a0a0a", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff", violet: "#b197fc" };
+  const MONO = "var(--m)";
+  const eur = (n) => "€" + Math.round(Number(n) || 0).toLocaleString("lt-LT");
+  const rng = (seed) => { let s = (seed >>> 0) || 1; return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) % 1e6) / 1e6; }; };
+  const median = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const mad = (a) => { const m = median(a); return median(a.map((x) => Math.abs(x - m))); };
+
+  // ── CAAT 4: revenue time-series decomposition ──
+  function revenueDecomposition(parsed) {
+    const items = (parsed && parsed.sales && parsed.sales.items) || [];
+    const byMonth = {}, lastDays = {};
+    for (const iv of items) {
+      const d = String(iv.invoiceDate || "").slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      const m = d.slice(0, 7), net = (iv.documentTotals && iv.documentTotals.netTotal) || 0;
+      byMonth[m] = (byMonth[m] || 0) + net;
+      const day = +d.slice(8, 10), dim = new Date(+d.slice(0, 4), +d.slice(5, 7), 0).getDate();
+      (lastDays[m] = lastDays[m] || { total: 0, last3: 0 }); lastDays[m].total += net; if (day > dim - 3) lastDays[m].last3 += net;
+    }
+    const months = Object.keys(byMonth).sort();
+    if (months.length < 3) return { ok: false, reason: "Needs ≥3 months of dated sales (multi-month SAF-T)." };
+    const vals = months.map((m) => byMonth[m]);
+    // centered 3-pt moving-average trend
+    const trend = vals.map((_, i) => (i === 0 || i === vals.length - 1) ? null : (vals[i - 1] + vals[i] + vals[i + 1]) / 3);
+    const resid = vals.map((v, i) => trend[i] == null ? 0 : v - trend[i]);
+    const rMad = mad(resid.filter((_, i) => trend[i] != null)) || 1, rMed = median(resid.filter((_, i) => trend[i] != null));
+    const series = months.map((m, i) => {
+      const rz = trend[i] == null ? 0 : (resid[i] - rMed) / (1.4826 * rMad);
+      const cutoff = lastDays[m] && lastDays[m].total ? lastDays[m].last3 / lastDays[m].total : 0;
+      return { month: m, value: vals[i], trend: trend[i], residZ: +rz.toFixed(2), cutoff: +(cutoff * 100).toFixed(0), flag: Math.abs(rz) > 3 || cutoff > 0.4 };
+    });
+    const flags = series.filter((s) => s.flag).map((s) => `${s.month}: ${Math.abs(s.residZ) > 3 ? "residual z=" + s.residZ : "period-end " + s.cutoff + "%"}`);
+    const avgCutoff = Math.round(series.reduce((a, s) => a + s.cutoff, 0) / series.length);
+    return { ok: true, series, flags, avgCutoff };
+  }
+
+  // ── CAAT 5: k-means segment clustering over counterparties ──
+  function segmentClustering(parsed, k) {
+    k = k || 3;
+    const agg = {};
+    const grab = (arr, kind) => (arr || []).forEach((iv) => {
+      const id = iv.customerID || iv.supplierID; if (!id) return;
+      const a = (agg[id] = agg[id] || { id, value: 0, count: 0, kind });
+      a.value += (iv.documentTotals && (iv.documentTotals.grossTotal || iv.documentTotals.netTotal)) || 0; a.count += 1;
+    });
+    grab(parsed && parsed.sales && parsed.sales.items, "customer"); grab(parsed && parsed.purchases && parsed.purchases.items, "supplier");
+    const rows = Object.values(agg).filter((r) => r.value > 0);
+    if (rows.length < k + 1) return { ok: false, reason: "Too few counterparties to cluster." };
+    // features: [log value, log count, log avg]
+    const feat = rows.map((r) => [Math.log(r.value + 1), Math.log(r.count + 1), Math.log(r.value / r.count + 1)]);
+    // z-normalise columns
+    for (let c = 0; c < 3; c++) { const col = feat.map((f) => f[c]); const mu = col.reduce((a, b) => a + b, 0) / col.length; const sd = Math.sqrt(col.reduce((a, b) => a + (b - mu) ** 2, 0) / col.length) || 1; feat.forEach((f) => (f[c] = (f[c] - mu) / sd)); }
+    const r = rng(99); let cent = []; const picked = new Set();
+    while (cent.length < k) { const i = Math.floor(r() * feat.length); if (!picked.has(i)) { picked.add(i); cent.push([...feat[i]]); } }
+    let assign = new Array(feat.length).fill(0);
+    for (let it = 0; it < 25; it++) {
+      assign = feat.map((f) => { let best = 0, bd = Infinity; for (let c = 0; c < k; c++) { const d = (f[0] - cent[c][0]) ** 2 + (f[1] - cent[c][1]) ** 2 + (f[2] - cent[c][2]) ** 2; if (d < bd) { bd = d; best = c; } } return best; });
+      const sums = Array.from({ length: k }, () => [0, 0, 0, 0]);
+      feat.forEach((f, i) => { const c = assign[i]; sums[c][0] += f[0]; sums[c][1] += f[1]; sums[c][2] += f[2]; sums[c][3]++; });
+      cent = sums.map((s, c) => s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : cent[c]);
+    }
+    const clusters = Array.from({ length: k }, (_, c) => {
+      const members = rows.filter((_, i) => assign[i] === c);
+      const totVal = members.reduce((a, m) => a + m.value, 0), avg = members.length ? totVal / members.reduce((a, m) => a + m.count, 0) : 0;
+      const label = avg > 0 && members.length ? (members.length <= rows.length * 0.15 && avg > median(rows.map((x) => x.value / x.count)) * 2 ? "high-value / low-frequency (review)" : avg > median(rows.map((x) => x.value / x.count)) ? "high-value" : "routine / high-frequency") : "—";
+      return { id: c, size: members.length, totalValue: totVal, avgTicket: Math.round(avg), label, top: members.sort((a, b) => b.value - a.value).slice(0, 4).map((m) => ({ id: m.id, value: m.value, count: m.count })) };
+    }).filter((cl) => cl.size > 0);
+    // points for scatter (log value vs log count, original scale)
+    const points = rows.map((r, i) => ({ id: r.id, x: Math.log(r.value + 1), y: Math.log(r.count + 1), c: assign[i] }));
+    return { ok: true, k: clusters.length, clusters, points };
+  }
+
+  // ── CAAT 6: deterministic contract review (clauses + risks) ──
+  function contractReview(text, lang) {
+    text = String(text || ""); const lt = lang === "lt";
+    const find = (re) => { const m = text.match(re); return m ? m[0].slice(0, 80) : null; };
+    const all = (re) => { const out = []; let m; const r = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"); while ((m = r.exec(text)) && out.length < 12) out.push(m[0]); return out; };
+    const amounts = all(/(?:€|eur|usd|\$)\s?\d[\d.,]*|\d[\d.,]*\s?(?:eur|€|usd)/gi);
+    const dates = all(/\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}/g);
+    const clause = (label, re) => ({ type: label, present: re.test(text), excerpt: find(re) });
+    const clauses = [
+      clause("Governing law", /governing law|taikoma teis|jurisdik|teismingum/i),
+      clause("Term / duration", /term of (the )?(agreement|contract)|sutart\w* galioja|galioja iki|\bterminas\b|effective date|įsigalioja/i),
+      clause("Termination", /terminat|nutrauk\w*/i),
+      clause("Penalties", /penalt|delspinig|netesyb|\bbauda\b/i),
+      clause("Liability cap", /(limit\w*|cap\w*|riboj\w*|nevirš\w*).{0,40}(liabilit|atsakomyb)|(liabilit|atsakomyb).{0,40}(limit\w*|cap\w*|riboj\w*)/i),
+      clause("Indemnity", /indemnif|žalos atlygin|nuostoli\w* atlygin/i),
+      clause("Auto-renewal", /auto[- ]?renew|automati\w* prat\w*|pratęs\w*|renew(s|al|ed)?/i),
+      clause("Confidentiality", /confidential|konfidencial/i),
+      clause("Payment terms", /net\s*\d+|payment.{0,20}\d+\s*days|apmokėjim\w*.{0,20}\d+\s*dien/i),
+      clause("Related-party language", /affiliat|related part|susij\w* (šal|asmen|įmon)|patronuojan|dukterin|grup\w* įmon|group compan/i),
+    ];
+    const has = (t) => clauses.find((c) => c.type === t && c.present);
+    const risks = [];
+    if (has("Auto-renewal")) risks.push({ level: "medium", msg: lt ? "Automatinis pratęsimas — galimas neatpažintas įsipareigojimas (TAS 560)." : "Auto-renewal — possible unrecognised commitment (TAS 560)." });
+    if (has("Liability cap") === undefined && /liabilit|atsakomyb/i.test(text)) risks.push({ level: "medium", msg: lt ? "Minima atsakomybė be aiškios ribos." : "Liability mentioned without a clear cap." });
+    if (has("Penalties")) risks.push({ level: "low", msg: lt ? "Netesybų/delspinigių sąlyga — galimas įsipareigojimas." : "Penalty clause — potential contingency." });
+    if (has("Related-party language")) risks.push({ level: "high", msg: lt ? "Susijusių šalių požymiai — tikrinti TAS 550 atskleidimus." : "Related-party indicators — check TAS 550 disclosures." });
+    if (!/governing law|taikoma teis/i.test(text)) risks.push({ level: "low", msg: lt ? "Nerasta taikomos teisės sąlyga." : "No governing-law clause found." });
+    const big = amounts.length;
+    return { ok: text.trim().length > 0, entities: { amounts, dates }, clauses, risks, summary: `${clauses.filter((c) => c.present).length}/${clauses.length} ${lt ? "sąlygų rasta" : "clauses found"}, ${big} ${lt ? "sumų" : "amounts"}` };
+  }
+
+  // ── Panel ──
+  function Panel(props) {
+    const parsed = props.parsed, lang = props.lang || "lt"; const L = (a, b) => (lang === "lt" ? a : b);
+    const [tab, setTab] = useState("revenue");
+    const [ctext, setCtext] = useState(""); const [cres, setCres] = useState(null);
+    const rev = useMemo(() => revenueDecomposition(parsed || {}), [parsed]);
+    const seg = useMemo(() => segmentClustering(parsed || {}, 3), [parsed]);
+    const CLR = [C.cold, C.violet, C.amber, C.green, C.red];
+
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const tbtn = (id, label) => <button onClick={() => setTab(id)} style={{ fontFamily: MONO, cursor: "pointer", background: tab === id ? C.cold : "transparent", color: tab === id ? "#001" : C.muted, border: "1px solid " + (tab === id ? C.cold : C.line), padding: "6px 13px", fontSize: 10.5, fontWeight: 700 }}>{label}</button>;
+
+    // revenue chart geometry
+    const maxV = rev.ok ? Math.max(...rev.series.map((s) => s.value), 1) : 1;
+    // segment scatter geometry
+    const xs = seg.ok ? seg.points.map((p) => p.x) : [0, 1], ys = seg.ok ? seg.points.map((p) => p.y) : [0, 1];
+    const xmin = Math.min(...xs), xmax = Math.max(...xs) || 1, ymin = Math.min(...ys), ymax = Math.max(...ys) || 1;
+    const sx = (x) => 40 + ((x - xmin) / (xmax - xmin || 1)) * 580, sy = (y) => 250 - ((y - ymin) / (ymax - ymin || 1)) * 220;
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid " + C.line, flexWrap: "wrap", gap: 10 }}>
+          <div><div style={eyebrow}>{L("Pažangūs CAAT", "Advanced CAATs")}</div><div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{L("Pajamos · segmentai · sutartys", "Revenue · segments · contracts")}</div></div>
+          <div style={{ display: "flex", gap: 8 }}>{tbtn("revenue", L("Pajamos", "Revenue"))}{tbtn("segments", L("Segmentai", "Segments"))}{tbtn("contracts", L("Sutartys", "Contracts"))}</div>
+        </div>
+
+        {tab === "revenue" && <div style={{ padding: "14px 18px" }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>{L("Mėnesio pajamų skaidymas (trendas + likutis) ir periodo pabaigos koncentracija — pajamų pripažinimo rizika (TAS 240/520).", "Monthly revenue decomposition (trend + residual) and period-end concentration — revenue-recognition risk (TAS 240/520).")}</div>
+          {!rev.ok ? <div style={{ fontSize: 12, color: C.muted, padding: 12 }}>{rev.reason}</div> : <>
+            <svg viewBox="0 0 640 220" style={{ width: "100%", height: "auto", background: C.ink }}>
+              {rev.series.map((s, i) => { const bw = 600 / rev.series.length, x = 30 + i * bw, h = (s.value / maxV) * 170; return <g key={i}><rect x={x + 2} y={195 - h} width={bw - 6} height={h} fill={s.flag ? C.red : C.cold} opacity={0.85} /><text x={x + bw / 2} y={210} fontSize="7" fill={C.faint} textAnchor="middle" fontFamily={MONO}>{s.month.slice(2)}</text></g>; })}
+              <polyline fill="none" stroke={C.amber} strokeWidth="1.4" points={rev.series.map((s, i) => { const bw = 600 / rev.series.length; return s.trend == null ? null : `${30 + i * bw + bw / 2},${195 - (s.trend / maxV) * 170}`; }).filter(Boolean).join(" ")} />
+            </svg>
+            <div style={{ display: "flex", gap: 18, marginTop: 8, fontSize: 11.5, flexWrap: "wrap" }}>
+              <span style={{ color: C.muted }}>{L("Vid. periodo pabaigos dalis", "Avg period-end share")}: <b style={{ color: rev.avgCutoff > 40 ? C.red : C.text }}>{rev.avgCutoff}%</b></span>
+              <span style={{ color: C.muted }}>{L("Pažymėti mėnesiai", "Flagged months")}: <b style={{ color: rev.flags.length ? C.red : C.green }}>{rev.flags.length}</b></span>
+            </div>
+            {rev.flags.length > 0 && <div style={{ marginTop: 8, fontSize: 11, color: C.amber }}>{rev.flags.map((f, i) => <div key={i}>⚠ {f}</div>)}</div>}
+          </>}
+        </div>}
+
+        {tab === "segments" && <div style={{ padding: "14px 18px" }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>{L("Sandorio šalių grupavimas (k-vidurkių) pagal vertę/dažnį — rizikos segmentavimas (TAS 315).", "Counterparty clustering (k-means) by value/frequency — risk segmentation (TAS 315).")}</div>
+          {!seg.ok ? <div style={{ fontSize: 12, color: C.muted, padding: 12 }}>{seg.reason}</div> : <>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>{seg.clusters.map((cl) => <div key={cl.id} style={{ flex: "1 1 180px", border: "1px solid " + C.line, borderLeft: "3px solid " + CLR[cl.id % CLR.length], background: C.panel2, padding: "9px 11px" }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: CLR[cl.id % CLR.length] }}>{L("Grupė", "Cluster")} {cl.id + 1} · {cl.size}</div>
+              <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>{cl.label}</div>
+              <div style={{ fontSize: 10.5, color: C.text, marginTop: 4 }}>{L("vid. čekis", "avg ticket")} {eur(cl.avgTicket)} · {eur(cl.totalValue)}</div>
+            </div>)}</div>
+            <svg viewBox="0 0 640 270" style={{ width: "100%", height: "auto", background: C.ink }}>
+              <line x1="40" y1="250" x2="630" y2="250" stroke={C.soft} /><line x1="40" y1="30" x2="40" y2="250" stroke={C.soft} />
+              <text x="335" y="266" fontSize="8" fill={C.faint} textAnchor="middle" fontFamily={MONO}>log {L("vertė", "value")} →</text>
+              <text x="14" y="140" fontSize="8" fill={C.faint} textAnchor="middle" fontFamily={MONO} transform="rotate(-90 14 140)">log {L("dažnis", "count")} →</text>
+              {seg.points.map((p, i) => <circle key={i} cx={sx(p.x)} cy={sy(p.y)} r="4" fill={CLR[p.c % CLR.length]} opacity={0.8} />)}
+            </svg>
+          </>}
+        </div>}
+
+        {tab === "contracts" && <div style={{ padding: "14px 18px" }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>{L("Įklijuokite sutarties tekstą — sąlygų ir rizikų ištraukimas (TAS 501/550/560). Tekstas neišsiunčiamas niekur.", "Paste contract text — clause & risk extraction (TAS 501/550/560). Text is not sent anywhere.")}</div>
+          <textarea value={ctext} onChange={(e) => setCtext(e.target.value)} placeholder={L("Įklijuokite sutartį čia…", "Paste a contract here…")} style={{ width: "100%", minHeight: 120, fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: 10, fontSize: 12, boxSizing: "border-box" }} />
+          <button onClick={() => setCres(contractReview(ctext, lang))} style={{ fontFamily: MONO, cursor: "pointer", background: C.cold, color: "#001", border: "none", padding: "8px 16px", fontSize: 11, fontWeight: 700, marginTop: 8 }}>{L("Analizuoti", "Analyze")}</button>
+          {cres && cres.ok && <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>{cres.summary}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>{cres.clauses.map((c, i) => <span key={i} style={{ fontSize: 10.5, padding: "3px 9px", border: "1px solid " + (c.present ? C.green : C.faint), color: c.present ? C.green : C.faint }}>{c.present ? "✓" : "·"} {c.type}</span>)}</div>
+            {cres.risks.map((r, i) => <div key={i} style={{ fontSize: 11.5, padding: "7px 0", borderTop: "1px solid " + C.soft, color: r.level === "high" ? C.red : r.level === "medium" ? C.amber : C.muted }}><b style={{ textTransform: "uppercase", fontSize: 9 }}>{r.level}</b> · {r.msg}</div>)}
+          </div>}
+        </div>}
+
+        <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+          {L("Visi skaičiavimai vyksta naršyklėje, taisyklėmis ir klasikine statistika (be modelių). Vaizdų/OCR analizė reikalauja atskiro OCR variklio.", "All computation runs in-browser via rules and classical statistics (no models). Image/OCR verification needs a separate OCR engine.")}
+        </div>
+      </div>
+    );
+  }
+
+  return { revenueDecomposition, segmentClustering, contractReview, Panel };
+})();
+const AdvCAATsPanel = AdvCAATs.Panel;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  AUDIT AUTOMATIONS — turns the §1 lifecycle nodes into working tools.
+//  Every artifact is a DRAFT populated from THIS engagement's data (client, period,
+//  findings, risk) — for auditor review, never auto-issued, never fabricated figures.
+//  Letters use standard ISA/TAS structures; analyses are deterministic computations.
+//  Maps: 210/260/580/505 (letters), 265 (COSO), 330 (procedures), 560 (subsequent),
+//  570 (going concern), 720 (consistency), 250/600 (checklists).
+// ═══════════════════════════════════════════════════════════════════════════
+const AuditAutomations = (function () {
+  const C = { ink: "#0a0a0a", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff", violet: "#b197fc" };
+  const MONO = "var(--m)";
+  const eur = (n) => "€" + Math.round(Number(n) || 0).toLocaleString("lt-LT");
+  const today = () => new Date().toISOString().slice(0, 10);
+  const sumNet = (arr) => (arr || []).reduce((a, iv) => a + ((iv.documentTotals && iv.documentTotals.netTotal) || 0), 0);
+
+  function ctxOf(parsed, findings, risk, gate, lang) {
+    const h = (parsed && parsed.header) || {}, co = h.company || {};
+    return {
+      lt: lang === "lt",
+      client: co.name || co.registrationNumber || "[Client]",
+      code: co.registrationNumber || "[reg. no.]",
+      from: h.periodStart || "[start]", to: h.periodEnd || "[end]",
+      revenue: sumNet(parsed && parsed.sales && parsed.sales.items),
+      expenses: sumNet(parsed && parsed.purchases && parsed.purchases.items),
+      findings: findings || [], risk: risk || {}, gate: gate || {},
+      crit: (findings || []).filter((f) => f.severity === "Critical"), high: (findings || []).filter((f) => f.severity === "High"),
+      parsed: parsed || {},
+    };
+  }
+
+  // ── Letters (drafts) ──
+  function engagementLetter(x) {
+    const L = (a, b) => (x.lt ? a : b);
+    return L(
+`[JUODRAŠTIS — peržiūrėti prieš išsiunčiant]   ${today()}
+
+${x.client} (į. k. ${x.code}) vadovybei
+
+DĖL: Finansinių ataskaitų už ${x.from}–${x.to} audito sąlygų
+
+Gerbiami,
+
+Džiaugiamės galėdami patvirtinti, kad atliksime Jūsų finansinių ataskaitų už nurodytą laikotarpį auditą. Auditą atliksime pagal tarptautinius audito standartus (TAS).
+
+Audito tikslas — pareikšti nuomonę, ar finansinės ataskaitos visais reikšmingais atžvilgiais parengtos pagal taikomą finansinės atskaitomybės sistemą. Reikšmingumą nustatysime profesiniu vertinimu; preliminari planavimo riba — apie ${eur(x.revenue * 0.0075)} (0,75 % pajamų; bus patikslinta).
+
+Vadovybė atsako už: (a) finansinių ataskaitų parengimą; (b) vidaus kontrolę, reikalingą be reikšmingų iškraipymų; (c) prieigą prie visos informacijos ir įrašų.
+
+Mūsų atsakomybė — atlikti auditą ir pareikšti nuomonę. Auditas neatleidžia vadovybės nuo jos atsakomybės.
+
+Atlygis derinamas atskirai.
+
+Prašome pasirašyti ir grąžinti šio laiško kopiją, patvirtindami sąlygas.
+
+Pagarbiai,
+[Audito įmonė] / [Atsakingasis auditorius]`,
+`[DRAFT — review before issuing]   ${today()}
+
+To the management of ${x.client} (reg. no. ${x.code})
+
+RE: Terms of the audit of the financial statements for ${x.from}–${x.to}
+
+Dear Sirs,
+
+We are pleased to confirm our acceptance of the engagement to audit your financial statements for the period stated. We will conduct the audit in accordance with the International Standards on Auditing (ISA/TAS).
+
+The objective of the audit is to express an opinion on whether the financial statements are prepared, in all material respects, in accordance with the applicable financial reporting framework. Materiality will be set using professional judgment; the preliminary planning figure is approximately ${eur(x.revenue * 0.0075)} (0.75% of revenue; to be refined).
+
+Management is responsible for: (a) the preparation of the financial statements; (b) the internal control necessary to enable statements free from material misstatement; (c) providing access to all relevant information and records.
+
+Our responsibility is to conduct the audit and express an opinion. The audit does not relieve management of its responsibilities.
+
+Fees are agreed separately.
+
+Please sign and return a copy of this letter to confirm the terms.
+
+Yours faithfully,
+[Audit firm] / [Engagement partner]`);
+  }
+
+  function managementLetter(x) {
+    const L = (a, b) => (x.lt ? a : b);
+    const items = [...x.crit, ...x.high].slice(0, 15);
+    const body = items.length
+      ? items.map((f, i) => `${i + 1}. [${f.severity}] ${f.rule_id} — ${(x.lt ? (f.ruleMeta && f.ruleMeta.titleLt) : (f.ruleMeta && f.ruleMeta.titleEn)) || f.title}`).join("\n")
+      : L("Reikšmingų dalykų, apie kuriuos privaloma pranešti, nenustatyta.", "No significant matters requiring communication were identified.");
+    return L(
+`[JUODRAŠTIS]   ${today()}
+${x.client} už valdymą atsakingiems asmenims
+
+DĖL: Audito metu nustatyti dalykai (TAS 260/265) — ${x.from}–${x.to}
+
+Audito metu atkreipėme dėmesį į šiuos dalykus, įskaitant galimus vidaus kontrolės trūkumus:
+
+${body}
+
+Bendras rizikos vertinimas: ${x.risk.score != null ? x.risk.score : "—"} (${x.risk.bandLabel ? x.risk.bandLabel[1] : "—"}).
+
+Šie dalykai pateikiami Jūsų svarstymui; jie nekeičia mūsų audito nuomonės, nebent nurodyta kitaip. Mielai juos aptarsime.
+
+Pagarbiai, [Atsakingasis auditorius]`,
+`[DRAFT]   ${today()}
+To those charged with governance of ${x.client}
+
+RE: Matters arising from the audit (TAS 260/265) — ${x.from}–${x.to}
+
+During the audit we noted the following matters, including possible internal-control deficiencies:
+
+${body}
+
+Overall risk assessment: ${x.risk.score != null ? x.risk.score : "—"} (${x.risk.bandLabel ? x.risk.bandLabel[0] : "—"}).
+
+These matters are presented for your consideration; they do not modify our audit opinion unless stated. We would be glad to discuss them.
+
+Yours faithfully, [Engagement partner]`);
+  }
+
+  function repLetter(x) {
+    const L = (a, b) => (x.lt ? a : b);
+    const its = x.lt ? [
+      "Esame atsakingi už finansinių ataskaitų parengimą pagal taikomą sistemą.",
+      "Pateikėme visą apskaitos informaciją ir prieigą; jokie sandoriai nenuslėpti.",
+      "Visi įsipareigojimai, tiek faktiniai, tiek neapibrėžtieji, yra apskaityti ar atskleisti.",
+      "Susijusių šalių santykiai ir sandoriai tinkamai apskaityti ir atskleisti (TAS 550).",
+      "Po balanso datos įvykę reikšmingi įvykiai apskaityti ar atskleisti (TAS 560).",
+      "Manome, kad įmonė gali tęsti veiklą (TAS 570).",
+      "Laikomasi įstatymų ir kitų teisės aktų, galinčių turėti reikšmingą poveikį (TAS 250).",
+    ] : [
+      "We are responsible for the preparation of the financial statements under the applicable framework.",
+      "We have provided all accounting records and access; no transactions have been concealed.",
+      "All liabilities, both actual and contingent, are recorded or disclosed.",
+      "Related-party relationships and transactions are properly accounted for and disclosed (TAS 550).",
+      "Significant events after the balance-sheet date are recorded or disclosed (TAS 560).",
+      "We consider the entity able to continue as a going concern (TAS 570).",
+      "Laws and regulations with a potentially material effect have been complied with (TAS 250).",
+    ];
+    return (x.lt ? `[JUODRAŠTIS — pasirašo vadovybė]   ${today()}\n${x.client} (į. k. ${x.code})\n\nDĖL: Rašytiniai patvirtinimai (TAS 580) — ${x.from}–${x.to}\n\nŠiuo laišku patvirtiname, kad pagal mūsų geriausią žinojimą ir įsitikinimą:\n\n` : `[DRAFT — to be signed by management]   ${today()}\n${x.client} (reg. no. ${x.code})\n\nRE: Written representations (TAS 580) — ${x.from}–${x.to}\n\nWe confirm, to the best of our knowledge and belief, that:\n\n`) +
+      its.map((s, i) => `${i + 1}. ${s}`).join("\n") +
+      (x.lt ? "\n\nVadovybės parašas: ____________   Data: ________" : "\n\nSigned by management: ____________   Date: ________");
+  }
+
+  function bankConfirmation(x) {
+    const L = (a, b) => (x.lt ? a : b);
+    return L(
+`[JUODRAŠTIS]   ${today()}
+[Banko pavadinimas]
+
+DĖL: Audito patvirtinimo prašymas — ${x.client} (į. k. ${x.code})
+
+Atliekant ${x.client} ${x.to} dienos finansinių ataskaitų auditą, prašome tiesiogiai mums patvirtinti ${x.to} dienai:
+1. visų sąskaitų likučius (einamąsias, taupomąsias, valiutines);
+2. paskolas, kredito linijas ir jų sąlygas;
+3. suteiktas garantijas ir laidavimus;
+4. įkeitimus ir apribojimus;
+5. asmenis, turinčius teisę disponuoti sąskaitomis.
+
+Klientas pateikia atskirą leidimą atskleisti informaciją. Atsakymą prašome siųsti tiesiogiai auditoriui.
+
+Pagarbiai, [Atsakingasis auditorius] (TAS 505)`,
+`[DRAFT]   ${today()}
+[Bank name]
+
+RE: Audit confirmation request — ${x.client} (reg. no. ${x.code})
+
+In connection with the audit of ${x.client}'s financial statements as at ${x.to}, please confirm directly to us, as at ${x.to}:
+1. balances on all accounts (current, savings, foreign-currency);
+2. loans, credit lines and their terms;
+3. guarantees and sureties given;
+4. pledges and restrictions;
+5. persons authorised to operate the accounts.
+
+The client provides a separate authorisation to disclose. Please reply directly to the auditor.
+
+Yours faithfully, [Engagement partner] (TAS 505)`);
+  }
+
+  // ── Analyses ──
+  function cosoMapping(x) {
+    const cats = x.findings.map((f) => String(f.category || "").toLowerCase());
+    const compHit = (re) => cats.filter((c) => re.test(c)).length;
+    const comps = [
+      { name: x.lt ? "Kontrolės aplinka" : "Control environment", prin: "1–5", hits: compHit(/fraud|sukci|governance|tone/), note: x.lt ? "Sąžiningumas, priežiūra" : "Integrity, oversight" },
+      { name: x.lt ? "Rizikos vertinimas" : "Risk assessment", prin: "6–9", hits: x.risk.band === "high" || x.risk.band === "elevated" ? 1 : 0, note: x.lt ? "Rizikos identifikavimas" : "Risk identification" },
+      { name: x.lt ? "Kontrolės veiksmai" : "Control activities", prin: "10–12", hits: compHit(/vat|pvm|accuracy|tikslum|recon|completeness/), note: x.lt ? "Operacijų kontrolė" : "Transaction controls" },
+      { name: x.lt ? "Informacija ir komunikacija" : "Information & communication", prin: "13–15", hits: compHit(/disclos|atskleid|report/), note: x.lt ? "Atskaitomybė" : "Reporting" },
+      { name: x.lt ? "Stebėsena" : "Monitoring", prin: "16–17", hits: compHit(/duplicate|anomal|benford/), note: x.lt ? "Nukrypimų stebėjimas" : "Anomaly monitoring" },
+    ];
+    return { kind: "coso", comps };
+  }
+
+  function procedureSelection(x) {
+    const cats = new Set(x.findings.map((f) => String(f.category || "").toLowerCase()));
+    const has = (re) => [...cats].some((c) => re.test(c));
+    const rows = [];
+    if (has(/vat|pvm/)) rows.push({ risk: "VAT / PVM", assertion: x.lt ? "Tikslumas, klasifikavimas" : "Accuracy, classification", proc: x.lt ? "Perskaičiuoti PVM; sutikrinti su sąskaitomis; testuoti atvirkštinį apmokestinimą (96 str.)." : "Recompute VAT; vouch to invoices; test reverse charge (Art. 96)." });
+    if (has(/fraud|benford|duplicate|anomal|sukci/)) rows.push({ risk: x.lt ? "Sukčiavimas / žurnalo įrašai" : "Fraud / journal entries", assertion: x.lt ? "Buvimas, atsiradimas" : "Existence, occurrence", proc: x.lt ? "Žurnalo įrašų testavimas; periodo pabaigos rankiniai įrašai; dublikatų peržiūra." : "Journal-entry testing; period-end manual entries; duplicate review." });
+    if (has(/related|susij/)) rows.push({ risk: x.lt ? "Susijusios šalys" : "Related parties", assertion: x.lt ? "Atskleidimas, pilnumas" : "Disclosure, completeness", proc: x.lt ? "Patvirtinti sandorius; peržiūrėti valdybos protokolus; sutikrinti registrą." : "Confirm transactions; review board minutes; reconcile register." });
+    rows.push({ risk: x.lt ? "Pajamos" : "Revenue", assertion: x.lt ? "Atskyrimas (cut-off)" : "Cut-off", proc: x.lt ? "Periodo pabaigos pajamų testas; analitinės procedūros pagal mėnesį." : "Period-end revenue test; monthly analytical procedures." });
+    rows.push({ risk: x.lt ? "Bendra" : "General", assertion: x.lt ? "Visi tvirtinimai" : "All assertions", proc: x.lt ? "Analitinės procedūros (TAS 520); atranka (TAS 530, MUS + klasikinė)." : "Analytical procedures (TAS 520); sampling (TAS 530, MUS + classical)." });
+    return { kind: "procedures", rows };
+  }
+
+  function subsequentEvents(x) {
+    const pe = new Date(x.to); const post = [];
+    const scan = (arr, kind) => (arr || []).forEach((iv) => { const d = iv.invoiceDate; if (d && new Date(d) > pe) post.push({ kind, no: iv.invoiceNo, date: d, amt: (iv.documentTotals && (iv.documentTotals.grossTotal || iv.documentTotals.netTotal)) || 0 }); });
+    scan(x.parsed.sales && x.parsed.sales.items, x.lt ? "pardavimas" : "sale");
+    scan(x.parsed.purchases && x.parsed.purchases.items, x.lt ? "pirkimas" : "purchase");
+    post.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const checklist = x.lt
+      ? ["Peržiūrėti valdybos/akcininkų protokolus po balanso datos", "Patikrinti vėlesnius gavimus/mokėjimus", "Užklausti dėl teisinių ginčų, garantijų", "Įvertinti įvykius, koreguojančius ir nekoreguojančius (TAS 10)"]
+      : ["Review board/shareholder minutes after the balance-sheet date", "Check subsequent receipts/payments", "Inquire about litigation, guarantees", "Assess adjusting vs non-adjusting events (IAS 10)"];
+    return { kind: "subsequent", post: post.slice(0, 20), checklist, periodEnd: x.to };
+  }
+
+  function goingConcern(x) {
+    const rev = x.revenue, cost = x.expenses, base = rev - cost;
+    const sc = [
+      { name: x.lt ? "Bazinis" : "Base", rev, cost },
+      { name: x.lt ? "Pajamos −10%" : "Revenue −10%", rev: rev * 0.9, cost },
+      { name: x.lt ? "Pajamos −20%, sąn. +10%" : "Revenue −20%, costs +10%", rev: rev * 0.8, cost: cost * 1.1 },
+      { name: x.lt ? "Pajamos −30%, sąn. +10%" : "Revenue −30%, costs +10%", rev: rev * 0.7, cost: cost * 1.1 },
+    ].map((s) => ({ ...s, res: s.rev - s.cost, neg: s.rev - s.cost < 0 }));
+    return { kind: "gc", base, scenarios: sc };
+  }
+
+  function consistency(x, text) {
+    const saft = { revenue: x.revenue, expenses: x.expenses, result: x.revenue - x.expenses };
+    const near = (kw) => { const r = new RegExp("(?:" + kw + ")[^0-9-]{0,40}(-?\\d[\\d.,]*)", "i"); const m = String(text || "").match(r); return m ? parseFloat(m[1].replace(/\.(?=\d{3})/g, "").replace(/,/g, ".")) : null; };
+    const repRev = near("revenue|pajam|turnover|apyvart");
+    const repRes = near("profit|peln|result|rezultat|loss|nuostol");
+    const cmp = (a, b) => (a == null || b == null) ? null : Math.abs(a - b) / (Math.abs(b) || 1);
+    const rows = [
+      { label: x.lt ? "Pajamos" : "Revenue", saft: saft.revenue, report: repRev, diff: cmp(repRev, saft.revenue) },
+      { label: x.lt ? "Rezultatas" : "Result", saft: saft.result, report: repRes, diff: cmp(repRes, saft.result) },
+    ];
+    return { kind: "consistency", rows };
+  }
+
+  function checklist(id, lt) {
+    if (id === "laws250") return { kind: "checklist", items: lt
+      ? ["PVM registracija ir deklaravimas (FR0600, i.SAF)", "Pelno mokestis (metinė deklaracija, avansai)", "GPM ir Sodra nuo darbo užmokesčio", "Pinigų plovimo prevencija (PPTFP), naudos gavėjai (JANGIS)", "Asmens duomenų apsauga (BDAR)", "Veiklos licencijos / leidimai", "Darbo teisės reikalavimai"]
+      : ["VAT registration & filing (FR0600, i.SAF)", "Corporate income tax (annual return, advances)", "PIT & social security on payroll", "AML/CTF, beneficial owners (JANGIS register)", "Personal-data protection (GDPR)", "Sector licences / permits", "Labour-law requirements"] };
+    return { kind: "checklist", items: lt
+      ? ["Lėšų panaudojimas pagal paskirtį (dotacijos, parama)", "Viešųjų pirkimų reikalavimai", "Apriboto naudojimo fondai atskirti", "Atskaitomybė finansuotojams", "Ne pelno statuso reikalavimų laikymasis"]
+      : ["Use of funds per purpose (grants, donations)", "Public-procurement requirements", "Restricted funds segregated", "Reporting to funders", "Compliance with non-profit status conditions"] };
+  }
+
+  function generate(id, x, text) {
+    switch (id) {
+      case "eng210": return { kind: "letter", text: engagementLetter(x) };
+      case "mgmt260": return { kind: "letter", text: managementLetter(x) };
+      case "rep580": return { kind: "letter", text: repLetter(x) };
+      case "bank505": return { kind: "letter", text: bankConfirmation(x) };
+      case "coso265": return cosoMapping(x);
+      case "proc330": return procedureSelection(x);
+      case "subs560": return subsequentEvents(x);
+      case "gc570": return goingConcern(x);
+      case "cons720": return consistency(x, text);
+      case "laws250": return checklist("laws250", x.lt);
+      case "spec600": return checklist("spec600", x.lt);
+      default: return { kind: "letter", text: "" };
+    }
+  }
+
+  const LIST = [
+    { id: "eng210", code: "TAS 210", lt: "Užduoties laiškas", en: "Engagement letter" },
+    { id: "mgmt260", code: "TAS 260/265", lt: "Laiškas vadovybei", en: "Management letter" },
+    { id: "rep580", code: "TAS 580", lt: "Patvirtinimų laiškas", en: "Representation letter" },
+    { id: "bank505", code: "TAS 505", lt: "Banko patvirtinimas", en: "Bank confirmation" },
+    { id: "coso265", code: "TAS 265", lt: "COSO kontrolė", en: "COSO mapping" },
+    { id: "proc330", code: "TAS 330", lt: "Procedūrų parinkimas", en: "Procedure selection" },
+    { id: "subs560", code: "TAS 560", lt: "Vėlesni įvykiai", en: "Subsequent events" },
+    { id: "gc570", code: "TAS 570", lt: "Veiklos tęstinumas", en: "Going-concern scenarios" },
+    { id: "cons720", code: "TAS 720", lt: "Ataskaitos atitiktis", en: "Report consistency" },
+    { id: "laws250", code: "TAS 250", lt: "Įstatymų atitiktis", en: "Laws checklist" },
+    { id: "spec600", code: "TAS 600", lt: "Specialūs atvejai", en: "Special considerations" },
+  ];
+
+  function Panel(props) {
+    const lang = props.lang || "lt"; const L = (a, b) => (lang === "lt" ? a : b);
+    const x = useMemo(() => ctxOf(props.parsed, props.findings, props.risk, props.gate, lang), [props.parsed, props.findings, props.risk, props.gate, lang]);
+    const [sel, setSel] = useState("eng210");
+    const [rtext, setRtext] = useState("");
+    const [done, setDone] = useState(new Set());
+    const art = useMemo(() => generate(sel, x, rtext), [sel, x, rtext, sel === "cons720" ? rtext : 0]);
+    const meta = LIST.find((a) => a.id === sel) || LIST[0];
+
+    const copy = () => { try { navigator.clipboard.writeText(art.text || ""); } catch (e) { } };
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const toggle = (i) => { const n = new Set(done); n.has(sel + i) ? n.delete(sel + i) : n.add(sel + i); setDone(n); };
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ padding: "16px 18px", borderBottom: "1px solid " + C.line }}>
+          <div style={eyebrow}>{L("Audito automatizavimas", "Audit automations")}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{x.client} · {x.from}–{x.to}</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <div style={{ flex: "0 0 220px", borderRight: "1px solid " + C.line }}>
+            {LIST.map((a) => <div key={a.id} onClick={() => setSel(a.id)} style={{ cursor: "pointer", padding: "10px 16px", borderTop: "1px solid " + C.soft, background: sel === a.id ? "rgba(124,196,255,0.07)" : "transparent", borderLeft: "3px solid " + (sel === a.id ? C.cold : "transparent") }}>
+              <div style={{ fontSize: 9, color: C.violet, fontWeight: 700 }}>{a.code}</div>
+              <div style={{ fontSize: 12, color: sel === a.id ? C.text : C.muted, marginTop: 1 }}>{L(a.lt, a.en)}</div>
+            </div>)}
+          </div>
+          <div style={{ flex: "1 1 420px", minWidth: 300 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 18px", borderBottom: "1px solid " + C.soft }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700 }}>{meta.code} · {L(meta.lt, meta.en)}</span>
+              {art.kind === "letter" && <button onClick={copy} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.cold, border: "1px solid " + C.cold, padding: "5px 12px", fontSize: 10.5, fontWeight: 700 }}>{L("Kopijuoti", "Copy")}</button>}
+            </div>
+            <div style={{ padding: "14px 18px" }}>
+              {art.kind === "letter" && <pre style={{ whiteSpace: "pre-wrap", fontFamily: MONO, fontSize: 11.5, lineHeight: 1.55, color: C.text, margin: 0 }}>{art.text}</pre>}
+
+              {art.kind === "coso" && art.comps.map((c, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid " + C.soft : "none", fontSize: 12 }}>
+                <span style={{ width: 8, height: 8, background: c.hits ? C.amber : C.green, display: "inline-block" }} />
+                <span style={{ flex: 1 }}><b>{c.name}</b> <span style={{ color: C.faint }}>· {L("principai", "principles")} {c.prin}</span><div style={{ color: C.muted, fontSize: 10.5 }}>{c.note}</div></span>
+                <span style={{ color: c.hits ? C.amber : C.green, fontSize: 11 }}>{c.hits ? (L("trūkumų: ", "deficiencies: ") + c.hits) : L("nepastebėta", "none noted")}</span>
+              </div>)}
+
+              {art.kind === "procedures" && art.rows.map((r, i) => <div key={i} style={{ padding: "9px 0", borderTop: i ? "1px solid " + C.soft : "none", fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: C.cold }}>{r.risk} <span style={{ color: C.faint, fontWeight: 400 }}>· {r.assertion}</span></div>
+                <div style={{ color: C.muted, marginTop: 3 }}>{r.proc}</div>
+              </div>)}
+
+              {art.kind === "subsequent" && <div style={{ fontSize: 12 }}>
+                <div style={{ color: C.muted, marginBottom: 8 }}>{L("Įrašai, datuoti po", "Entries dated after")} {art.periodEnd}: <b style={{ color: art.post.length ? C.amber : C.green }}>{art.post.length}</b></div>
+                {art.post.slice(0, 10).map((p, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", borderTop: "1px solid " + C.soft }}><span style={{ width: 70, color: C.muted }}>{p.kind}</span><span style={{ width: 90, color: C.text }}>{p.date}</span><span style={{ flex: 1, color: C.faint }}>{p.no}</span><span style={{ color: C.amber }}>{eur(p.amt)}</span></div>)}
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid " + C.line }}>{art.checklist.map((s, i) => <label key={i} style={{ display: "flex", gap: 8, padding: "5px 0", fontSize: 11.5, cursor: "pointer" }}><input type="checkbox" checked={done.has(sel + i)} onChange={() => toggle(i)} /><span style={{ color: done.has(sel + i) ? C.green : C.muted }}>{s}</span></label>)}</div>
+              </div>}
+
+              {art.kind === "gc" && <div>
+                {art.scenarios.map((s, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid " + C.soft : "none", fontSize: 12 }}>
+                  <span style={{ flex: 1, color: i === 0 ? C.text : C.muted }}>{s.name}</span>
+                  <span style={{ width: 110, textAlign: "right", color: C.faint }}>{eur(s.rev)} − {eur(s.cost)}</span>
+                  <span style={{ width: 110, textAlign: "right", fontWeight: 700, color: s.neg ? C.red : C.green }}>{eur(s.res)}</span>
+                </div>)}
+                <div style={{ marginTop: 8, fontSize: 10, color: C.faint }}>{L("Orientacinis modelis iš pajamų/sąnaudų tarpinio rodiklio — reikia viso balanso ir pinigų srautų vertinimo.", "Indicative model from a revenue/cost proxy — full balance-sheet and cash-flow assessment required.")}</div>
+              </div>}
+
+              {art.kind === "consistency" && <div>
+                <textarea value={rtext} onChange={(e) => setRtext(e.target.value)} placeholder={L("Įklijuokite vadovybės ataskaitos tekstą…", "Paste the management report text…")} style={{ width: "100%", minHeight: 90, fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: 10, fontSize: 12, boxSizing: "border-box", marginBottom: 10 }} />
+                {art.rows.map((r, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid " + C.soft, fontSize: 12 }}>
+                  <span style={{ flex: 1 }}>{r.label}</span>
+                  <span style={{ width: 110, textAlign: "right", color: C.muted }}>SAF-T {eur(r.saft)}</span>
+                  <span style={{ width: 110, textAlign: "right", color: C.cold }}>{r.report == null ? "—" : eur(r.report)}</span>
+                  <span style={{ width: 70, textAlign: "right", color: r.diff == null ? C.faint : r.diff > 0.05 ? C.red : C.green }}>{r.diff == null ? "?" : (r.diff * 100).toFixed(1) + "%"}</span>
+                </div>)}
+              </div>}
+
+              {art.kind === "checklist" && art.items.map((s, i) => <label key={i} style={{ display: "flex", gap: 9, padding: "8px 0", borderTop: i ? "1px solid " + C.soft : "none", fontSize: 12, cursor: "pointer" }}><input type="checkbox" checked={done.has(sel + i)} onChange={() => toggle(i)} style={{ marginTop: 2 }} /><span style={{ color: done.has(sel + i) ? C.green : C.muted }}>{s}</span></label>)}
+            </div>
+          </div>
+        </div>
+        <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+          {L("Visi laiškai ir analizės — JUODRAŠČIAI, užpildyti iš šios užduoties duomenų; auditorius peržiūri ir patvirtina. Tai nėra profesinio sprendimo ar nuomonės pakaitalas.", "All letters and analyses are DRAFTS populated from this engagement's data; the auditor reviews and finalises. Not a substitute for professional judgment or an opinion.")}
+        </div>
+      </div>
+    );
+  }
+
+  return { generate, ctxOf, LIST, Panel };
+})();
+const AuditAutomationsPanel = AuditAutomations.Panel;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PILLAR TWO — GloBE global minimum tax calculator (glass-box, auditable).
+//  Per jurisdiction: ETR = Adjusted Covered Taxes / Net GloBE Income; Substance-Based
+//  Income Exclusion (SBIE) = payroll% × eligible payroll + tangible% × eligible assets
+//  (OECD transitional carve-out schedule); Excess Profit = GloBE Income − SBIE;
+//  Top-up % = max(0, 15% − ETR); Jurisdictional Top-up = Top-up% × Excess − QDMTT.
+//  Taxing right: QDMTT (source) → IIR (parent) → UTPR (residual). Every line is recorded
+//  as a step. SIMPLIFIED model of the OECD Model Rules — not tax advice; confirm scope
+//  (€750M consolidated revenue), current-year rates, deferred taxes & GloBE adjustments
+//  with a specialist.
+// ═══════════════════════════════════════════════════════════════════════════
+const PillarTwo = (function () {
+  const C = { ink: "#0a0a0a", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff", violet: "#b197fc" };
+  const MONO = "var(--m)";
+  const MIN_RATE = 0.15;
+  // OECD Art. 9.2 transitional carve-out rates [payroll%, tangible%] by fiscal year.
+  const SBIE_RATE = { 2023: [10, 8], 2024: [9.8, 7.8], 2025: [9.6, 7.6], 2026: [9.4, 7.4], 2027: [9.2, 7.2], 2028: [9, 7], 2029: [8.2, 6.6], 2030: [7.4, 6.2], 2031: [6.6, 5.8], 2032: [5.8, 5.4], 2033: [5, 5] };
+  // Transitional CbCR safe-harbour simplified-ETR threshold by year.
+  const SH_ETR = { 2023: 0.15, 2024: 0.15, 2025: 0.16, 2026: 0.17 };
+  const eur = (n) => "€" + Math.round(Number(n) || 0).toLocaleString("lt-LT");
+  const pct = (n) => (n * 100).toFixed(1) + "%";
+
+  function computeJurisdiction(j, year) {
+    const [pRate, tRate] = SBIE_RATE[year] || [5, 5];
+    const income = +j.income || 0, taxes = +j.taxes || 0, payroll = +j.payroll || 0, assets = +j.assets || 0, qdmttPaid = +j.qdmtt || 0, revenue = +j.revenue || 0;
+    const steps = [];
+    const add = (label, formula, value) => steps.push({ label, formula, value });
+
+    const etr = income > 0 ? taxes / income : null;
+    add("Effective tax rate (ETR)", income > 0 ? `${eur(taxes)} ÷ ${eur(income)}` : "GloBE income ≤ 0 → ETR n/a", etr == null ? "n/a" : pct(etr));
+
+    const sbiePay = (pRate / 100) * payroll, sbieAsset = (tRate / 100) * assets, sbie = sbiePay + sbieAsset;
+    add(`SBIE — payroll carve-out (${pRate}%)`, `${pRate}% × ${eur(payroll)}`, eur(sbiePay));
+    add(`SBIE — tangible-asset carve-out (${tRate}%)`, `${tRate}% × ${eur(assets)}`, eur(sbieAsset));
+    add("Substance-based income exclusion", "payroll + asset carve-outs", eur(sbie));
+
+    const excess = Math.max(0, income - sbie);
+    add("Excess profit", `max(0, ${eur(income)} − ${eur(sbie)})`, eur(excess));
+
+    const topUpPct = income > 0 ? Math.max(0, MIN_RATE - etr) : 0;
+    add("Top-up tax %", income > 0 ? `max(0, 15% − ${pct(etr)})` : "no GloBE income", pct(topUpPct));
+
+    const grossTopUp = topUpPct * excess;
+    add("Gross jurisdictional top-up", `${pct(topUpPct)} × ${eur(excess)}`, eur(grossTopUp));
+
+    // safe harbour / de-minimis tests
+    const deMinimis = revenue < 10e6 && income < 1e6;
+    const shThresh = SH_ETR[year] || 0.15;
+    const routine = income <= sbie;            // routine-profits test (GloBE income ≤ SBIE)
+    const simplifiedEtrOk = etr != null && etr >= shThresh;
+    const shApplies = deMinimis || simplifiedEtrOk || routine;
+    let shReason = "";
+    if (deMinimis) shReason = "de-minimis (revenue < €10M and profit < €1M)";
+    else if (simplifiedEtrOk) shReason = `simplified-ETR ≥ ${pct(shThresh)} (transitional CbCR SH)`;
+    else if (routine) shReason = "routine profits (GloBE income ≤ SBIE)";
+    add("Transitional safe harbour / de-minimis", shApplies ? "MET → top-up reduced to €0" : "not met", shApplies ? shReason : "none");
+
+    const beforeQdmtt = shApplies ? 0 : grossTopUp;
+    const qdmtt = Math.min(qdmttPaid, beforeQdmtt);
+    add("Less: QDMTT (source country first)", `min(${eur(qdmttPaid)}, ${eur(beforeQdmtt)})`, "− " + eur(qdmtt));
+
+    const residual = Math.max(0, beforeQdmtt - qdmtt);
+    add("Residual top-up (IIR → UTPR)", `${eur(beforeQdmtt)} − ${eur(qdmtt)}`, eur(residual));
+
+    return { name: j.name || "—", etr, sbie, excess, topUpPct, grossTopUp, deMinimis, shApplies, shReason, qdmtt, residual, lowTaxed: etr != null && etr < MIN_RATE && !shApplies, steps };
+  }
+
+  function computeGroup(rows, year) {
+    const jur = rows.map((j) => computeJurisdiction(j, year));
+    const totalResidual = jur.reduce((a, j) => a + j.residual, 0);
+    const totalQdmtt = jur.reduce((a, j) => a + j.qdmtt, 0);
+    const totalGross = jur.reduce((a, j) => a + j.grossTopUp, 0);
+    const low = jur.filter((j) => j.lowTaxed);
+    return { jur, totalResidual, totalQdmtt, totalGross, lowCount: low.length, year, rates: SBIE_RATE[year] || [5, 5] };
+  }
+
+  function Panel(props) {
+    const lang = props.lang || "lt"; const L = (a, b) => (lang === "lt" ? a : b);
+    const [year, setYear] = useState(2026);
+    const [rows, setRows] = useState([
+      { id: 1, name: "Lithuania", income: 5000000, taxes: 600000, payroll: 800000, assets: 2000000, qdmtt: 0, revenue: 30000000 },
+      { id: 2, name: "Estonia", income: 3000000, taxes: 0, payroll: 400000, assets: 500000, qdmtt: 0, revenue: 12000000 },
+      { id: 3, name: "Germany", income: 10000000, taxes: 3000000, payroll: 1500000, assets: 4000000, qdmtt: 0, revenue: 60000000 },
+    ]);
+    const [open, setOpen] = useState(null);
+    const G = useMemo(() => computeGroup(rows, year), [rows, year]);
+
+    const upd = (id, f, v) => setRows((p) => p.map((r) => r.id === id ? { ...r, [f]: f === "name" ? v : (Number(v) || 0) } : r));
+    const addRow = () => setRows((p) => [...p, { id: Date.now(), name: "New", income: 0, taxes: 0, payroll: 0, assets: 0, qdmtt: 0, revenue: 0 }]);
+    const delRow = (id) => setRows((p) => p.filter((r) => r.id !== id));
+
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const ci = { fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: "5px 6px", fontSize: 11, width: "100%", boxSizing: "border-box" };
+    const th = { fontSize: 8.5, letterSpacing: ".05em", textTransform: "uppercase", color: C.muted, padding: "6px 5px", textAlign: "right", fontWeight: 700 };
+    const td = { padding: "4px 5px" };
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid " + C.line, flexWrap: "wrap", gap: 10 }}>
+          <div><div style={eyebrow}>{L("Antrasis ramstis · GloBE", "Pillar Two · GloBE")}</div><div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{L("Globalaus minimalaus mokesčio skaičiuoklė", "Global minimum-tax calculator")}</div></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: C.muted }}>
+            <span>{L("Fiskaliniai metai", "Fiscal year")}</span>
+            <select value={year} onChange={(e) => setYear(+e.target.value)} style={{ ...ci, width: 90 }}>{Object.keys(SBIE_RATE).map((y) => <option key={y} value={y}>{y}</option>)}</select>
+            <span style={{ color: C.faint }}>{L("riba", "carve-out")} {G.rates[0]}% / {G.rates[1]}%</span>
+          </div>
+        </div>
+
+        {/* group summary */}
+        <div style={{ display: "flex", flexWrap: "wrap", borderBottom: "1px solid " + C.line }}>
+          {[[L("Bendras likutinis papildomas mokestis", "Total residual top-up"), eur(G.totalResidual), G.totalResidual > 0 ? C.red : C.green], [L("Jurisdikcijos < 15%", "Jurisdictions < 15%"), String(G.lowCount), G.lowCount ? C.amber : C.green], [L("QDMTT (vietinis)", "QDMTT (domestic)"), eur(G.totalQdmtt), C.cold], [L("Bendras bruto", "Total gross"), eur(G.totalGross), C.muted]].map((m, i) =>
+            <div key={i} style={{ flex: "1 1 150px", padding: "12px 18px", borderRight: i < 3 ? "1px solid " + C.soft : "none" }}>
+              <div style={{ fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted }}>{m[0]}</div>
+              <div style={{ fontSize: 19, fontWeight: 700, color: m[2], marginTop: 3 }}>{m[1]}</div>
+            </div>)}
+        </div>
+
+        {/* editable input table */}
+        <div style={{ padding: "10px 14px", overflowX: "auto" }}>
+          <div style={{ fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, marginBottom: 6 }}>{L("Įvestis pagal jurisdikciją (redaguojama)", "Inputs by jurisdiction (editable)")}</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: "left" }}>{L("Jurisdikcija", "Jurisdiction")}</th>
+              <th style={th}>{L("GloBE pajamos", "GloBE income")}</th><th style={th}>{L("Padengti mokesčiai", "Covered taxes")}</th>
+              <th style={th}>{L("Darbo užm.", "Payroll")}</th><th style={th}>{L("Mat. turtas", "Tangible assets")}</th>
+              <th style={th}>QDMTT</th><th style={th}>{L("Pajamos", "Revenue")}</th><th style={th}></th>
+            </tr></thead>
+            <tbody>{rows.map((r) => <tr key={r.id} style={{ borderTop: "1px solid " + C.soft }}>
+              <td style={{ ...td, minWidth: 110 }}><input value={r.name} onChange={(e) => upd(r.id, "name", e.target.value)} style={ci} /></td>
+              <td style={td}><input type="number" value={r.income} onChange={(e) => upd(r.id, "income", e.target.value)} style={{ ...ci, textAlign: "right" }} /></td>
+              <td style={td}><input type="number" value={r.taxes} onChange={(e) => upd(r.id, "taxes", e.target.value)} style={{ ...ci, textAlign: "right" }} /></td>
+              <td style={td}><input type="number" value={r.payroll} onChange={(e) => upd(r.id, "payroll", e.target.value)} style={{ ...ci, textAlign: "right" }} /></td>
+              <td style={td}><input type="number" value={r.assets} onChange={(e) => upd(r.id, "assets", e.target.value)} style={{ ...ci, textAlign: "right" }} /></td>
+              <td style={td}><input type="number" value={r.qdmtt} onChange={(e) => upd(r.id, "qdmtt", e.target.value)} style={{ ...ci, textAlign: "right" }} /></td>
+              <td style={td}><input type="number" value={r.revenue} onChange={(e) => upd(r.id, "revenue", e.target.value)} style={{ ...ci, textAlign: "right" }} /></td>
+              <td style={{ ...td, textAlign: "center" }}><button onClick={() => delRow(r.id)} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.faint, border: "1px solid " + C.line, padding: "4px 8px", fontSize: 10 }}>✕</button></td>
+            </tr>)}</tbody>
+          </table>
+          <button onClick={addRow} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.cold, border: "1px solid " + C.cold, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, marginTop: 8 }}>+ {L("Jurisdikcija", "Jurisdiction")}</button>
+        </div>
+
+        {/* per-jurisdiction results with step trace */}
+        <div style={{ padding: "4px 14px 12px" }}>
+          {G.jur.map((j, i) => <div key={i} style={{ border: "1px solid " + C.line, borderLeft: "3px solid " + (j.residual > 0 ? C.red : j.shApplies ? C.amber : C.green), background: C.panel2, marginTop: 8 }}>
+            <div onClick={() => setOpen(open === i ? null : i)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, fontSize: 13, minWidth: 110 }}>{j.name}</span>
+              <span style={{ fontSize: 11.5, color: j.etr != null && j.etr < 0.15 ? C.amber : C.muted }}>ETR {j.etr == null ? "n/a" : pct(j.etr)}</span>
+              <span style={{ fontSize: 11.5, color: C.faint }}>SBIE {eur(j.sbie)}</span>
+              <span style={{ flex: 1 }} />
+              {j.shApplies && <span style={{ fontSize: 9, color: C.amber, border: "1px solid " + C.amber, padding: "2px 6px" }}>{L("saugus uostas", "safe harbour")}</span>}
+              <span style={{ fontSize: 13, fontWeight: 700, color: j.residual > 0 ? C.red : C.green }}>{L("Papildomas", "Top-up")} {eur(j.residual)}</span>
+              <span style={{ color: C.faint, fontSize: 11 }}>{open === i ? "▾" : "▸"}</span>
+            </div>
+            {open === i && <div style={{ borderTop: "1px solid " + C.soft, padding: "8px 14px" }}>
+              {j.steps.map((s, k) => <div key={k} style={{ display: "flex", gap: 10, padding: "5px 0", borderTop: k ? "1px solid " + C.soft : "none", fontSize: 11.5, alignItems: "baseline" }}>
+                <span style={{ flex: "0 0 230px", color: C.text }}>{s.label}</span>
+                <span style={{ flex: 1, color: C.faint, fontSize: 10.5 }}>{s.formula}</span>
+                <span style={{ flex: "0 0 110px", textAlign: "right", color: C.cold, fontWeight: 700 }}>{s.value}</span>
+              </div>)}
+            </div>}
+          </div>)}
+        </div>
+
+        <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+          {L("Supaprastintas OECD GloBE modelis švietimo/planavimo tikslais. Taikoma €750 mln. grupės pajamų riba. Tikrasis skaičiavimas reikalauja atidėtųjų mokesčių, GloBE korekcijų ir nuosavybės grandinės paskirstymo (IIR/UTPR) — pasitarkite su specialistu. Tai nėra mokestinė konsultacija.", "Simplified OECD GloBE model for education/planning. The €750M group-revenue scope applies. A real computation needs deferred taxes, GloBE adjustments, and ownership-chain allocation (IIR/UTPR) — consult a specialist. This is not tax advice.")}
+        </div>
+      </div>
+    );
+  }
+
+  return { computeJurisdiction, computeGroup, SBIE_RATE, Panel };
+})();
+const PillarTwoPanel = PillarTwo.Panel;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TRANSFER PRICING — TNMM / profitability analysis (glass-box, auditable).
+//  Computes the tested party's Profit Level Indicator (PLI), the arm's-length
+//  INTERQUARTILE RANGE from YOUR comparables, whether the result is within range, and
+//  the OECD adjustment to the median if it is outside. Comparables come from your
+//  benchmarking study (Orbis/RoyaltyStat are licensed — not bundled). Quartiles use
+//  linear interpolation (Excel PERCENTILE.INC); some studies use other conventions —
+//  reconcile to yours. Not tax advice.
+// ═══════════════════════════════════════════════════════════════════════════
+const TransferPricing = (function () {
+  const C = { ink: "#0a0a0a", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff", violet: "#b197fc" };
+  const MONO = "var(--m)";
+  const eur = (n) => "€" + Math.round(Number(n) || 0).toLocaleString("lt-LT");
+  const pc = (n) => (n == null || isNaN(n) ? "—" : (n * 100).toFixed(2) + "%");
+
+  const PLIS = {
+    om: { lt: "Veiklos marža", en: "Operating margin", denom: "sales", num: "operating profit" },
+    fcm: { lt: "Antkainis sąnaudoms (cost plus)", en: "Full-cost markup (net cost plus)", denom: "total costs", num: "operating profit" },
+    berry: { lt: "Berry koeficientas", en: "Berry ratio", denom: "operating expenses", num: "gross profit" },
+  };
+
+  // Linear-interpolation percentile (Excel PERCENTILE.INC). p in [0,1], sorted ascending.
+  function percentile(sorted, p) {
+    if (!sorted.length) return null;
+    if (sorted.length === 1) return sorted[0];
+    const idx = p * (sorted.length - 1), lo = Math.floor(idx), hi = Math.ceil(idx);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+
+  // inputs: {sales, cogs, opex, pli, comps:[percent numbers]}
+  function analyzeTNMM(inp) {
+    const sales = +inp.sales || 0, cogs = +inp.cogs || 0, opex = +inp.opex || 0, pli = inp.pli || "om";
+    const gross = sales - cogs, op = gross - opex, totalCost = cogs + opex;
+    const tested = pli === "om" ? (sales ? op / sales : null) : pli === "fcm" ? (totalCost ? op / totalCost : null) : (opex ? gross / opex : null);
+    const steps = []; const add = (label, formula, value) => steps.push({ label, formula, value });
+    add("Gross profit", `${eur(sales)} − ${eur(cogs)}`, eur(gross));
+    add("Operating profit", `${eur(gross)} − ${eur(opex)}`, eur(op));
+    const meta = PLIS[pli];
+    add(`Tested PLI — ${meta.en}`, `${meta.num} ÷ ${meta.denom}`, pc(tested));
+
+    const comps = (inp.comps || []).map((x) => +x).filter((x) => isFinite(x)).map((x) => x / 100).sort((a, b) => a - b);
+    const q1 = percentile(comps, 0.25), med = percentile(comps, 0.5), q3 = percentile(comps, 0.75);
+    add(`Comparables (n=${comps.length})`, comps.length ? `range ${pc(comps[0])} … ${pc(comps[comps.length - 1])}` : "none entered", comps.length ? `${comps.length} obs` : "—");
+    add("Arm's-length range (interquartile)", "Q1 … Q3 (PERCENTILE.INC)", q1 == null ? "—" : `${pc(q1)} … ${pc(q3)}`);
+    add("Median (Q2)", "50th percentile", pc(med));
+
+    let position = "n/a", adjustment = 0, target = 0;
+    if (tested != null && q1 != null) {
+      if (tested < q1) position = "below";
+      else if (tested > q3) position = "above";
+      else position = "within";
+      const base = pli === "om" ? sales : pli === "fcm" ? totalCost : opex;
+      if (position === "below") {
+        target = med * base;                         // target operating profit (om/fcm) or gross profit (berry)
+        const actual = pli === "berry" ? gross : op;
+        adjustment = target - actual;
+        add("Position vs range", "tested < Q1 → below the arm's-length range", "BELOW");
+        add(`Target ${pli === "berry" ? "gross" : "operating"} profit at median`, `${pc(med)} × ${eur(base)}`, eur(target));
+        add("Transfer-pricing adjustment", `${eur(target)} − ${eur(actual)}`, eur(adjustment));
+      } else if (position === "above") {
+        add("Position vs range", "tested > Q3 → above the range", "ABOVE");
+        add("Adjustment", "taxpayer-initiated downward adjustments generally not made — document rationale", eur(0));
+      } else {
+        add("Position vs range", "Q1 ≤ tested ≤ Q3 → within the arm's-length range", "WITHIN");
+        add("Adjustment", "none required", eur(0));
+      }
+    }
+    return { sales, cogs, opex, gross, op, totalCost, tested, comps, q1, med, q3, min: comps[0] ?? null, max: comps[comps.length - 1] ?? null, position, adjustment, target, pli, steps, small: comps.length > 0 && comps.length < 4 };
+  }
+
+  function Panel(props) {
+    const lang = props.lang || "lt"; const L = (a, b) => (lang === "lt" ? a : b);
+    const [pli, setPli] = useState("om");
+    const [inp, setInp] = useState({ sales: 10000000, cogs: 8500000, opex: 1200000 });
+    const [compText, setCompText] = useState("2.1, 2.8, 3.5, 4.2, 4.9, 5.6, 6.3");
+    const comps = useMemo(() => compText.split(/[\s,;]+/).map((x) => parseFloat(x)).filter((x) => isFinite(x)), [compText]);
+    const R = useMemo(() => analyzeTNMM({ ...inp, pli, comps }), [inp, pli, comps]);
+
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const ci = { fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line, padding: "7px 9px", fontSize: 12, boxSizing: "border-box" };
+    const lab = { fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted, marginBottom: 4 };
+    const upd = (f, v) => setInp((p) => ({ ...p, [f]: Number(v) || 0 }));
+
+    // number-line geometry
+    const lo = R.min != null ? Math.min(R.min, R.tested ?? R.min) : 0, hi = R.max != null ? Math.max(R.max, R.tested ?? R.max) : 1;
+    const pad = (hi - lo) * 0.1 || 0.01, A = lo - pad, B = hi + pad;
+    const X = (v) => 40 + ((v - A) / (B - A || 1)) * 560;
+    const tone = R.position === "within" ? C.green : R.position === "below" ? C.red : R.position === "above" ? C.amber : C.muted;
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid " + C.line, flexWrap: "wrap", gap: 10 }}>
+          <div><div style={eyebrow}>{L("Sandorių kainodara · TNMM", "Transfer pricing · TNMM")}</div><div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{L("Pelningumo analizė ir ištiestosios rankos intervalas", "Profitability analysis & arm's-length range")}</div></div>
+          <select value={pli} onChange={(e) => setPli(e.target.value)} style={{ ...ci, width: 240 }}>{Object.keys(PLIS).map((k) => <option key={k} value={k}>{L(PLIS[k].lt, PLIS[k].en)}</option>)}</select>
+        </div>
+
+        {/* tested party inputs */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, padding: "14px 18px", borderBottom: "1px solid " + C.soft }}>
+          {[["sales", L("Pardavimai", "Sales")], ["cogs", L("Parduotų prekių savikaina", "COGS")], ["opex", L("Veiklos sąnaudos", "Operating expenses")]].map((f) => <div key={f[0]} style={{ flex: "1 1 150px" }}>
+            <div style={lab}>{f[1]}</div><input type="number" value={inp[f[0]]} onChange={(e) => upd(f[0], e.target.value)} style={{ ...ci, width: "100%", textAlign: "right" }} />
+          </div>)}
+          <div style={{ flex: "1 1 150px" }}><div style={lab}>{L("Tikrinama PLI", "Tested PLI")}</div><div style={{ ...ci, color: tone, fontWeight: 700 }}>{pc(R.tested)}</div></div>
+        </div>
+
+        {/* comparables */}
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid " + C.soft }}>
+          <div style={lab}>{L("Palyginamųjų PLI (įklijuokite iš lyginamosios studijos, procentais)", "Comparable PLIs (paste from your benchmarking study, as %)")}</div>
+          <textarea value={compText} onChange={(e) => setCompText(e.target.value)} style={{ ...ci, width: "100%", minHeight: 50 }} />
+          {R.small && <div style={{ fontSize: 10, color: C.amber, marginTop: 4 }}>{L("Mažas imtis (<4) — intervalas mažai patikimas.", "Small set (<4) — range is weakly reliable.")}</div>}
+        </div>
+
+        {/* result summary + number line */}
+        <div style={{ padding: "14px 18px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 0, marginBottom: 12 }}>
+            {[[L("Q1", "Q1"), pc(R.q1), C.muted], [L("Mediana", "Median"), pc(R.med), C.cold], [L("Q3", "Q3"), pc(R.q3), C.muted], [L("Pozicija", "Position"), R.position === "within" ? L("intervale", "within") : R.position === "below" ? L("žemiau", "below") : R.position === "above" ? L("aukščiau", "above") : "—", tone], [L("Korekcija", "Adjustment"), R.adjustment ? eur(R.adjustment) : eur(0), R.adjustment ? C.red : C.green]].map((m, i) =>
+              <div key={i} style={{ flex: "1 1 110px", padding: "10px 14px", borderRight: i < 4 ? "1px solid " + C.soft : "none" }}>
+                <div style={{ fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted }}>{m[0]}</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: m[2], marginTop: 3 }}>{m[1]}</div>
+              </div>)}
+          </div>
+          {R.q1 != null && <svg viewBox="0 0 640 80" style={{ width: "100%", height: "auto" }}>
+            <line x1="40" y1="46" x2="600" y2="46" stroke={C.soft} strokeWidth="1" />
+            <rect x={X(R.q1)} y="38" width={Math.max(2, X(R.q3) - X(R.q1))} height="16" fill={C.cold} opacity="0.18" />
+            {[["Q1", R.q1], ["Q3", R.q3]].map(([lb, v], i) => <g key={i}><line x1={X(v)} y1="36" x2={X(v)} y2="56" stroke={C.muted} strokeWidth="1" /><text x={X(v)} y="70" fontSize="9" fill={C.faint} textAnchor="middle" fontFamily={MONO}>{lb} {pc(v)}</text></g>)}
+            <line x1={X(R.med)} y1="34" x2={X(R.med)} y2="58" stroke={C.cold} strokeWidth="1.6" /><text x={X(R.med)} y="28" fontSize="9" fill={C.cold} textAnchor="middle" fontFamily={MONO}>med {pc(R.med)}</text>
+            {R.tested != null && <g><circle cx={X(R.tested)} cy="46" r="6" fill={tone} /><text x={X(R.tested)} y="28" fontSize="9" fill={tone} textAnchor="middle" fontFamily={MONO} fontWeight="700">{L("tikrinama", "tested")} {pc(R.tested)}</text></g>}
+          </svg>}
+        </div>
+
+        {/* step trace */}
+        <div style={{ borderTop: "1px solid " + C.soft, padding: "10px 18px" }}>
+          <div style={{ fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.violet, marginBottom: 6 }}>{L("Skaičiavimo eiga (be juodųjų dėžių)", "Calculation trace (no black boxes)")}</div>
+          {R.steps.map((s, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "5px 0", borderTop: i ? "1px solid " + C.soft : "none", fontSize: 11.5, alignItems: "baseline" }}>
+            <span style={{ flex: "0 0 240px", color: C.text }}>{s.label}</span>
+            <span style={{ flex: 1, color: C.faint, fontSize: 10.5 }}>{s.formula}</span>
+            <span style={{ flex: "0 0 120px", textAlign: "right", color: C.cold, fontWeight: 700 }}>{s.value}</span>
+          </div>)}
+        </div>
+
+        <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+          {L("Ištiestosios rankos intervalas skaičiuojamas iš JŪSŲ palyginamųjų (Orbis/RoyaltyStat nelicencijuoti — neįtraukti). Kvartiliai — tiesinė interpoliacija; OECD koreguoja iki medianos, jei rezultatas už intervalo ribų. Tai nėra mokestinė konsultacija.", "The arm's-length range is computed from YOUR comparables (Orbis/RoyaltyStat are licensed — not bundled). Quartiles use linear interpolation; the OECD adjusts to the median when the result is outside the range. This is not tax advice.")}
+        </div>
+      </div>
+    );
+  }
+
+  return { analyzeTNMM, percentile, PLIS, Panel };
+})();
+const TransferPricingPanel = TransferPricing.Panel;
+
+
+
+
+const WORKSPACE_API = WorkspaceUI.API;
+
+
+
 
 
 
@@ -24925,6 +26276,12 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "legalsearch", grpLt: "Analizė", grpEn: "Intelligence", en: "Legal Search", lt: "Teisinė paieška" },
                   { id: "docqa", grpLt: "Analizė", grpEn: "Intelligence", en: "Doc Q&A", lt: "Dok. klausimai" },
                   { id: "compliance", grpLt: "Atitiktis", grpEn: "Compliance", en: "Live Submissions", lt: "Pateikimai VMI" },
+                  { id: "auditlifecycle", grpLt: "Auditas", grpEn: "Assurance", en: "Audit Lifecycle", lt: "Audito ciklas" },
+                  { id: "workspace", grpLt: "Auditas", grpEn: "Assurance", en: "Collaborative Workspace", lt: "Bendra darbo erdvė" },
+                  { id: "advcaats", grpLt: "Auditas", grpEn: "Assurance", en: "Advanced CAATs", lt: "Pažangūs CAAT" },
+                  { id: "automations", grpLt: "Auditas", grpEn: "Assurance", en: "Audit Automations", lt: "Automatizavimas" },
+                  { id: "pillartwo", grpLt: "Strategija", grpEn: "Strategy", en: "Pillar Two GloBE", lt: "Antrasis ramstis" },
+                  { id: "transferpricing", grpLt: "Strategija", grpEn: "Strategy", en: "Transfer Pricing", lt: "Sandorių kainodara" },
                 ].flatMap((tab, ti, arr) => [(ti === 0 || arr[ti - 1].grpLt !== tab.grpLt) && <span key={"g-" + tab.id} style={{ alignSelf: "stretch", display: "inline-flex", alignItems: "center", padding: "0 10px 0 16px", fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".14em", color: "#6b6b66", textTransform: "uppercase", borderLeft: ti === 0 ? "none" : `1px solid ${PL_LINE}`, marginLeft: ti === 0 ? 0 : 10 }}>{lang === "lt" ? tab.grpLt : tab.grpEn}</span>,
                   <button key={tab.id} onClick={() => {
                     setSaftTab(tab.id);
@@ -25101,6 +26458,18 @@ function TAXAI({ onExit, initialView } = {}) {
               {saftTab === "legalsearch" && <div style={panel}><LegalSearchPanel lang={lang} /></div>}
 
               {saftTab === "docqa" && <div style={panel}><DocQAPanel lang={lang} /></div>}
+
+              {saftTab === "transferpricing" && <div style={panel}><TransferPricingPanel lang={lang} /></div>}
+
+              {saftTab === "pillartwo" && <div style={panel}><PillarTwoPanel lang={lang} /></div>}
+
+              {saftTab === "automations" && <div style={panel}><AuditAutomationsPanel parsed={fileData?.parsed} findings={findings} risk={computeRiskScore(findings)} gate={fileData?.parsed ? simulateAcceptanceGate(fileData.parsed, findings) : null} lang={lang} /></div>}
+
+              {saftTab === "advcaats" && <div style={panel}><AdvCAATsPanel parsed={fileData?.parsed} lang={lang} /></div>}
+
+              {saftTab === "workspace" && <div style={panel}><WorkspacePanel parsed={fileData?.parsed} findings={findings} lang={lang} /></div>}
+
+              {saftTab === "auditlifecycle" && <div style={panel}><AuditLifecyclePanel parsed={fileData?.parsed} findings={findings} gate={fileData?.parsed ? simulateAcceptanceGate(fileData.parsed, findings) : null} risk={computeRiskScore(findings)} lang={lang} /></div>}
 
               {saftTab === "compliance" && <div style={panel}><ComplianceDashboard apiBase={COMPLIANCE_API} tenantId={fileData?.parsed?.header?.company?.registrationNumber || ""} lang={lang} /></div>}
 
