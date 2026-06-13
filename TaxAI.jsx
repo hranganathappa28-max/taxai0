@@ -489,6 +489,131 @@ const MLPlus = (function () {
 const LegalSearchPanel = MLPlus.LegalSearchPanel;
 const DocQAPanel = MLPlus.DocQAPanel;
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  COMPLIANCE UI LAYER  —  live VMI/SABIS submission dashboard wired into TAXAI.
+//  Talks ONLY to the companion proxy (the server-side service in /compliance-layer);
+//  certificates + signing never touch the browser. If the proxy is offline it
+//  degrades gracefully (shows the LT filing calendar, "polling", no crash).
+//  Point it at your proxy via window.__TAXAI_COMPLIANCE_API__ or edit API below.
+// ═══════════════════════════════════════════════════════════════════════════
+const ComplianceUI = (function () {
+  const C = { ink: "#0a0a0a", panel: "#0e1013", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff" };
+  const MONO = "var(--m)";
+  const API = (typeof window !== "undefined" && window.__TAXAI_COMPLIANCE_API__) || "http://localhost:8787";
+
+  const STATUS_TONE = { queued: C.muted, signing: C.cold, submitted: C.cold, polling: C.amber, accepted: C.green, rejected: C.red, failed: C.red, cancelled: C.faint };
+  const daysTo = (d) => Math.ceil((new Date(d) - new Date()) / 86400000);
+  const fmtDate = (d) => { try { return new Date(d).toISOString().slice(0, 10); } catch (e) { return ""; } };
+
+  // Recurring LT filing calendar fallback (confirm exact dates against VMI; i.SAF ~20th, FR0600 ~25th).
+  function defaultCalendar() {
+    const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+    const next = (day) => { const d = new Date(y, m, day); if (d < now) d.setMonth(m + 1); return d.toISOString().slice(0, 10); };
+    return [
+      { code: "ISAF", label: "i.SAF invoice registers", due_date: next(20), status: "open" },
+      { code: "FR0600", label: "FR0600 VAT return", due_date: next(25), status: "open" },
+      { code: "FR0564", label: "FR0564 EC Sales List", due_date: next(25), status: "open" },
+      { code: "PLN204", label: "PLN204 advance CIT", due_date: y + "-06-15", status: "open" },
+    ];
+  }
+
+  // live status: WebSocket with REST polling fallback
+  function useComplianceStream(apiBase, tenantId, pollMs) {
+    pollMs = pollMs || 15000;
+    const [submissions, setSubmissions] = useState([]);
+    const [deadlines, setDeadlines] = useState([]);
+    const [connected, setConnected] = useState(false);
+    const wsRef = useRef(null);
+    const refresh = useCallback(async () => {
+      try {
+        const r = await fetch(apiBase + "/dashboard", { headers: { "x-tenant-id": tenantId || "" } });
+        if (!r.ok) return;
+        const j = await r.json();
+        setSubmissions(j.submissions || []); setDeadlines(j.deadlines || []);
+      } catch (e) { /* keep last good state */ }
+    }, [apiBase, tenantId]);
+    useEffect(() => {
+      refresh();
+      let stop = false, poll = null;
+      const wsUrl = apiBase.replace(/^http/, "ws") + "/ws";
+      const connect = () => {
+        try {
+          const ws = new WebSocket(wsUrl); wsRef.current = ws;
+          ws.onopen = () => { setConnected(true); if (poll) { clearInterval(poll); poll = null; } };
+          ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.type === "submission") refresh(); } catch (e) { } };
+          ws.onclose = () => { setConnected(false); if (!stop && !poll) poll = setInterval(refresh, pollMs); if (!stop) setTimeout(connect, 5000); };
+          ws.onerror = () => { try { ws.close(); } catch (e) { } };
+        } catch (e) { if (!poll) poll = setInterval(refresh, pollMs); }
+      };
+      connect();
+      return () => { stop = true; if (poll) clearInterval(poll); try { wsRef.current && wsRef.current.close(); } catch (e) { } };
+    }, [apiBase, tenantId, pollMs, refresh]);
+    return { submissions, deadlines, connected, refresh };
+  }
+
+  function Dashboard(props) {
+    const apiBase = props.apiBase || API, tenantId = props.tenantId || "", lang = props.lang || "lt";
+    const L = (lt, en) => (lang === "lt" ? lt : en);
+    const { submissions, deadlines, connected, refresh } = useComplianceStream(apiBase, tenantId);
+    const cal = (deadlines && deadlines.length ? deadlines : defaultCalendar()).slice().sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+    const newest = submissions[0] && submissions[0].updated_at ? daysTo(submissions[0].updated_at) : null;
+    const staleDays = newest == null ? null : Math.abs(newest);
+
+    let nextAction = null;
+    try { if (typeof MLPlus !== "undefined" && MLPlus.recommendActions) { const r = MLPlus.recommendActions({ gate: null, risk: null, fused: [], lang: lang }); nextAction = r[0] && r[0].action; } } catch (e) { }
+    if (!nextAction && cal[0]) { const dd = daysTo(cal[0].due_date); nextAction = L(cal[0].label + ": liko " + dd + " d. (iki " + fmtDate(cal[0].due_date) + ")", cal[0].label + ": " + dd + " days left (by " + fmtDate(cal[0].due_date) + ")"); }
+
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const escTone = (d) => (d < 0 ? C.red : d <= 3 ? C.red : d <= 7 ? C.amber : C.muted);
+
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: "1px solid " + C.line }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid " + C.line, flexWrap: "wrap", gap: 10 }}>
+          <div><div style={eyebrow}>{L("Atitikties valdymas", "Compliance control")}</div><div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{L("Pateikimai realiu laiku", "Real-time submissions")}</div></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 11, color: C.muted }}>
+            <span><span style={{ width: 8, height: 8, borderRadius: 8, background: connected ? C.green : C.amber, display: "inline-block", marginRight: 6 }} />{connected ? L("gyva", "live") : L("apklausa", "polling")}</span>
+            {staleDays != null && <span style={{ color: staleDays > 35 ? C.red : staleDays > 7 ? C.amber : C.muted }}>{L("duomenys", "data")}: {staleDays}{L(" d. sen.", "d old")}</span>}
+            <button onClick={refresh} style={{ fontFamily: MONO, cursor: "pointer", background: "transparent", color: C.cold, border: "1px solid " + C.cold, padding: "5px 11px", fontSize: 10.5, fontWeight: 700 }}>{L("Atnaujinti", "Refresh")}</button>
+          </div>
+        </div>
+
+        {nextAction && <div style={{ padding: "11px 18px", borderBottom: "1px solid " + C.soft, background: "rgba(124,196,255,0.06)", fontSize: 12.5 }}><span style={{ color: C.cold, fontWeight: 700 }}>→ {L("Kitas veiksmas: ", "Next: ")}</span>{nextAction}</div>}
+
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 360px", borderRight: "1px solid " + C.line }}>
+            <div style={{ padding: "10px 18px", fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, borderBottom: "1px solid " + C.soft }}>{L("Pateikimų būsenos", "Submission status")}</div>
+            {submissions.length === 0 && <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>{L("Pateikimų dar nėra. (Įsitikinkite, kad veikia atitikties tarnyba.)", "No submissions yet. (Check the compliance service is running.)")}</div>}
+            {submissions.map((s) => <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 18px", borderTop: "1px solid " + C.soft, fontSize: 12 }}>
+              <span style={{ width: 8, height: 8, background: STATUS_TONE[s.status] || C.muted, display: "inline-block", flex: "0 0 8px" }} />
+              <span style={{ width: 78, color: C.cold, fontWeight: 700, textTransform: "uppercase" }}>{s.channel}</span>
+              <span style={{ width: 64, color: C.muted }}>{s.period || "—"}</span>
+              <span style={{ flex: 1, color: STATUS_TONE[s.status] || C.text, fontWeight: 600 }}>{s.status}</span>
+              <span style={{ fontSize: 10, color: C.faint }}>{s.updated_at ? fmtDate(s.updated_at) : ""}</span>
+            </div>)}
+          </div>
+          <div style={{ flex: "1 1 300px" }}>
+            <div style={{ padding: "10px 18px", fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, borderBottom: "1px solid " + C.soft }}>{L("Terminų kalendorius", "Compliance calendar")}</div>
+            {cal.map((d, i) => { const dd = daysTo(d.due_date); return <div key={d.code + i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 18px", borderTop: "1px solid " + C.soft, fontSize: 12 }}>
+              <span style={{ width: 70, color: C.text, fontWeight: 700 }}>{d.code}</span>
+              <span style={{ flex: 1, color: C.muted, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.label}</span>
+              <span style={{ width: 84, textAlign: "right", color: escTone(dd), fontWeight: 700 }}>{d.status === "submitted" ? "✓" : dd < 0 ? L((-dd) + " d. vėluoja", (-dd) + "d late") : L(dd + " d.", dd + "d")}</span>
+            </div>; })}
+          </div>
+        </div>
+
+        <div style={{ borderTop: "1px solid " + C.line, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>
+          {L("Visi pateikimai eina per saugų serverio tarpinį sluoksnį (sertifikatai ir parašai niekada nepatenka į naršyklę). Terminai – orientaciniai; patikrinkite VMI kalendorių.", "All submissions route through the secure server proxy (certificates and signatures never reach the browser). Deadlines are indicative — verify against the VMI calendar.")}
+        </div>
+      </div>
+    );
+  }
+
+  return { Dashboard, API };
+})();
+const ComplianceDashboard = ComplianceUI.Dashboard;
+const COMPLIANCE_API = ComplianceUI.API;
+
+
 
 
 const LEGAL_DB = [
@@ -24754,6 +24879,7 @@ function TAXAI({ onExit, initialView } = {}) {
                                   { id: "insights", grpLt: "Analizė", grpEn: "Intelligence", en: "Intelligence", lt: "Žvalgyba" },
                   { id: "legalsearch", grpLt: "Analizė", grpEn: "Intelligence", en: "Legal Search", lt: "Teisinė paieška" },
                   { id: "docqa", grpLt: "Analizė", grpEn: "Intelligence", en: "Doc Q&A", lt: "Dok. klausimai" },
+                  { id: "compliance", grpLt: "Atitiktis", grpEn: "Compliance", en: "Live Submissions", lt: "Pateikimai VMI" },
                 ].flatMap((tab, ti, arr) => [(ti === 0 || arr[ti - 1].grpLt !== tab.grpLt) && <span key={"g-" + tab.id} style={{ alignSelf: "stretch", display: "inline-flex", alignItems: "center", padding: "0 10px 0 16px", fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".14em", color: "#6b6b66", textTransform: "uppercase", borderLeft: ti === 0 ? "none" : `1px solid ${PL_LINE}`, marginLeft: ti === 0 ? 0 : 10 }}>{lang === "lt" ? tab.grpLt : tab.grpEn}</span>,
                   <button key={tab.id} onClick={() => {
                     setSaftTab(tab.id);
@@ -24930,6 +25056,8 @@ function TAXAI({ onExit, initialView } = {}) {
               {saftTab === "legalsearch" && <div style={panel}><LegalSearchPanel lang={lang} /></div>}
 
               {saftTab === "docqa" && <div style={panel}><DocQAPanel lang={lang} /></div>}
+
+              {saftTab === "compliance" && <div style={panel}><ComplianceDashboard apiBase={COMPLIANCE_API} tenantId={fileData?.parsed?.header?.company?.registrationNumber || ""} lang={lang} /></div>}
 
               {saftTab === "ai" && <div style={panel}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
