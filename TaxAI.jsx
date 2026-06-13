@@ -14,6 +14,270 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 */
 
 // ═══ COMPREHENSIVE LEGAL DATABASE (RAG Source) ═══
+// ═══════════════════════════════════════════════════════════════════════════
+//  ML INTELLIGENCE LAYER  —  isolation forest (GL) + autoencoder (invoices)
+//  fused into one ranked list, plus seeded Monte-Carlo exposure and robust
+//  cross-period review. All engines run in-browser on the parsed SAF-T.
+//  ML proposes; the 482-rule engine decides. Everything is wrapped in one
+//  closure (MLIntel) so no internal helper leaks into the global scope.
+// ═══════════════════════════════════════════════════════════════════════════
+const MLIntel = (function () {
+  // ---- math helpers (closure-local) ----
+  const mean = (a) => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
+  const std = (a, m) => { if (!a.length) return 1; const v = a.reduce((s, x) => s + (x - m) * (x - m), 0) / a.length; return Math.sqrt(v) || 1; };
+  const median = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
+  const madOf = (a, m) => median(a.map((x) => Math.abs(x - m)));
+  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const sample = (a, k) => shuffle(a.slice()).slice(0, k);
+
+  // ════════ GL channel — isolation forest (Liu/Ting/Zhou) ════════
+  function iTree(rows, idxs, depth, maxDepth, feats) {
+    if (depth >= maxDepth || idxs.length <= 1) return { size: idxs.length };
+    const f = feats[(Math.random() * feats.length) | 0];
+    let mn = Infinity, mx = -Infinity;
+    for (const i of idxs) { const v = rows[i][f]; if (v < mn) mn = v; if (v > mx) mx = v; }
+    if (mn === mx) return { size: idxs.length };
+    const sp = mn + Math.random() * (mx - mn), L = [], R = [];
+    for (const i of idxs) (rows[i][f] < sp ? L : R).push(i);
+    return { f, sp, left: iTree(rows, L, depth + 1, maxDepth, feats), right: iTree(rows, R, depth + 1, maxDepth, feats) };
+  }
+  const cFactor = (n) => (n <= 1 ? 1 : 2 * (Math.log(n - 1) + 0.5772156649) - (2 * (n - 1)) / n);
+  function pathLen(node, x, depth) {
+    if (node.size !== undefined) return depth + cFactor(node.size);
+    return pathLen(x[node.f] < node.sp ? node.left : node.right, x, depth + 1);
+  }
+  const glWhy = (x, lang) => {
+    const L = (lt, en) => (lang === "lt" ? lt : en);
+    if (x[4]) return L("įrašyta savaitgalį", "posted on a weekend");
+    if (x[5]) return L("įrašyta periodo pabaigoje", "posted at period end");
+    if (x[2] === 0) return L("įraše nėra mokesčių informacijos", "no tax information on the posting");
+    return L("suma toli nuo įprasto intervalo", "amount far from the normal range");
+  };
+  function glAnomalyScore(parsed, lang) {
+    const rows = [], meta = [], txs = (parsed && parsed.transactions) || [];
+    for (const t of txs) {
+      const d = new Date(t.transactionDate || t.glPostingDate || 0), dow = d.getDay(), dim = d.getDate() || 1;
+      (t.lines || []).forEach((l, li) => {
+        const amt = Math.abs(l.debitAmount != null ? l.debitAmount : (l.creditAmount != null ? l.creditAmount : 0));
+        const isD = l.debitAmount != null ? 1 : 0;
+        const tp = (l.taxInfo && l.taxInfo.taxPercentage != null) ? l.taxInfo.taxPercentage : -1;
+        const hasTax = l.taxInfo ? 1 : 0;
+        const lid = (t.transactionID || "T") + "#" + (l.recordID || li);
+        rows.push([Math.log10(amt + 1), isD, hasTax, tp < 0 ? 0 : tp / 21, (dow === 0 || dow === 6) ? 1 : 0, dim >= 28 ? 1 : 0]);
+        meta.push({ id: lid, link: t.transactionID || lid });
+      });
+    }
+    const n = rows.length;
+    if (!n) return [];
+    let use = rows;
+    if (n > 4000) { const r2 = [], step = n / 4000; for (let i = 0; i < n; i += step) r2.push(rows[i | 0]); use = r2; }
+    const feats = [0, 1, 2, 3, 4, 5], nTrees = 60, sub = Math.min(256, use.length), maxDepth = Math.ceil(Math.log2(Math.max(2, sub)));
+    const trees = [];
+    for (let t = 0; t < nTrees; t++) { const idxs = []; for (let i = 0; i < sub; i++) idxs.push((Math.random() * use.length) | 0); trees.push(iTree(use, idxs, 0, maxDepth, feats)); }
+    const c = cFactor(sub);
+    const scoreRow = (x) => { let s = 0; for (const tr of trees) s += pathLen(tr, x, 0); return Math.pow(2, -(s / nTrees) / c); };
+    const scores = rows.map(scoreRow), med = median(scores), sg = (madOf(scores, med) * 1.4826) || 1e-9;
+    return rows.map((x, i) => { const sc = scores[i], z = (sc - med) / sg, flagged = sc >= 0.62 || z >= 3; return { id: meta[i].id, score: sc, flagged, why: flagged ? glWhy(x, lang) : "" }; });
+  }
+
+  // ════════ Invoice channel — dense autoencoder (8→5→2→5→8) ════════
+  const relu = (v) => v.map((x) => (x > 0 ? x : 0));
+  function denseL(x, W, b) { const o = b.slice(); for (let i = 0; i < x.length; i++) { const xi = x[i], Wi = W[i]; for (let j = 0; j < o.length; j++) o[j] += xi * Wi[j]; } return o; }
+  function backVec(W, g) { const d = new Array(W.length).fill(0); for (let i = 0; i < W.length; i++) { const Wi = W[i]; let s = 0; for (let j = 0; j < g.length; j++) s += Wi[j] * g[j]; d[i] = s; } return d; }
+  function applyG(W, b, inAct, grad, lr) { for (let i = 0; i < inAct.length; i++) { const gi = inAct[i], Wi = W[i]; for (let j = 0; j < grad.length; j++) Wi[j] -= lr * gi * grad[j]; } for (let j = 0; j < grad.length; j++) b[j] -= lr * grad[j]; }
+  function xavier(nIn, nOut) { const r = Math.sqrt(6 / (nIn + nOut)), W = []; for (let i = 0; i < nIn; i++) { const row = []; for (let j = 0; j < nOut; j++) row.push((Math.random() * 2 - 1) * r); W.push(row); } return W; }
+  function buildAE(F, h, latent) { return { F, h, latent, W1: xavier(F, h), b1: new Array(h).fill(0), W2: xavier(h, latent), b2: new Array(latent).fill(0), W3: xavier(latent, h), b3: new Array(h).fill(0), W4: xavier(h, F), b4: new Array(F).fill(0) }; }
+  function aeFwd(net, x) { const a1 = denseL(x, net.W1, net.b1), h1 = relu(a1); const z = denseL(h1, net.W2, net.b2); const a3 = denseL(z, net.W3, net.b3), h2 = relu(a3); const xh = denseL(h2, net.W4, net.b4); return { a1, h1, z, a3, h2, xh }; }
+  function aeStep(net, x, lr) {
+    const f = aeFwd(net, x), dxh = f.xh.map((v, i) => v - x[i]);
+    const dh2 = backVec(net.W4, dxh), da3 = dh2.map((v, i) => v * (f.a3[i] > 0 ? 1 : 0));
+    const dz = backVec(net.W3, da3), dh1 = backVec(net.W2, dz), da1 = dh1.map((v, i) => v * (f.a1[i] > 0 ? 1 : 0));
+    applyG(net.W4, net.b4, f.h2, dxh, lr); applyG(net.W3, net.b3, f.z, da3, lr); applyG(net.W2, net.b2, f.h1, dz, lr); applyG(net.W1, net.b1, x, da1, lr);
+  }
+  function aeErr(net, x) { const f = aeFwd(net, x); const perFeat = f.xh.map((v, i) => (v - x[i]) * (v - x[i])); let err = 0; for (const e of perFeat) err += e; return { err, perFeat }; }
+  const AE_FEAT = [
+    { lt: "neįprasta suma", en: "amount unusual" }, { lt: "PVM tarifas neatitinka sumos", en: "VAT rate inconsistent with amount" }, { lt: "neįprasta suma be PVM", en: "net amount unusual" },
+    { lt: "įrašyta savaitgalį", en: "posted on a weekend" }, { lt: "periodo pabaigoje", en: "posted at period end" }, { lt: "apvali suma", en: "round-number amount" },
+    { lt: "neįprastas eilučių sk.", en: "unusual line count" }, { lt: "retas / naujas kontrahentas", en: "rare / new counterparty" },
+  ];
+  const aeWhy = (perFeat, lang) => { let mi = 0; for (let i = 1; i < perFeat.length; i++) if (perFeat[i] > perFeat[mi]) mi = i; return lang === "lt" ? AE_FEAT[mi].lt : AE_FEAT[mi].en; };
+  function invoiceAnomalyScore(parsed, lang) {
+    const inv = [], meta = [];
+    const add = (it, party) => { const dt = it.documentTotals; if (!dt) return; const net = dt.netTotal || 0, vat = dt.taxPayable || 0, gross = dt.grossTotal || (net + vat); const d = new Date(it.invoiceDate || 0); inv.push({ gross, net, vat, dow: d.getDay(), day: d.getDate() || 1, lines: (it.lines && it.lines.length) || 1, party: party || "?" }); meta.push({ id: it.invoiceNo || "INV", link: it.glTransactionID || it.invoiceNo || "INV" }); };
+    ((parsed && parsed.sales && parsed.sales.items) || []).forEach((it) => add(it, it.customerID));
+    ((parsed && parsed.purchases && parsed.purchases.items) || []).forEach((it) => add(it, it.supplierID));
+    const n = inv.length;
+    if (n < 8) return [];
+    const freq = {}; inv.forEach((r) => (freq[r.party] = (freq[r.party] || 0) + 1));
+    let X = inv.map((r) => [Math.log10(r.gross + 1), r.vat / (r.net || 1), Math.log10(r.net + 1), (r.dow === 0 || r.dow === 6) ? 1 : 0, r.day >= 28 ? 1 : 0, (r.gross % 100 === 0) ? 1 : 0, r.lines / 12, -Math.log((freq[r.party] || 1) + 1)]);
+    [0, 1, 2, 6, 7].forEach((c) => { const col = X.map((x) => x[c]), m = mean(col), s = std(col, m); X.forEach((x) => (x[c] = (x[c] - m) / s)); });
+    const net = buildAE(8, 5, 2), idx = X.map((_, i) => i), trainIdx = X.length > 1200 ? sample(idx, 1200) : idx, epochs = 100;
+    for (let e = 0; e < epochs; e++) { shuffle(trainIdx); const lr = 0.03 / (1 + 0.02 * e); for (const i of trainIdx) aeStep(net, X[i], lr); }
+    const errs = X.map((x) => aeErr(net, x)), eVals = errs.map((e) => e.err), med = median(eVals), sg = (madOf(eVals, med) * 1.4826) || 1e-9;
+    return X.map((x, i) => { const z = (errs[i].err - med) / sg, flagged = z >= 3; return { id: meta[i].id, link: meta[i].link, score: Math.max(0, Math.min(1, 0.5 + z / 8)), flagged, why: flagged ? aeWhy(errs[i].perFeat, lang) : "" }; });
+  }
+
+  // ════════ period metrics (for cross-period) ════════
+  function summarizePeriod(parsed) {
+    const S = ((parsed && parsed.sales && parsed.sales.items) || []), P = ((parsed && parsed.purchases && parsed.purchases.items) || []);
+    const sum = (arr, f) => arr.reduce((s, x) => s + (f(x) || 0), 0);
+    const outputVat = sum(S, (i) => i.documentTotals && i.documentTotals.taxPayable), inputVat = sum(P, (i) => i.documentTotals && i.documentTotals.taxPayable);
+    const revenue = sum(S, (i) => i.documentTotals && i.documentTotals.netTotal);
+    let weekendJe = 0; ((parsed && parsed.transactions) || []).forEach((t) => { const d = new Date(t.transactionDate || 0), w = d.getDay(); if (w === 0 || w === 6) weekendJe += (t.lines || []).length || 1; });
+    const purchGross = P.map((i) => (i.documentTotals && i.documentTotals.grossTotal) || 0).filter((x) => x);
+    return { metrics: { outputVat, inputVat, netVat: outputVat - inputVat, revenue, deductionRatio: outputVat > 0 ? (inputVat / outputVat) * 100 : 0, weekendJe, avgPurchInvoice: purchGross.length ? mean(purchGross) : 0 } };
+  }
+
+  // ════════ consolidation logic ════════
+  function fuseAnomalies(glScored, aeScored) {
+    // group both channels by their transaction link (invoice.glTransactionID ↔ GL transactionID);
+    // entries with no link stand alone. BOTH = a flagged GL line and a flagged invoice on the same link.
+    const byKey = new Map();
+    const push = (x, ch) => { const k = x.link || x.id; let e = byKey.get(k); if (!e) { e = { key: k, gl: [], ae: [] }; byKey.set(k, e); } e[ch].push(x); };
+    (glScored || []).forEach((x) => push(x, "gl"));
+    (aeScored || []).forEach((x) => push(x, "ae"));
+    const items = [...byKey.values()].map((e) => {
+      const glHit = e.gl.filter((x) => x.flagged), aeHit = e.ae.filter((x) => x.flagged);
+      const glF = glHit.length > 0, aeF = aeHit.length > 0, both = glF && aeF;
+      const glS = e.gl.reduce((m, x) => Math.max(m, x.score || 0), 0), aeS = e.ae.reduce((m, x) => Math.max(m, x.score || 0), 0);
+      const combined = Math.min(1, Math.max(glS, aeS) + (both ? 0.15 : 0));
+      const channels = [glF && "GL", aeF && "INV"].filter(Boolean);
+      const dispId = (aeHit[0] && aeHit[0].id) || (e.ae[0] && e.ae[0].id) || (glHit[0] && glHit[0].id) || e.key;
+      const why = (glF && glHit[0].why) || (aeF && aeHit[0].why) || "";
+      return { id: dispId, glS, aeS, glF, aeF, both, combined, flagged: glF || aeF, why, channels };
+    });
+    return items.filter((i) => i.flagged).sort((a, b) => (b.both - a.both) || (b.combined - a.combined));
+  }
+  const mulberry32 = (a) => () => { let t = (a += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const triS = (r, a, c, b) => { if (b <= a) return a; const u = r(), F = (c - a) / (b - a); return u < F ? a + Math.sqrt(u * (b - a) * (c - a)) : b - Math.sqrt((1 - u) * (b - a) * (b - c)); };
+  function simulateExposure(items, opts) {
+    const o = opts || {}, runs = o.runs || 8000, r = mulberry32(o.seed || 73501), vf = o.voluntary ? 0.3 : 1, daysLate = o.daysLate || 365, tot = new Float64Array(runs);
+    for (let s = 0; s < runs; s++) { let t = 0; for (const it of items) if (r() <= it.pUpheld) { const tax = it.impactLow + (it.impactHigh - it.impactLow) * r(); t += tax + tax * triS(r, 0.1, 0.2, 0.5) * vf + tax * 0.00026 * daysLate; } tot[s] = t; }
+    const sd = Array.from(tot).sort((a, b) => a - b), pc = (p) => sd[Math.min(sd.length - 1, Math.floor((p / 100) * sd.length))];
+    return { mean: sd.reduce((s, x) => s + x, 0) / runs, p50: pc(50), p90: pc(90), max: sd[runs - 1], sorted: sd };
+  }
+  function crossPeriodReview(history, current) {
+    if (!current || !current.metrics) return [];
+    return Object.keys(current.metrics).map((k) => { const h = history.map((x) => x.metrics[k]).filter((v) => v != null && isFinite(v)); const cur = current.metrics[k], med = median(h), sig = madOf(h, med) * 1.4826, z = sig > 0 ? (cur - med) / sig : (cur === med ? 0 : (cur > med ? Infinity : -Infinity)), az = Math.abs(z); return { metric: k, current: cur, med, z, verdict: az >= 3 ? "anomaly" : az >= 2 ? "watch" : "normal" }; }).sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
+  }
+  // indicative exposure model — questioned tax approximated from content findings × period VAT (assumptions shown in UI)
+  const SEV_FRAC = { Critical: 0.05, High: 0.03, Medium: 0.015, Low: 0.005 }, SEV_P = { Critical: 0.85, High: 0.7, Medium: 0.5, Low: 0.3 };
+  function findingsToExposure(findings, summary) {
+    const vat = Math.max(0, (summary && summary.metrics && summary.metrics.outputVat) || 0), byRule = {};
+    (findings || []).forEach((f) => { if (!f || f.status === "rejected" || f.type === "X" || f.type === "V") return; const k = f.rule_id || f.title; if (!byRule[k]) byRule[k] = { sev: f.severity, title: (f.ruleMeta && f.ruleMeta.titleLt) || f.title, legal: (f.ruleMeta && f.ruleMeta.legal) || "" }; });
+    return Object.entries(byRule).map(([id, r]) => { const base = vat * (SEV_FRAC[r.sev] || 0.01); return { id, label: r.title, legal: r.legal, pUpheld: SEV_P[r.sev] || 0.5, impactLow: base * 0.6, impactHigh: base * 1.1 }; });
+  }
+  function intelligenceVerdict(o, L) {
+    const fused = o.fused, cp = o.cp, gate = o.gate, risk = o.risk;
+    const high = fused.filter((f) => f.both).length, flagged = fused.length, cpAnom = cp.filter((c) => c.verdict === "anomaly").length;
+    let posture, tone;
+    if (gate && gate.verdict === "rejected") { posture = L("Blokuota prie i.SAF-T vartų", "Blocked at the i.SAF-T gate"); tone = "red"; }
+    else if (high > 0 || (risk && risk.band === "high")) { posture = L("Padidėjusi rizika", "Elevated risk"); tone = "red"; }
+    else if (flagged > 0 || cpAnom > 0 || (risk && risk.band === "elevated")) { posture = L("Reikia peržiūros", "Needs review"); tone = "amber"; }
+    else { posture = L("Švaru", "Clear"); tone = "green"; }
+    return { posture, tone, high, flagged, cpAnom };
+  }
+
+  // ════════ the unified panel ════════
+  const C = { ink: "#0a0a0a", panel: "#0e1013", panel2: "#121519", line: "rgba(255,255,255,0.10)", soft: "rgba(255,255,255,0.05)", text: "#e8e9ec", muted: "#8b8f98", faint: "#565b65", green: "#69db7c", amber: "#ffd43b", red: "#ff6b6b", cold: "#7cc4ff" };
+  const MONO = "var(--m)", TONE = { red: C.red, amber: C.amber, green: C.green };
+  const eur = (x) => "€" + Math.round(x || 0).toLocaleString("lt-LT");
+
+  function Panel(props) {
+    const glScored = props.glScored, aeScored = props.aeScored, findings = props.findings, priorSummaries = props.priorSummaries, currentSummary = props.currentSummary, gate = props.gate, risk = props.risk, audit = props.audit, lang = props.lang || "lt";
+    const [tab, setTab] = useState("overview");
+    const [voluntary, setVoluntary] = useState(false);
+    const L = (lt, en) => (lang === "lt" ? lt : en);
+    const fused = useMemo(() => fuseAnomalies(glScored, aeScored), [glScored, aeScored]);
+    const exposure = useMemo(() => simulateExposure(findingsToExposure(findings, currentSummary), { voluntary }), [findings, currentSummary, voluntary]);
+    const cp = useMemo(() => ((priorSummaries && priorSummaries.length && currentSummary) ? crossPeriodReview(priorSummaries, currentSummary) : []), [priorSummaries, currentSummary]);
+    const verdict = useMemo(() => intelligenceVerdict({ gate, risk, fused, cp }, L), [gate, risk, fused, cp, lang]);
+    useEffect(() => { if (audit && audit.log) audit.log("ML_INTELLIGENCE", fused.length + " anomalies (" + verdict.high + " priority) · exposure mean " + Math.round(exposure.mean) + " · " + verdict.cpAnom + " trend anomalies"); }, [fused.length, verdict.high]);
+    const hist = useMemo(() => { if (!exposure.sorted.length) return []; const lo = exposure.sorted[0], hi = exposure.max, bins = 24, w = (hi - lo) / bins || 1, a = Array.from({ length: bins }, (_, i) => ({ x: lo + i * w, n: 0 })); for (const v of exposure.sorted) a[Math.min(bins - 1, Math.floor((v - lo) / w))].n++; return a; }, [exposure]);
+    const METRIC = { outputVat: L("Pardavimo PVM", "Output VAT"), inputVat: L("Pirkimo PVM", "Input VAT"), netVat: L("Mokėtinas PVM", "Net VAT"), revenue: L("Pajamos", "Revenue"), deductionRatio: L("Atskaitos santykis %", "Input/Output VAT %"), weekendJe: L("Savaitgalio įrašai", "Weekend entries"), avgPurchInvoice: L("Vid. pirkimo sąskaita", "Avg purchase invoice") };
+    const eyebrow = { fontFamily: MONO, fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase", color: C.cold, fontWeight: 700 };
+    const card = (k, v, sub, tone, onClick) => (<button onClick={onClick} style={{ flex: 1, minWidth: 150, textAlign: "left", cursor: onClick ? "pointer" : "default", background: C.panel, border: `1px solid ${C.line}`, borderTop: `2px solid ${tone || C.line}`, padding: "14px 15px", fontFamily: MONO }}><div style={{ fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted }}>{k}</div><div style={{ fontSize: 24, fontWeight: 700, color: tone || C.text, marginTop: 6 }}>{v}</div><div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>{sub}</div></button>);
+    const tabBtn = (id, label) => (<button onClick={() => setTab(id)} style={{ fontFamily: MONO, cursor: "pointer", background: tab === id ? C.text : "transparent", color: tab === id ? "#000" : C.muted, border: "none", borderLeft: id !== "overview" ? `1px solid ${C.line}` : "none", padding: "9px 15px", fontSize: 11.5, fontWeight: tab === id ? 700 : 500 }}>{label}</button>);
+    return (
+      <div style={{ fontFamily: MONO, background: C.ink, color: C.text, border: `1px solid ${C.line}` }}>
+        <div style={{ borderBottom: `1px solid ${C.line}`, padding: "16px 18px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{ width: 11, height: 11, background: TONE[verdict.tone], display: "inline-block" }} />
+            <div><div style={{ ...eyebrow, color: C.muted }}>{L("Žvalgybos verdiktas", "Intelligence verdict")}</div><div style={{ fontSize: 17, fontWeight: 700, color: TONE[verdict.tone], marginTop: 2 }}>{verdict.posture}</div></div>
+          </div>
+          <div style={{ fontSize: 11.5, color: C.muted, textAlign: "right", lineHeight: 1.7 }}>
+            {fused.length} {L("anomalijos", "anomalies")} ({verdict.high} {L("prioritetinės", "priority")}) · {L("tikėtina ekspozicija", "expected exposure")} <b style={{ color: C.text }}>{eur(exposure.mean)}</b><br />
+            {verdict.cpAnom} {L("rodikliai nukrypę", "metrics trending off")} · {L("rizikos juosta", "risk band")} <b style={{ color: C.text }}>{(risk && risk.band) || "—"}</b>
+          </div>
+        </div>
+        <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, flexWrap: "wrap" }}>
+          {tabBtn("overview", L("Apžvalga", "Overview"))}
+          {tabBtn("anomalies", L("Anomalijos", "Anomalies") + ` · ${fused.length}`)}
+          {tabBtn("exposure", L("Ekspozicija", "Exposure"))}
+          {tabBtn("trends", L("Tendencijos", "Trends") + (verdict.cpAnom ? ` · ${verdict.cpAnom}` : ""))}
+        </div>
+        <div style={{ padding: 18 }}>
+          {tab === "overview" && <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+            {card(L("i.SAF-T vartai", "i.SAF-T gate"), (gate && gate.verdict === "rejected") ? L("ATMESTA", "REJECT") : L("PRAEIS", "PASS"), L("struktūros patikra", "structure check"), (gate && gate.verdict === "rejected") ? C.red : C.green, null)}
+            {card(L("Anomalijos", "Anomalies"), fused.length, `${verdict.high} ${L("prioritetinės (abu kanalai)", "priority (both channels)")}`, verdict.high ? C.red : (fused.length ? C.amber : C.green), () => setTab("anomalies"))}
+            {card(L("Ekspozicija P90", "Exposure P90"), eur(exposure.p90), `${L("tikėtina", "expected")} ${eur(exposure.mean)}`, C.amber, () => setTab("exposure"))}
+            {card(L("Periodų nukrypimai", "Trend anomalies"), verdict.cpAnom, `${cp.length} ${L("rodiklių tikrinta", "metrics checked")}`, verdict.cpAnom ? C.red : C.green, () => setTab("trends"))}
+          </div>}
+          {tab === "anomalies" && <div>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>{L("Sujungta: DK (miškas) + sąskaitos (autoenkoderis). Pažymėta abiejų = aukščiausias prioritetas.", "Fused: GL (forest) + invoices (autoencoder). Flagged by both = top priority.")}</div>
+            <div style={{ border: `1px solid ${C.line}` }}>
+              <div style={{ display: "flex", gap: 10, padding: "9px 13px", background: C.panel2, borderBottom: `1px solid ${C.soft}`, fontSize: 9.5, letterSpacing: ".06em", color: C.muted, textTransform: "uppercase" }}>
+                <span style={{ width: 22 }}>#</span><span style={{ width: 110 }}>{L("įrašas", "entry")}</span><span style={{ width: 80 }}>{L("jungtinis", "combined")}</span><span style={{ width: 96 }}>{L("kanalai", "channels")}</span><span style={{ flex: 1 }}>{L("signalas", "signal")}</span>
+              </div>
+              {fused.slice(0, 14).map((f, i) => <div key={f.id + i} style={{ display: "flex", gap: 10, padding: "10px 13px", borderTop: i ? `1px solid ${C.soft}` : "none", alignItems: "center", fontSize: 12, background: f.both ? "rgba(255,107,107,0.06)" : "transparent" }}>
+                <span style={{ width: 22, color: C.faint }}>{i + 1}</span>
+                <span style={{ width: 110, color: C.cold, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.id}</span>
+                <span style={{ width: 80, color: f.both ? C.red : C.amber, fontWeight: 700 }}>{(f.combined * 100).toFixed(0)}</span>
+                <span style={{ width: 96, display: "flex", gap: 4 }}>{f.channels.map((ch) => <span key={ch} style={{ fontSize: 9, fontWeight: 700, color: ch === "GL" ? C.cold : C.green, border: `1px solid ${ch === "GL" ? C.cold : C.green}`, padding: "1px 5px" }}>{ch}</span>)}{f.both && <span style={{ fontSize: 9, fontWeight: 700, color: C.red, border: `1px solid ${C.red}`, padding: "1px 5px" }}>{L("ABU", "BOTH")}</span>}</span>
+                <span style={{ flex: 1, color: C.muted, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.why}</span>
+              </div>)}
+              {fused.length === 0 && <div style={{ padding: 16, color: C.green, fontSize: 13 }}>{L("Anomalijų nerasta.", "No anomalies found.")}</div>}
+            </div>
+          </div>}
+          {tab === "exposure" && <div>
+            <div style={{ display: "flex", flexWrap: "wrap", border: `1px solid ${C.line}`, marginBottom: 14 }}>
+              {[[L("tikėtina", "expected"), eur(exposure.mean), C.cold], [L("mediana P50", "median P50"), eur(exposure.p50), C.text], [L("blogesnis P90", "downside P90"), eur(exposure.p90), C.amber], [L("blogiausias", "worst"), eur(exposure.max), C.red]].map((row, i) => <div key={i} style={{ flex: 1, minWidth: 100, padding: "12px 14px", borderRight: i < 3 ? `1px solid ${C.line}` : "none" }}><div style={{ fontSize: 18, fontWeight: 700, color: row[2] }}>{row[1]}</div><div style={{ fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted, marginTop: 3 }}>{row[0]}</div></div>)}
+            </div>
+            <label style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}><input type="checkbox" checked={voluntary} onChange={(e) => setVoluntary(e.target.checked)} style={{ accentColor: C.green }} />{L("savanoriškas atskleidimas (MAĮ 68 · −70%)", "voluntary disclosure (MAĮ 68 · −70%)")}</label>
+            <div style={{ height: 130, border: `1px solid ${C.line}`, padding: "10px 8px 4px", background: C.panel }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hist} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
+                  <XAxis dataKey="x" tick={{ fill: C.faint, fontSize: 8 }} tickFormatter={(v) => "€" + Math.round(v / 1000) + "k"} interval={5} axisLine={{ stroke: C.line }} tickLine={false} />
+                  <YAxis tick={{ fill: C.faint, fontSize: 8 }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip contentStyle={{ background: C.ink, border: `1px solid ${C.line}`, fontFamily: MONO, fontSize: 11 }} formatter={(v) => [v, L("simuliacijos", "sims")]} labelFormatter={(l) => "≈ " + eur(l)} />
+                  <Bar dataKey="n" isAnimationActive={false}>{hist.map((b, i) => <Cell key={i} fill={b.x >= exposure.p90 ? C.red : C.cold} />)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ fontSize: 10, color: C.faint, marginTop: 8, lineHeight: 1.6 }}>{L("8 000 atkartojamų simuliacijų · baudos MAĮ 139, delspinigiai MAĮ 140. Orientacinis modelis: ginčytina suma įvertinta iš turinio radinių ir periodo PVM (prielaidos parodytos).", "8,000 reproducible simulations · penalty MAĮ 139, interest MAĮ 140. Indicative model: questioned tax estimated from content findings × period VAT (assumptions shown).")}</div>
+          </div>}
+          {tab === "trends" && <div>
+            {cp.length === 0 ? <div style={{ color: C.amber, fontSize: 13 }}>{L("Reikia bent ~4 ankstesnių periodų (Biuro režimas).", "Needs ~4+ prior periods (Bureau Mode).")}</div> : <div style={{ border: `1px solid ${C.line}` }}>
+              {cp.slice(0, 8).map((r, i) => <div key={r.metric} style={{ display: "flex", gap: 10, padding: "10px 13px", borderTop: i ? `1px solid ${C.soft}` : "none", alignItems: "center", fontSize: 12 }}>
+                <span style={{ flex: 1, color: C.text }}>{METRIC[r.metric] || r.metric}</span>
+                <span style={{ width: 110, textAlign: "right", color: C.muted }}>{Math.abs(r.current) > 1000 ? eur(r.current) : r.current.toFixed(1)}</span>
+                <span style={{ width: 56, textAlign: "right", color: Math.abs(r.z) >= 3 ? C.red : Math.abs(r.z) >= 2 ? C.amber : C.faint, fontWeight: 700 }}>{isFinite(r.z) ? r.z.toFixed(1) : "∞"}</span>
+                <span style={{ width: 86, textAlign: "right" }}><span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", color: r.verdict === "anomaly" ? C.red : r.verdict === "watch" ? C.amber : C.faint, border: `1px solid ${r.verdict === "anomaly" ? C.red : r.verdict === "watch" ? C.amber : C.faint}`, padding: "2px 6px" }}>{r.verdict === "anomaly" ? L("ANOMALIJA", "ANOMALY") : r.verdict === "watch" ? L("STEBĖTI", "WATCH") : L("NORM", "NORM")}</span></span>
+              </div>)}
+            </div>}
+          </div>}
+        </div>
+        <div style={{ borderTop: `1px solid ${C.line}`, padding: "10px 18px", fontSize: 10, color: C.faint, lineHeight: 1.6 }}>{L("Visi varikliai veikia naršyklėje. ML siūlo, taisyklės sprendžia. Kiekvienas radinys nurodo kanalą, balą ir priežastį.", "All engines run in-browser. ML proposes, rules decide. Every finding shows its channel, score and reason.")}</div>
+      </div>
+    );
+  }
+
+  return { glAnomalyScore, invoiceAnomalyScore, summarizePeriod, fuseAnomalies, simulateExposure, crossPeriodReview, findingsToExposure, intelligenceVerdict, Panel };
+})();
+const IntelligencePanel = MLIntel.Panel;
+const _mlIntelCache = new Map();
+
+
 const LEGAL_DB = [
 // ── PVM ──
 {id:"pvm-19-1",law:"PVM",article:"19 str. 1 d.",text:"Standartinis PVM tarifas yra 21 procentas.",textEn:"Standard VAT rate is 21 percent.",keywords:"pvm vat standartinis tarifas 21% rate standard",category:"rates",penalty:null},
@@ -24266,6 +24530,7 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "enterprise", grpLt: "AI", grpEn: "AI", en: "Enterprise Audit", lt: "Įmonės auditas" },
                   { id: "reconcile", grpLt: "Procesas", grpEn: "Process", en: `i.SAF Reconcile${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}`, lt: `i.SAF sutikrinimas${reconResult?.findings?.length ? " · " + reconResult.findings.length : ""}` },
                   { id: "vatclose", grpLt: "Procesas", grpEn: "Process", en: `VAT Close${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}`, lt: `PVM uždarymas${vatClose.closedAt ? " ✓" : vatClose.step > 0 ? " ·" + Math.round(vatClose.step / 6 * 100) + "%" : ""}` },
+                                  { id: "insights", grpLt: "Analizė", grpEn: "Intelligence", en: "Intelligence", lt: "Žvalgyba" },
                 ].flatMap((tab, ti, arr) => [(ti === 0 || arr[ti - 1].grpLt !== tab.grpLt) && <span key={"g-" + tab.id} style={{ alignSelf: "stretch", display: "inline-flex", alignItems: "center", padding: "0 10px 0 16px", fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".14em", color: "#6b6b66", textTransform: "uppercase", borderLeft: ti === 0 ? "none" : `1px solid ${PL_LINE}`, marginLeft: ti === 0 ? 0 : 10 }}>{lang === "lt" ? tab.grpLt : tab.grpEn}</span>,
                   <button key={tab.id} onClick={() => {
                     setSaftTab(tab.id);
@@ -24429,6 +24694,15 @@ function TAXAI({ onExit, initialView } = {}) {
               </div>}
 
               {/* ── AI ANALYSIS ── */}
+              {saftTab === "insights" && fileData?.parsed && (() => {
+                const parsed = fileData.parsed;
+                const ck = fileData?.hash || "none";
+                let mc = _mlIntelCache.get(ck);
+                if (!mc) { try { mc = { gl: MLIntel.glAnomalyScore(parsed, lang), ae: MLIntel.invoiceAnomalyScore(parsed, lang), cur: MLIntel.summarizePeriod(parsed) }; } catch (e) { mc = { gl: [], ae: [], cur: { metrics: {} } }; } _mlIntelCache.set(ck, mc); }
+                let g = null, rk = null; try { g = simulateAcceptanceGate(parsed, findings); rk = computeRiskScore(findings); } catch (e) { }
+                return <IntelligencePanel glScored={mc.gl} aeScored={mc.ae} findings={findings} priorSummaries={[]} currentSummary={mc.cur} gate={g} risk={rk} lang={lang} audit={audit} />;
+              })()}
+
               {saftTab === "ai" && <div style={panel}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
                   <SEC n="02·A" en="AI Deep Analysis" lt="AI giluminė analizė" />
