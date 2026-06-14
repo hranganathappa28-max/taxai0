@@ -23654,6 +23654,10 @@ const CARD = 'var(--bg2)', GOLD = '#ffd43b', GREEN = '#22C55E', RED = '#EF4444',
 const eur = (v) => '€' + round2(v ?? 0).toLocaleString('lt-LT');
 const STC = { ok: GREEN, pass: GREEN, warn: AMBER, fail: RED, unknown: DIM };
 const inp = { background: 'transparent', border: `1px solid ${LINE}`, color: TXT, padding: '8px 11px', fontSize: 12.5, fontFamily: 'inherit' };
+// ── Shared chart tokens (recharts) ──
+const AX = { stroke: DIM, fontSize: 10, fontFamily: MONO, tickLine: false, axisLine: { stroke: LINE } };
+const eurK = (v) => '€' + (Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'k' : Math.round(v || 0));
+const CHTT = { background: '#000', border: `1px solid ${LINE}`, fontFamily: MONO, fontSize: 11, color: TXT };
 
 const H = ({ t, sub, right }) => (
   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
@@ -23873,6 +23877,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
 
   const Forecast = () => {
     const rows = (fc && fc.rows) || [];
+    const chartData = rows.map((r, i) => { const rev = r.revenue ?? r.rev ?? 0, exp = r.expenses ?? r.costs ?? r.exp ?? 0; return { name: r.month || r.label || r.period || ('M' + (i + 1)), revenue: rev, expenses: exp, net: r.net ?? round2(rev - exp) }; });
     return <>
       <H t={LT ? 'Prognozė' : 'Forecast'} sub={LT ? `Pajamų, sąnaudų ir grynųjų projekcija · tikslumas ${fc ? fc.accuracy : '—'}` : `Revenue, cost and cash projection · accuracy ${fc ? fc.accuracy : '—'}`} />
       <Grid>
@@ -23881,6 +23886,20 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
         <Kpi l={LT ? 'Deginimas /mėn.' : 'Monthly burn'} v={eur(fc ? fc.monthlyBurn : 0)} c={fc && fc.monthlyBurn > 0 ? RED : GREEN} sub={fc ? fc.burnBasis : ''} />
         <Kpi l={LT ? 'Grynas PVM' : 'Net VAT'} v={eur(fc ? fc.nextNetVat : 0)} />
       </Grid>
+      {chartData.length > 0 && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 8 }}>{LT ? 'PAJAMOS · SĄNAUDOS · GRYNAS' : 'REVENUE · EXPENSES · NET'}</div>
+        <div style={{ height: 220 }}><ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="name" {...AX} /><YAxis {...AX} width={52} tickFormatter={eurK} />
+            <Tooltip contentStyle={CHTT} formatter={(v) => eur(v)} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+            <Legend wrapperStyle={{ fontSize: 10, fontFamily: MONO }} />
+            <Bar dataKey="revenue" name={LT ? 'Pajamos' : 'Revenue'} fill={GREEN} maxBarSize={22} />
+            <Bar dataKey="expenses" name={LT ? 'Sąnaudos' : 'Expenses'} fill="#9a8cff" maxBarSize={22} />
+            <Line type="monotone" dataKey="net" name={LT ? 'Grynas' : 'Net'} stroke={GOLD} strokeWidth={2} dot={{ r: 2 }} />
+          </ComposedChart>
+        </ResponsiveContainer></div>
+      </div>}
       <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
         <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 8 }}>{LT ? 'MĖNESINĖ PROJEKCIJA' : 'MONTHLY PROJECTION'}</div>
         {rows.length ? rows.map((r, i) => { const rev = r.revenue ?? r.rev ?? 0, exp = r.expenses ?? r.costs ?? r.exp ?? 0, net = r.net ?? round2(rev - exp); return <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 1fr', gap: 8, padding: '7px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5, fontFamily: MONO }}>
@@ -23894,7 +23913,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
 
   const Treasury = () => {
     const weeks = (tre && tre.weeks) || [];
-    const maxAbs = Math.max(1, ...weeks.map((w) => Math.abs(w.cum)));
+    const cashData = weeks.map((w) => ({ name: w.label, cum: w.cum }));
     return <>
       <H t={LT ? 'Iždas' : 'Treasury'} sub={LT ? '13 savaičių pinigų srautas — su likvidumo įspėjimu' : '13-week cash flow — with liquidity warning'} />
       <Grid>
@@ -23905,11 +23924,16 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
       </Grid>
       <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
         <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 10 }}>{LT ? 'SUKAUPTI PINIGAI PAGAL SAVAITĘ' : 'CUMULATIVE CASH BY WEEK'}</div>
-        {weeks.map((w) => <div key={w.w} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 0', fontSize: 11.5, fontFamily: MONO }}>
-          <span style={{ width: 34, color: DIM }}>{w.label}</span>
-          <div style={{ flex: 1, height: 16, background: 'rgba(255,255,255,0.04)', position: 'relative' }}><div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${(Math.abs(w.cum) / maxAbs) * 100}%`, background: w.cum < 0 ? RED : w.w === (tre && tre.breachWeek) ? AMBER : GREEN, opacity: 0.8 }} /></div>
-          <span style={{ width: 90, textAlign: 'right', color: w.cum < 0 ? RED : TXT }}>{eur(w.cum)}</span>
-        </div>)}
+        {weeks.length ? <div style={{ height: 230 }}><ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={cashData} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+            <defs><linearGradient id="eaccCash" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={GOLD} stopOpacity={0.45} /><stop offset="100%" stopColor={GOLD} stopOpacity={0.02} /></linearGradient></defs>
+            <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="name" {...AX} interval={Math.max(0, Math.floor(cashData.length / 8))} /><YAxis {...AX} width={52} tickFormatter={eurK} />
+            <Tooltip contentStyle={CHTT} formatter={(v) => eur(v)} cursor={{ stroke: LINE }} />
+            <ReferenceLine y={0} stroke={RED} strokeDasharray="3 3" />
+            <Area type="monotone" dataKey="cum" name={LT ? 'Pinigai' : 'Cash'} stroke={GOLD} strokeWidth={2} fill="url(#eaccCash)" />
+          </AreaChart>
+        </ResponsiveContainer></div> : null}
         {tre && tre.breachWeek && <div style={{ color: RED, fontSize: 12, marginTop: 10 }}>⚠ {LT ? `Pinigai neigiami nuo ${tre.breachWeek}` : `Cash turns negative at week ${tre.breachWeek}`}</div>}
         {!weeks.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Nėra pinigų srautų duomenų.' : 'No cash-flow data.'}</div>}
       </div>
