@@ -27,19 +27,22 @@ const MLIntel = (function () {
   const std = (a, m) => { if (!a.length) return 1; const v = a.reduce((s, x) => s + (x - m) * (x - m), 0) / a.length; return Math.sqrt(v) || 1; };
   const median = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
   const madOf = (a, m) => median(a.map((x) => Math.abs(x - m)));
-  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[a[i], a[j]] = [a[j], a[i]]; } return a; };
-  const sample = (a, k) => shuffle(a.slice()).slice(0, k);
+  const mulberry32 = (a) => () => { let t = (a += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  // deterministic seed derived from the data: identical SAF-T ⇒ identical scores
+  const seedFrom = (vals) => { let h = 0x811c9dc5; for (let i = 0; i < vals.length; i++) { h = Math.imul(h ^ (((vals[i] * 1000) | 0) >>> 0), 0x01000193); } return (h ^ vals.length) >>> 0; };
+  const shuffle = (a, rnd = Math.random) => { for (let i = a.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0;[a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const sample = (a, k, rnd = Math.random) => shuffle(a.slice(), rnd).slice(0, k);
 
   // ════════ GL channel — isolation forest (Liu/Ting/Zhou) ════════
-  function iTree(rows, idxs, depth, maxDepth, feats) {
+  function iTree(rows, idxs, depth, maxDepth, feats, rnd) {
     if (depth >= maxDepth || idxs.length <= 1) return { size: idxs.length };
-    const f = feats[(Math.random() * feats.length) | 0];
+    const f = feats[(rnd() * feats.length) | 0];
     let mn = Infinity, mx = -Infinity;
     for (const i of idxs) { const v = rows[i][f]; if (v < mn) mn = v; if (v > mx) mx = v; }
     if (mn === mx) return { size: idxs.length };
-    const sp = mn + Math.random() * (mx - mn), L = [], R = [];
+    const sp = mn + rnd() * (mx - mn), L = [], R = [];
     for (const i of idxs) (rows[i][f] < sp ? L : R).push(i);
-    return { f, sp, left: iTree(rows, L, depth + 1, maxDepth, feats), right: iTree(rows, R, depth + 1, maxDepth, feats) };
+    return { f, sp, left: iTree(rows, L, depth + 1, maxDepth, feats, rnd), right: iTree(rows, R, depth + 1, maxDepth, feats, rnd) };
   }
   const cFactor = (n) => (n <= 1 ? 1 : 2 * (Math.log(n - 1) + 0.5772156649) - (2 * (n - 1)) / n);
   function pathLen(node, x, depth) {
@@ -72,12 +75,13 @@ const MLIntel = (function () {
     let use = rows;
     if (n > 4000) { const r2 = [], step = n / 4000; for (let i = 0; i < n; i += step) r2.push(rows[i | 0]); use = r2; }
     const feats = [0, 1, 2, 3, 4, 5], nTrees = 60, sub = Math.min(256, use.length), maxDepth = Math.ceil(Math.log2(Math.max(2, sub)));
+    const rnd = mulberry32(seedFrom(use.map((r) => r[0])));
     const trees = [];
-    for (let t = 0; t < nTrees; t++) { const idxs = []; for (let i = 0; i < sub; i++) idxs.push((Math.random() * use.length) | 0); trees.push(iTree(use, idxs, 0, maxDepth, feats)); }
+    for (let t = 0; t < nTrees; t++) { const idxs = []; for (let i = 0; i < sub; i++) idxs.push((rnd() * use.length) | 0); trees.push(iTree(use, idxs, 0, maxDepth, feats, rnd)); }
     const c = cFactor(sub);
     const scoreRow = (x) => { let s = 0; for (const tr of trees) s += pathLen(tr, x, 0); return Math.pow(2, -(s / nTrees) / c); };
     const scores = rows.map(scoreRow), med = median(scores), sg = (madOf(scores, med) * 1.4826) || 1e-9;
-    return rows.map((x, i) => { const sc = scores[i], z = (sc - med) / sg, flagged = sc >= 0.62 || z >= 3; return { id: meta[i].id, score: sc, flagged, why: flagged ? glWhy(x, lang) : "" }; });
+    return rows.map((x, i) => { const sc = scores[i], z = (sc - med) / sg, flagged = z >= 3; return { id: meta[i].id, score: sc, flagged, why: flagged ? glWhy(x, lang) : "" }; });
   }
 
   // ════════ Invoice channel — dense autoencoder (8→5→2→5→8) ════════
@@ -85,8 +89,8 @@ const MLIntel = (function () {
   function denseL(x, W, b) { const o = b.slice(); for (let i = 0; i < x.length; i++) { const xi = x[i], Wi = W[i]; for (let j = 0; j < o.length; j++) o[j] += xi * Wi[j]; } return o; }
   function backVec(W, g) { const d = new Array(W.length).fill(0); for (let i = 0; i < W.length; i++) { const Wi = W[i]; let s = 0; for (let j = 0; j < g.length; j++) s += Wi[j] * g[j]; d[i] = s; } return d; }
   function applyG(W, b, inAct, grad, lr) { for (let i = 0; i < inAct.length; i++) { const gi = inAct[i], Wi = W[i]; for (let j = 0; j < grad.length; j++) Wi[j] -= lr * gi * grad[j]; } for (let j = 0; j < grad.length; j++) b[j] -= lr * grad[j]; }
-  function xavier(nIn, nOut) { const r = Math.sqrt(6 / (nIn + nOut)), W = []; for (let i = 0; i < nIn; i++) { const row = []; for (let j = 0; j < nOut; j++) row.push((Math.random() * 2 - 1) * r); W.push(row); } return W; }
-  function buildAE(F, h, latent) { return { F, h, latent, W1: xavier(F, h), b1: new Array(h).fill(0), W2: xavier(h, latent), b2: new Array(latent).fill(0), W3: xavier(latent, h), b3: new Array(h).fill(0), W4: xavier(h, F), b4: new Array(F).fill(0) }; }
+  function xavier(nIn, nOut, rnd = Math.random) { const r = Math.sqrt(6 / (nIn + nOut)), W = []; for (let i = 0; i < nIn; i++) { const row = []; for (let j = 0; j < nOut; j++) row.push((rnd() * 2 - 1) * r); W.push(row); } return W; }
+  function buildAE(F, h, latent, rnd = Math.random) { return { F, h, latent, W1: xavier(F, h, rnd), b1: new Array(h).fill(0), W2: xavier(h, latent, rnd), b2: new Array(latent).fill(0), W3: xavier(latent, h, rnd), b3: new Array(h).fill(0), W4: xavier(h, F, rnd), b4: new Array(F).fill(0) }; }
   function aeFwd(net, x) { const a1 = denseL(x, net.W1, net.b1), h1 = relu(a1); const z = denseL(h1, net.W2, net.b2); const a3 = denseL(z, net.W3, net.b3), h2 = relu(a3); const xh = denseL(h2, net.W4, net.b4); return { a1, h1, z, a3, h2, xh }; }
   function aeStep(net, x, lr) {
     const f = aeFwd(net, x), dxh = f.xh.map((v, i) => v - x[i]);
@@ -111,10 +115,11 @@ const MLIntel = (function () {
     const freq = {}; inv.forEach((r) => (freq[r.party] = (freq[r.party] || 0) + 1));
     let X = inv.map((r) => [Math.log10(r.gross + 1), r.vat / (r.net || 1), Math.log10(r.net + 1), (r.dow === 0 || r.dow === 6) ? 1 : 0, r.day >= 28 ? 1 : 0, (r.gross % 100 === 0) ? 1 : 0, r.lines / 12, -Math.log((freq[r.party] || 1) + 1)]);
     [0, 1, 2, 6, 7].forEach((c) => { const col = X.map((x) => x[c]), m = mean(col), s = std(col, m); X.forEach((x) => (x[c] = (x[c] - m) / s)); });
-    const net = buildAE(8, 5, 2), idx = X.map((_, i) => i), trainIdx = X.length > 1200 ? sample(idx, 1200) : idx, epochs = 100;
-    for (let e = 0; e < epochs; e++) { shuffle(trainIdx); const lr = 0.03 / (1 + 0.02 * e); for (const i of trainIdx) aeStep(net, X[i], lr); }
+    const rnd = mulberry32(seedFrom(inv.map((r) => r.gross)));
+    const net = buildAE(8, 5, 2, rnd), idx = X.map((_, i) => i), trainIdx = X.length > 1200 ? sample(idx, 1200, rnd) : idx, epochs = 100;
+    for (let e = 0; e < epochs; e++) { shuffle(trainIdx, rnd); const lr = 0.03 / (1 + 0.02 * e); for (const i of trainIdx) aeStep(net, X[i], lr); }
     const errs = X.map((x) => aeErr(net, x)), eVals = errs.map((e) => e.err), med = median(eVals), sg = (madOf(eVals, med) * 1.4826) || 1e-9;
-    return X.map((x, i) => { const z = (errs[i].err - med) / sg, flagged = z >= 3; return { id: meta[i].id, link: meta[i].link, score: Math.max(0, Math.min(1, 0.5 + z / 8)), flagged, why: flagged ? aeWhy(errs[i].perFeat, lang) : "" }; });
+    return X.map((x, i) => { const z = (errs[i].err - med) / sg, flagged = z >= 3; return { id: meta[i].id, link: meta[i].link, score: 1 / (1 + Math.exp(-(z - 3))), flagged, why: flagged ? aeWhy(errs[i].perFeat, lang) : "" }; });
   }
 
   // ════════ period metrics (for cross-period) ════════
@@ -148,7 +153,6 @@ const MLIntel = (function () {
     });
     return items.filter((i) => i.flagged).sort((a, b) => (b.both - a.both) || (b.combined - a.combined));
   }
-  const mulberry32 = (a) => () => { let t = (a += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const triS = (r, a, c, b) => { if (b <= a) return a; const u = r(), F = (c - a) / (b - a); return u < F ? a + Math.sqrt(u * (b - a) * (c - a)) : b - Math.sqrt((1 - u) * (b - a) * (b - c)); };
   function simulateExposure(items, opts) {
     const o = opts || {}, runs = o.runs || 8000, r = mulberry32(o.seed || 73501), vf = o.voluntary ? 0.3 : 1, daysLate = o.daysLate || 365, tot = new Float64Array(runs);
@@ -158,7 +162,14 @@ const MLIntel = (function () {
   }
   function crossPeriodReview(history, current) {
     if (!current || !current.metrics) return [];
-    return Object.keys(current.metrics).map((k) => { const h = history.map((x) => x.metrics[k]).filter((v) => v != null && isFinite(v)); const cur = current.metrics[k], med = median(h), sig = madOf(h, med) * 1.4826, z = sig > 0 ? (cur - med) / sig : (cur === med ? 0 : (cur > med ? Infinity : -Infinity)), az = Math.abs(z); return { metric: k, current: cur, med, z, verdict: az >= 3 ? "anomaly" : az >= 2 ? "watch" : "normal" }; }).sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
+    return Object.keys(current.metrics).map((k) => {
+      const h = history.map((x) => x.metrics[k]).filter((v) => v != null && isFinite(v));
+      const cur = current.metrics[k], med = median(h);
+      // floor the scale so a near-zero MAD cannot produce an ±Infinity z; require ≥4 priors
+      const sig = Math.max(madOf(h, med) * 1.4826, Math.abs(med) * 0.02, 1e-9);
+      const z = h.length >= 4 ? (cur - med) / sig : 0, az = Math.abs(z);
+      return { metric: k, current: cur, med, z, n: h.length, verdict: h.length < 4 ? "normal" : az >= 3 ? "anomaly" : az >= 2 ? "watch" : "normal" };
+    }).sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
   }
   // indicative exposure model — questioned tax approximated from content findings × period VAT (assumptions shown in UI)
   const SEV_FRAC = { Critical: 0.05, High: 0.03, Medium: 0.015, Low: 0.005 }, SEV_P = { Critical: 0.85, High: 0.7, Medium: 0.5, Low: 0.3 };
@@ -698,23 +709,24 @@ function buildRAGContext(query) {
 // ═══ DETERMINISTIC TAX CALCULATORS ═══
 const TaxCalc = {
   grossToNet(gross) {
-    const sodraEmp = gross * 0.195;
-    const taxableBase = gross - sodraEmp;
-    let npd = 0;
-    if (taxableBase <= 840) npd = 747;
-    else if (taxableBase < 2619.05) npd = 747 - 0.42 * (taxableBase - 840);
-    else npd = 0;
-    npd = Math.max(0, Math.round(npd * 100) / 100);
-    const annualTaxable = (taxableBase - npd) * 12;
-    let gpm;
-    if (annualTaxable <= 82962) gpm = (taxableBase - npd) * 0.20;
-    else if (annualTaxable <= 138270) gpm = (taxableBase - npd) * 0.25;
-    else gpm = (taxableBase - npd) * 0.32;
-    gpm = Math.max(0, Math.round(gpm * 100) / 100);
+    // 2026 LT payroll — mirrors createPayrollEngine/PARAMS_2026 (the canonical engine);
+    // a cross-check test keeps the two in agreement.
+    gross = Math.max(0, gross || 0);
+    const r2 = (x) => Math.round(x * 100) / 100;
+    // NPD applies to GROSS income: max €747, taper 0.49 from MMA €1153, plus the
+    // secondary higher-earner formula. NOT computed on a Sodra-net base.
+    const npd = Math.max(0, 747 - 0.49 * Math.max(0, gross - 1153), 400 - 0.18 * Math.max(0, gross - 642));
+    // GPM base is (gross − NPD); Sodra is NOT subtracted from it. Marginal 20/25/32 % bands.
+    const base = Math.max(0, gross - npd);
+    const bands = [82962 / 12, 138270 / 12, Infinity], rates = [0.20, 0.25, 0.32];
+    let gpm = 0, floor = 0, rem = base;
+    for (let i = 0; i < bands.length; i++) { const slice = Math.max(0, Math.min(rem, bands[i] - floor)); gpm += slice * rates[i]; rem -= slice; floor = bands[i]; if (rem <= 0) break; }
+    // Sodra employee 19.5 %: VSD 12.52 % capped at 60 VDU/yr, PSD 6.98 % uncapped.
+    const vsdCeilingMonthly = (60 * 2304.50) / 12;
+    const sodraEmp = Math.min(gross, vsdCeilingMonthly) * 0.1252 + gross * 0.0698;
     const sodraEmpl = gross * 0.0177;
     const net = gross - sodraEmp - gpm;
-    const totalCost = gross + sodraEmpl;
-    return { gross, sodraEmp: Math.round(sodraEmp * 100) / 100, taxableBase: Math.round(taxableBase * 100) / 100, npd, gpm, net: Math.round(net * 100) / 100, sodraEmpl: Math.round(sodraEmpl * 100) / 100, totalCost: Math.round(totalCost * 100) / 100 };
+    return { gross: r2(gross), sodraEmp: r2(sodraEmp), taxableBase: r2(base), npd: r2(npd), gpm: r2(gpm), net: r2(net), sodraEmpl: r2(sodraEmpl), totalCost: r2(gross + sodraEmpl) };
   },
   vatCalc(netAmount, rate = 21) {
     const vat = Math.round(netAmount * rate / 100 * 100) / 100;
@@ -15732,7 +15744,7 @@ function projectPayrollRunCompleted(state, event, rel) {
   const p = event.payload;
   let gpmSum = 0;
   let sodraSum = 0; // employee + employer
-  for (const line of p.lines) {
+  for (const line of (Array.isArray(p.lines) ? p.lines : [])) {
     const emp = ensureEntity(state, 'employee', line.employeeId, {
       name: line.name || line.employeeId, grossSalary: round2(line.gross), startDate: '', status: 'active',
       cost: { ytdGross: 0, ytdEmployerSodra: 0, periods: {} },
@@ -15772,7 +15784,7 @@ function projectAssetAcquired(state, event, rel) {
     name: p.name,
     cost: round2(p.cost),
     usefulLifeMonths: p.usefulLifeMonths,
-    monthlyDepreciation: round2(p.cost / p.usefulLifeMonths),
+    monthlyDepreciation: p.usefulLifeMonths > 0 ? round2(p.cost / p.usefulLifeMonths) : 0,
     accumulatedDepreciation: 0,
     nbv: round2(p.cost),
     acquiredAt: p.date,
@@ -15929,8 +15941,11 @@ const ACCOUNT_NAMES_LT = {
 
 const VAT_RATES = [0.21, 0.12, 0.09, 0.05, 0]; // 2026: standartinis 21, lengvatiniai 12/5, 0%; 9% legacy (iki 2026-01-01)
 
-function vatLooksStandard(net, vat) {
-  return VAT_RATES.some((r) => Math.abs(round2(net * r) - round2(vat)) <= 0.02);
+function vatLooksStandard(net, vat, dateISO) {
+  // 9 % is abolished from 2026-01-01 — accept it only for pre-2026 documents.
+  const allow9 = typeof dateISO === 'string' && dateISO < '2026-01-01';
+  const tol = Math.max(0.02, Math.abs(net) * 0.001); // relative tolerance for large invoices
+  return VAT_RATES.some((r) => (r === 0.09 && !allow9) ? false : Math.abs(round2(net * r) - round2(vat)) <= tol);
 }
 
 function line(account, debit, credit) {
@@ -15989,9 +16004,9 @@ function generateEntriesForEvent(event, state, accounts) {
     case 'sales.invoice.issued': {
       const notes = [];
       let confidence = 0.95;
-      if (!vatLooksStandard(p.net, p.vat)) {
+      if (!vatLooksStandard(p.net, p.vat, p.date)) {
         confidence = 0.75;
-        notes.push('PVM suma neatitinka standartinių LT tarifų (21/12/9/5/0%) — patikrinkite tarifą arba lengvatą.');
+        notes.push('PVM suma neatitinka standartinių LT tarifų (21/12/5/0 %; 9 % tik iki 2026) — patikrinkite tarifą arba lengvatą.');
       }
       const expected = round2(p.net + p.vat);
       const mismatch = Math.abs(expected - round2(p.total)) > 0.01;
@@ -16015,7 +16030,7 @@ function generateEntriesForEvent(event, state, accounts) {
     case 'purchase.invoice.received': {
       const notes = [];
       let confidence = 0.93;
-      if (!vatLooksStandard(p.net, p.vat)) {
+      if (!vatLooksStandard(p.net, p.vat, p.date)) {
         confidence = 0.72;
         notes.push('PVM suma neatitinka standartinių LT tarifų — patikrinkite atskaitos teisę.');
       }
@@ -16086,10 +16101,11 @@ function generateEntriesForEvent(event, state, accounts) {
 
     case 'payroll.run.completed': {
       const notes = [];
+      const plines = Array.isArray(p.lines) ? p.lines : [];
       // Runs computed by the Wave 3 engine arrive pre-verified; manual runs stay cautious.
       let confidence = event.source === 'payroll-engine' ? 0.97 : 0.9;
       let gross = 0, employerSodra = 0, employeeSodra = 0, gpm = 0, netProvided = 0;
-      for (const l of p.lines) {
+      for (const l of plines) {
         gross = round2(gross + l.gross);
         employerSodra = round2(employerSodra + (l.sodraEmployer || 0));
         employeeSodra = round2(employeeSodra + (l.sodraEmployee || 0));
@@ -16110,8 +16126,8 @@ function generateEntriesForEvent(event, state, accounts) {
           line(A.GPM_PAYABLE, 0, gpm),
           line(A.SODRA_PAYABLE, 0, round2(employeeSodra + employerSodra)),
         ],
-        lt: `Darbo užmokestis už ${p.period} (${p.lines.length} darbuotojai)`,
-        en: `Payroll for ${p.period} (${p.lines.length} employees)`,
+        lt: `Darbo užmokestis už ${p.period} (${plines.length} darbuotojai)`,
+        en: `Payroll for ${p.period} (${plines.length} employees)`,
         confidence, notes,
       }));
       break;
@@ -16206,10 +16222,12 @@ function createLedger(accounts = {}) {
   }
 
   /**
-   * Trial balance over posted entries (default). balance = debit - credit,
-   * so liability/income accounts naturally show negative balances.
+   * Trial balance over all generated entries (proposed+approved+posted) by
+   * default, so the integrity check is meaningful even before an inbox posts
+   * them. Pass ['posted'] for a strict posted-only balance. balance = debit −
+   * credit, so liability/income accounts naturally show negative balances.
    */
-  function trialBalance(statuses = ['posted']) {
+  function trialBalance(statuses = ['proposed', 'approved', 'posted']) {
     const acc = new Map();
     for (const id of order) {
       const e = entries.get(id);
@@ -16228,7 +16246,8 @@ function createLedger(accounts = {}) {
       debit: round2(rows.reduce((s, r) => s + r.debit, 0)),
       credit: round2(rows.reduce((s, r) => s + r.credit, 0)),
     };
-    return { rows, totals, balanced: Math.abs(totals.debit - totals.credit) < 0.01 };
+    const difference = round2(totals.debit - totals.credit);
+    return { rows, totals, difference, balanced: Math.abs(difference) < 0.01 };
   }
 
   return { accounts: A, propose, get, list, approve, post, applyLifecycle, trialBalance, generateFor: (event, state) => generateEntriesForEvent(event, state, A) };
@@ -19767,11 +19786,14 @@ function requiredEvidence(findings) {
     vendor: { lt: 'Sutartys ir pirkimų procedūra', en: 'Contracts and procurement procedure' },
     finance: { lt: 'Pinigų srautų prognozė ir limitai', en: 'Cash-flow forecast and limits' },
   };
-  return findings.map((f) => ({
-    id: `ev_${f.id}`, findingId: f.id,
-    lt: `${map[f.category].lt} — ${f.titleLt}`, en: `${map[f.category].en} — ${f.titleEn}`,
-    status: 'missing',
-  }));
+  return findings.map((f) => {
+    const m = map[f.category] || { lt: f.titleLt || f.title || '', en: f.titleEn || f.title || '' };
+    return {
+      id: `ev_${f.id}`, findingId: f.id,
+      lt: `${m.lt} — ${f.titleLt}`, en: `${m.en} — ${f.titleEn}`,
+      status: 'missing',
+    };
+  });
 }
 
 // ── Lithuanian regulatory systems assessment ──
@@ -19866,7 +19888,7 @@ function buildBoardReport(twin, opts = {}) {
   };
 }
 
-  return { createTwin, createInbox, AGENT_CATALOG, runAgents, eventAmount, policyFor, reviewEvent, buildReviewContext, deterministicBriefing, buildEscalationContext, createPayrollEngine, PARAMS_2026, mergeParams, closeReadiness, closePeriod, buildCockpit, dailyBriefing, buildBriefingContext, buildForecast, monthlySeries, olsFit, SCENARIOS, buildCashView, askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, buildGraphView, traceConnection, scanFraud, simulateScenario, SCENARIO_PRESETS, parseScenarioText, ACCOUNT_NAMES_LT, deriveFindings, runAuditSimulation, runComplianceChecks, buildRiskRegister, generateAuditActions, requiredEvidence, ltAssessment, askAuditor, buildBoardReport, AUDIT_KINDS, AUDITOR_QUESTIONS, MANUAL_CHECKS, serializeTwin, restoreTwin, createLocalStorageAdapter, saveTwin, loadTwin, REL_TYPES, entityKey, COMPANY_KEY, round2, daysBetween, eventLabel, VERSION: "1.5.0-wave6" };
+  return { createTwin, createInbox, AGENT_CATALOG, runAgents, eventAmount, policyFor, reviewEvent, buildReviewContext, deterministicBriefing, buildEscalationContext, createPayrollEngine, PARAMS_2026, mergeParams, closeReadiness, closePeriod, buildCockpit, dailyBriefing, buildBriefingContext, buildForecast, monthlySeries, olsFit, SCENARIOS, buildCashView, askCopilot, buildCopilotContext, COPILOT_SUGGESTIONS, buildGraphView, traceConnection, scanFraud, simulateScenario, SCENARIO_PRESETS, parseScenarioText, ACCOUNT_NAMES_LT, VAT_RATES, vatLooksStandard, deriveFindings, runAuditSimulation, runComplianceChecks, buildRiskRegister, generateAuditActions, requiredEvidence, ltAssessment, askAuditor, buildBoardReport, AUDIT_KINDS, AUDITOR_QUESTIONS, MANUAL_CHECKS, serializeTwin, restoreTwin, createLocalStorageAdapter, saveTwin, loadTwin, REL_TYPES, entityKey, COMPANY_KEY, round2, daysBetween, eventLabel, VERSION: "1.5.0-wave6" };
 })();
 
 /* ── Twin UI · TwinExplorer (Wave reference component) ── */
@@ -25593,7 +25615,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
