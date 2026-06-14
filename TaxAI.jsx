@@ -23732,16 +23732,41 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
   const totRev = snap ? sumVals(snap.revenueByMonth) : 0;
   const totExp = snap ? sumVals(snap.expensesByMonth) : 0;
 
-  // ── Global ask bar (quick copilot) ──
-  const [ask, setAsk] = useState('');
+  // ── Global ask bar (quick copilot) — uncontrolled so typing doesn't re-render
+  //    the whole shell (which would remount and reset the active view) ──
+  const askRef = useRef(null);
   const [askR, setAskR] = useState(null);
   const runAsk = (q) => { if (!q.trim()) return; setAskR({ q, r: askCopilot(twin, q, { inbox, forecast: fc, treasury: tre }) }); };
   const aiFallback = async (q, r, set) => { try { const text = await onAi('Tu esi CFO copilot. Naudok TIK pateiktus faktus.', JSON.stringify(buildCopilotContext(twin, q, { inbox, forecast: fc, treasury: tre })).slice(0, 27000)); set(text); } catch (e) { setToast && setToast('AI: ' + e.message); } };
 
   // ════════════════════════════ VIEWS ════════════════════════════
   const Cmd = () => {
-    const deadlines = (twin.listEntities('obligation') || []).filter((o) => o.status === 'open').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')).slice(0, 3);
     const now = new Date().toISOString().slice(0, 10);
+    const obls = twin.listEntities('obligation') || [];
+    const deadlines = obls.filter((o) => o.status === 'open').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')).slice(0, 3);
+    // ── Deterministic priority engine: what to act on now, ranked by severity ──
+    const overdueObl = obls.filter((o) => o.status === 'open' && daysBetween(now, o.dueDate) < 0);
+    const overdueOblAmt = overdueObl.reduce((s, o) => s + ((o.amount || 0) - (o.settled || 0)), 0);
+    const invs = twin.listEntities('invoice') || [];
+    const overdueRecv = invs.filter((i) => i.kind === 'sales' && i.dueDate && i.status !== 'paid' && daysBetween(now, i.dueDate) < 0);
+    const overdueRecvAmt = overdueRecv.reduce((s, i) => s + (i.total || 0), 0);
+    const fraudHigh = (fraud.items || []).filter((x) => x.severity === 'Critical' || x.severity === 'High');
+    const SEVO = { crit: 0, high: 1, med: 2 }, SEVC = { crit: RED, high: AMBER, med: GOLD };
+    const pr = [];
+    if (overdueObl.length) pr.push({ sev: 'crit', go: 'comp', lt: `${overdueObl.length} pradelstos mokestinės prievolės`, en: `${overdueObl.length} overdue tax obligations`, amt: overdueOblAmt });
+    if (tre && tre.breachWeek) pr.push({ sev: 'high', go: 'tre', lt: `Likvidumo rizika nuo ${tre.breachWeek}`, en: `Liquidity risk from ${tre.breachWeek}`, amt: tre.minWeek ? Math.abs(tre.minWeek.cum) : 0 });
+    if (fraudHigh.length) pr.push({ sev: 'high', go: 'agents', lt: `${fraudHigh.length} didelės rizikos sukčiavimo signalai`, en: `${fraudHigh.length} high-risk fraud signals`, amt: 0 });
+    if (overdueRecv.length) pr.push({ sev: 'med', go: 'tre', lt: `${overdueRecv.length} pradelstos pirkėjų skolos`, en: `${overdueRecv.length} overdue receivables`, amt: overdueRecvAmt });
+    if (close && (close.blockers || []).length) pr.push({ sev: 'med', go: 'close', lt: `${close.blockers.length} uždarymo kliūtys`, en: `${close.blockers.length} period-close blockers`, amt: 0 });
+    pr.sort((a, b) => SEVO[a.sev] - SEVO[b.sev]);
+    const [brief, setBrief] = useState(null), [briefBusy, setBriefBusy] = useState(false);
+    const genBrief = async () => {
+      if (!onAi) return; setBriefBusy(true);
+      try { const q = LT ? 'Pateik glaustą CFO santrauką: 3–5 svarbiausi prioritetai ir konkretūs veiksmai.' : 'Give a concise CFO briefing: the 3–5 top priorities and concrete actions.';
+        const text = await onAi('Tu esi CFO. Naudok TIK pateiktus faktus. Trumpai, dalykiškai.', JSON.stringify(buildCopilotContext(twin, q, { inbox, forecast: fc, treasury: tre })).slice(0, 27000)); setBrief(text); }
+      catch (e) { setToast && setToast('AI: ' + e.message); }
+      setBriefBusy(false);
+    };
     return <>
       <H t={LT ? 'Komandų centras' : 'Command Center'} sub={LT ? 'Gyvas finansų vaizdas — iš įvykių dvynio' : 'Live financial picture — from the event twin'} />
       <Grid>
@@ -23754,6 +23779,20 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
         <Kpi l={LT ? 'Uždarymo parengtis' : 'Close readiness'} v={close ? `${close.score} %` : '—'} c={close && close.score >= (close.target || 95) ? GREEN : AMBER} />
         <Kpi l={LT ? 'Sukčiavimo žymės' : 'Fraud flags'} v={(fraud.items || []).length} c={(fraud.items || []).length ? AMBER : GREEN} />
       </Grid>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, borderLeft: `2px solid ${pr.length ? SEVC[pr[0].sev] : GREEN}`, padding: 16, marginTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div style={{ flex: 1, fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>{LT ? 'PRIORITETAI — KĄ DARYTI DABAR' : 'PRIORITIES — WHAT TO ACT ON NOW'}</div>
+          {onAi && <Btn small onClick={genBrief} disabled={briefBusy}>◆ {briefBusy ? (LT ? 'Rašoma…' : 'Writing…') : (LT ? 'AI santrauka' : 'AI briefing')}</Btn>}
+        </div>
+        {pr.length ? pr.map((p, i) => (
+          <div key={i} onClick={() => setView(p.go)} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5, cursor: 'pointer' }}>
+            <Dot c={SEVC[p.sev]} /><span style={{ flex: 1 }}>{LT ? p.lt : p.en}</span>
+            {p.amt > 0 && <span style={{ color: SEVC[p.sev], fontFamily: MONO, fontSize: 11.5 }}>{eur(p.amt)}</span>}
+            <span style={{ color: DIM, fontFamily: MONO, fontSize: 10.5 }}>{LT ? 'atidaryti →' : 'open →'}</span>
+          </div>
+        )) : <div style={{ color: GREEN, fontSize: 12.5 }}>{LT ? '✓ Nėra skubių prioritetų — viskas tvarkoje.' : '✓ No urgent priorities — all clear.'}</div>}
+        {brief && <div style={{ marginTop: 10, borderTop: `1px solid ${LINE}`, paddingTop: 10, fontSize: 12.5, lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{brief}</div>}
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
         <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16 }}>
           <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>{LT ? 'NUOLATINIS UŽDARYMAS' : 'CONTINUOUS CLOSE'}</div>
@@ -23978,7 +24017,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
 
   const Company = () => {
     const c = st.company || {};
-    const [f, setF] = useState({ name: c.name || clientId !== 'default' ? c.name || clientId : '', code: c.code || '', vat: c.vat || '', legalForm: c.legalForm || 'UAB', industry: c.industry || '', address: c.address || '', city: c.city || '', country: c.country || 'Lithuania', standard: c.standard || 'Lithuanian GAAP', vatPeriod: c.vatPeriod || 'Monthly', employees: c.employees || '', revenue: c.revenue || '' });
+    const [f, setF] = useState({ name: c.name || (clientId !== 'default' ? clientId : ''), code: c.code || '', vat: c.vat || '', legalForm: c.legalForm || 'UAB', industry: c.industry || '', address: c.address || '', city: c.city || '', country: c.country || 'Lithuania', standard: c.standard || 'Lithuanian GAAP', vatPeriod: c.vatPeriod || 'Monthly', employees: c.employees || '', revenue: c.revenue || '' });
     const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
     const Field = ({ k, label, type, options }) => <label style={{ display: 'block' }}>
       <div style={{ fontSize: 9.5, letterSpacing: '.12em', color: DIM, fontFamily: MONO, textTransform: 'uppercase', marginBottom: 5 }}>{label}</div>
@@ -24043,15 +24082,44 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Settings = () => <>
-    <H t={LT ? 'Nustatymai' : 'Settings'} sub={LT ? 'Sistemos parinktys ir duomenys' : 'System options and data'} />
+  const Settings = () => {
+    const [diag, setDiag] = useState(null);
+    const runDiag = () => {
+      const checks = [
+        ['Snapshot', () => twin.getSnapshot({})],
+        ['Forecast', () => buildForecast(twin)],
+        [LT ? 'Iždas (13 sav.)' : 'Treasury (13-week)', () => buildCashView(twin, {})],
+        [LT ? 'Uždarymo parengtis' : 'Close readiness', () => closeReadiness(twin, { inbox, external: ext })],
+        [LT ? 'Sukčiavimo skenavimas' : 'Fraud scan', () => scanFraud(twin, { inbox })],
+        [LT ? 'Bandomasis balansas' : 'Trial balance', () => twin.trialBalance()],
+        [LT ? 'Žinių grafas' : 'Knowledge graph', () => buildGraphView(twin, {})],
+        [LT ? 'DU variklis' : 'Payroll engine', () => createPayrollEngine(PARAMS_2026)],
+        [LT ? 'LT atitiktis' : 'LT compliance', () => ltAssessment(twin, { external: ext })],
+        ['Copilot', () => askCopilot(twin, LT ? 'Kokia būklė?' : 'Status?', { inbox })],
+      ];
+      const res = checks.map(([name, fn]) => { try { const r = fn(); const empty = r == null || (Array.isArray(r) && !r.length); return { name, ok: true, empty }; } catch (e) { return { name, ok: false, empty: false, msg: String((e && e.message) || e).slice(0, 80) }; } });
+      setDiag(res);
+      const fails = res.filter((r) => !r.ok).length;
+      setToast && setToast(fails ? (LT ? `${fails} modulių klaidų` : `${fails} module error(s)`) : (LT ? 'Visi moduliai veikia ✓' : 'All modules pass ✓'));
+    };
+    return <>
+    <H t={LT ? 'Nustatymai' : 'Settings'} sub={LT ? 'Sistemos parinktys, diagnostika ir duomenys' : 'System options, diagnostics and data'}
+      right={<Btn primary onClick={runDiag}>✓ {LT ? 'Vykdyti diagnostiką' : 'Run diagnostics'}</Btn>} />
+    {diag && <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginBottom: 12 }}>
+      <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 8 }}>{LT ? 'MODULIŲ DIAGNOSTIKA' : 'MODULE DIAGNOSTICS'} · {diag.filter((d) => d.ok).length}/{diag.length} ✓</div>
+      {diag.map((d, i) => <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: `1px solid ${LINE}`, fontSize: 12.5 }}>
+        <Dot c={d.ok ? (d.empty ? AMBER : GREEN) : RED} /><span style={{ flex: 1 }}>{d.name}</span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: d.ok ? (d.empty ? AMBER : GREEN) : RED }}>{d.ok ? (d.empty ? (LT ? '○ be duomenų' : '○ no data') : '✓ ok') : '✕ ' + (d.msg || 'error')}</span>
+      </div>)}
+    </div>}
     <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, fontSize: 12.5, display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${LINE}`, paddingBottom: 10 }}><span style={{ color: DIM }}>{LT ? 'Kalba' : 'Language'}</span><b style={{ fontFamily: MONO }}>{LT ? 'Lietuvių' : 'English'} ({LT ? 'keičiama įrankių juostoje' : 'set in the toolbar'})</b></div>
       <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${LINE}`, paddingBottom: 10 }}><span style={{ color: DIM }}>{LT ? 'Įmonė' : 'Company'}</span><b style={{ fontFamily: MONO }}>{clientId}</b></div>
       <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${LINE}`, paddingBottom: 10 }}><span style={{ color: DIM }}>{LT ? 'Dvynio įvykiai' : 'Twin events'}</span><b style={{ fontFamily: MONO }}>{twin.eventCount()}</b></div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ color: DIM }}>{LT ? 'Išvalyti šios įmonės UI būseną' : 'Clear this company UI state'}</span><Btn danger small onClick={() => { try { localStorage.removeItem(SKEY); } catch (e) {} setSt({}); setToast && setToast(LT ? 'Išvalyta' : 'Cleared'); }}>{LT ? 'Išvalyti' : 'Clear'}</Btn></div>
     </div>
-  </>;
+    </>;
+  };
 
   // ════════════════════════════ SHELL ════════════════════════════
   const NAVI = [
@@ -24064,6 +24132,19 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     ['company', LT ? 'Įmonė' : 'Company', '⬡'], ['integrations', LT ? 'Integracijos' : 'Integrations', '⇄'],
     ['saft', LT ? 'SAF-T importas' : 'SAF-T Import', '⬇'], ['settings', LT ? 'Nustatymai' : 'Settings', '⚙'],
   ];
+  const navHint = LT ? {
+    cmd: 'Gyvas finansų vaizdas ir prioritetai', agents: 'Deterministiniai AI agentai ir patvirtinimai', tx: 'Operacijų peržiūra ir sprendimai',
+    inv: 'Pardavimo ir pirkimo sąskaitos', graph: 'Subjektų ir ryšių žemėlapis', twin: 'Scenarijų laboratorija (kas būtų, jeigu)',
+    fc: 'Pajamų, sąnaudų ir pinigų prognozė', tre: '13 savaičių pinigų srautas ir likvidumas', pay: 'DU: GPM ir Sodra (2026)',
+    close: 'Periodo uždarymo parengtis', comp: 'Lietuvos ir ES atitiktis', advisor: 'AI finansų patarėjas', company: 'Įmonės profilis',
+    integrations: 'Jungtys ir jų būklė', saft: 'SAF-T importas į dvynį', settings: 'Nustatymai ir modulių diagnostika',
+  } : {
+    cmd: 'Live financial picture and priorities', agents: 'Deterministic AI agents and approvals', tx: 'Review transactions and decisions',
+    inv: 'Sales and purchase invoices', graph: 'Map of entities and relationships', twin: 'Scenario lab (what-if modelling)',
+    fc: 'Revenue, cost and cash forecast', tre: '13-week cash flow and liquidity', pay: 'Payroll: GPM and Sodra (2026)',
+    close: 'Period-close readiness', comp: 'Lithuanian & EU compliance', advisor: 'AI finance advisor', company: 'Company profile',
+    integrations: 'Connectors and their status', saft: 'SAF-T import into the twin', settings: 'Settings and module diagnostics',
+  };
   const agentsActive = AGENT_CATALOG.length;
   return (
     <div style={{ display: 'flex', border: `1px solid ${LINE}`, minHeight: '80vh', color: TXT, background: 'transparent' }}>
@@ -24073,7 +24154,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
           <span><div style={{ fontWeight: 800, fontSize: 13, letterSpacing: '.04em' }}>E-ACCOUNTANT</div><div style={{ fontSize: 8.5, letterSpacing: '.12em', color: DIM, fontFamily: MONO }}>FINANCE OS</div></span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {NAVI.map(([id, l, ic]) => <button key={id} onClick={() => { setView(id); setAskR(null); }} style={{
+          {NAVI.map(([id, l, ic]) => <button key={id} title={navHint[id] || ''} onClick={() => { setView(id); setAskR(null); }} style={{
             display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
             background: view === id ? '#fff' : 'transparent', color: view === id ? '#000' : '#bcbcb8',
             border: `1px solid ${view === id ? '#fff' : 'transparent'}`, padding: '8px 11px', fontSize: 12,
@@ -24089,7 +24170,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 22px', borderBottom: `1px solid ${LINE}` }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, background: 'rgba(255,255,255,0.03)', border: `1px solid ${LINE}`, padding: '8px 13px' }}>
             <span style={{ color: DIM }}>◎</span>
-            <input value={ask} onChange={(e) => setAsk(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ask.trim()) { runAsk(ask); } }} placeholder={LT ? 'Klauskite bet ko apie savo finansus…' : 'Ask anything about your finances…'} style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: TXT, fontSize: 12.5, fontFamily: MONO }} />
+            <input ref={askRef} onKeyDown={(e) => { if (e.key === 'Enter' && e.currentTarget.value.trim()) { runAsk(e.currentTarget.value); e.currentTarget.value = ''; } }} placeholder={LT ? 'Klauskite bet ko apie savo finansus…' : 'Ask anything about your finances…'} style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: TXT, fontSize: 12.5, fontFamily: MONO }} />
           </div>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${GREEN}55`, color: GREEN, padding: '7px 12px', fontSize: 10, fontFamily: MONO, letterSpacing: '.06em' }}>● {LT ? 'GYVA' : 'LIVE'} · {twin.eventCount()}</span>
         </div>
