@@ -2172,10 +2172,8 @@ function parseSAFTFull(xmlStr) {
         transactionID: txt(p, "TransactionID"),
         transactionDate: txt(p, "TransactionDate"),
         bankAccount: txt(p, "IBANNumber") || txt(p, "BankAccountNumber") || txt(p, "BankAccount"),
-        transactionDate: txt(p, "TransactionDate"),
         paymentMethod: txt(p, "PaymentMethod"),
         description: txt(p, "Description"),
-        bankAccount: txt(p, "IBANNumber") || txt(p, "BankAccountNumber"),
         grossTotal: num(p, "GrossTotal") ?? 0,
         lines,
       };
@@ -26982,6 +26980,10 @@ function LandingPage({ onEnter }) {
 }
 
 /* ═══ ROOT APP — landing gateway → application ═══ */
+// ── Named exports for the automated test suite (Vitest). These do not affect
+//    the default build, which imports only `App`. ──
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin };
+
 export default function App() {
   const [entered, setEntered] = useState(false);
   const [startView, setStartView] = useState("home");
