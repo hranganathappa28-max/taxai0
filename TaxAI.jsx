@@ -24289,6 +24289,64 @@ const Sev = ({ s }) => <span style={{ border: `1px solid ${SEVC[s]}66`, color: S
 const Dot = ({ c }) => <span style={{ display: 'inline-block', width: 8, height: 8, background: c, marginRight: 8 }} />;
 const inp = { background: 'transparent', border: `1px solid ${LINE}`, color: TXT, padding: '7px 10px', fontSize: 12, fontFamily: 'inherit' };
 
+// ── Module catalog — the single source of truth for the sidebar nav, the hover
+//    tooltips, and the Guide's feature cards (id · icon · label · hint · desc) ──
+const EA_MODULES = [
+  { id: 'guide', ic: '✦', label: { lt: 'Gidas', en: 'Guide' },
+    hint: { lt: 'Greitas turas — ką daro kiekviena funkcija', en: 'Quick tour — what each feature does' } },
+  { id: 'dash', ic: '▦', label: { lt: 'Apžvalga', en: 'Dashboard' },
+    hint: { lt: 'Audito parengtis vienu žvilgsniu', en: 'Audit readiness at a glance' },
+    desc: { lt: 'Audito parengtis vienu žvilgsniu — balas, radiniai, rizikos suma, atviri veiksmai.', en: 'Live audit-readiness at a glance — score, findings, exposure, open actions.' } },
+  { id: 'sim', ic: '⛨', label: { lt: 'Audito simuliacija', en: 'Audit Simulation' },
+    hint: { lt: 'Prognozuokite radinius prieš jiems įvykstant', en: 'Predict findings before they happen' },
+    desc: { lt: 'Prognozuokite, ką rastų auditorius — penki įsitraukimo tipai, deterministiškai.', en: 'Predict what an auditor would find — five engagement types, deterministically.' } },
+  { id: 'fraud', ic: '◐', label: { lt: 'Sukčiavimo tyrimas', en: 'Fraud Detection' },
+    hint: { lt: 'Anomalijų ir įtartinų operacijų aptiktis', en: 'Detect anomalies and suspicious transactions' },
+    desc: { lt: 'Teisminė anomalijų aptiktis — dublikatai, gavėjai be rekvizitų, Benfordas, koncentracija.', en: 'Forensic anomaly detection — duplicates, ghost payees, Benford, concentration.' } },
+  { id: 'find', ic: '△', label: { lt: 'Radiniai', en: 'Findings' },
+    hint: { lt: 'Radiniai su priežastimi ir rekomendacija', en: 'Findings with root cause and recommendation' },
+    desc: { lt: 'Kiekvienas radinys su priežastimi, rekomendacija ir įrodymų nuorodomis.', en: 'Every finding with root cause, recommendation and evidence references.' } },
+  { id: 'risk', ic: '◉', label: { lt: 'Rizikos', en: 'Risks' },
+    hint: { lt: 'Tikimybės × poveikio žemėlapis', en: 'Likelihood × impact heat map' },
+    desc: { lt: 'Tikimybės × poveikio žemėlapis iš radinių ir rankinių rizikų.', en: 'Likelihood × impact heat map from findings plus manual risks.' } },
+  { id: 'comp', ic: '§', label: { lt: 'Atitiktis', en: 'Compliance' },
+    hint: { lt: 'Reguliacinės atitikties patikros', en: 'Regulatory compliance checks' },
+    desc: { lt: 'Nuolatinės patikros — vertinamos iš duomenų, patvirtinamos rankiniu būdu, kur reikia.', en: 'Continuous checks — scored from data, attested where manual.' } },
+  { id: 'lt', ic: '⌂', label: { lt: 'Lietuvos modulis', en: 'Lithuania Module' },
+    hint: { lt: 'Lietuvos sistemų būklė (VMI, i.MAS, i.SAF…)', en: 'Lithuanian systems status (VMI, i.MAS, i.SAF…)' },
+    desc: { lt: 'Lietuvos sistemų būklė — VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA, eSąskaita.', en: 'Lithuanian systems status — VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA, eSąskaita.' } },
+  { id: 'tx', ic: '❖', label: { lt: 'Operacijos', en: 'Transactions' },
+    hint: { lt: 'Operacijos už kiekvieno signalo', en: 'The transactions behind each signal' },
+    desc: { lt: 'Naršykite operacijas, slypinčias už kiekvieno signalo.', en: 'Browse the transactions behind every signal.' } },
+  { id: 'ev', ic: '▣', label: { lt: 'Įrodymų saugykla', en: 'Evidence Vault' },
+    hint: { lt: 'Įrodymai su SHA-256 atspaudais', en: 'Evidence with SHA-256 fingerprints' },
+    desc: { lt: 'Įrodymų saugykla su SHA-256 atspaudais ir nuolatiniu audito pėdsaku.', en: 'Tamper-evident evidence vault with SHA-256 fingerprints.' } },
+  { id: 'rep', ic: '▤', label: { lt: 'Valdybos ataskaitos', en: 'Board Reports' },
+    hint: { lt: 'Valdybai paruošta ataskaita', en: 'Board-ready report' },
+    desc: { lt: 'Valdybai paruošta ataskaita — deterministiniai skaičiai, AI rašo naratyvą.', en: 'Board-ready report — deterministic numbers, the AI writes the narrative.' } },
+  { id: 'act', ic: '☰', label: { lt: 'Veiksmai', en: 'Actions' },
+    hint: { lt: 'Taisymo užduotys', en: 'Remediation tasks' },
+    desc: { lt: 'Taisymo užduotys, sugeneruotos iš radinių, sekamos iki pabaigos.', en: 'Remediation tasks generated from findings, tracked to done.' } },
+  { id: 'ai', ic: '◈', label: { lt: 'AI Kopilotas', en: 'AI Copilot' },
+    hint: { lt: 'Klauskite apie rizikos būklę', en: 'Ask about your risk posture' },
+    desc: { lt: 'Klauskite apie rizikos būklę — atsakymai iš jūsų realių duomenų.', en: 'Ask anything about your risk posture — answered from your real data.' } },
+];
+
+// ── Guide content: the 3-step workflow and the "state of the art" highlights ──
+const EA_STEPS = [
+  { n: '01', go: 'tx', t: { lt: 'Prijunkite duomenis', en: 'Connect your data' }, d: { lt: 'Įkelkite SAF-T failą — jis virsta gyvuoju įvykių dvyniu su tais pačiais subjektais kaip E-Buhalteryje.', en: 'Upload a SAF-T file — it becomes a live event twin sharing the same entities as E-Accountant.' } },
+  { n: '02', go: 'sim', t: { lt: 'Simuliuokite ir skenuokite', en: 'Simulate & scan' }, d: { lt: 'Paleiskite audito simuliaciją (VMI, išorinis, vidaus, sukčiavimas) — gausite tikrus radinius su rizikos suma €.', en: 'Run an audit simulation (VMI, external, internal, fraud) — get real findings with a € exposure.' } },
+  { n: '03', go: 'rep', t: { lt: 'Taisykite, įrodykite, atsiskaitykite', en: 'Fix, prove & report' }, d: { lt: 'Kurkite veiksmus, kaupkite įrodymus su SHA-256 atspaudais ir generuokite valdybos ataskaitą.', en: 'Create actions, collect SHA-256-stamped evidence, and generate a board report.' } },
+];
+const EA_EDGE = [
+  { ic: '◆', t: { lt: 'Deterministika iš principo', en: 'Deterministic by design' }, d: { lt: 'Kiekvienas skaičius apskaičiuotas iš jūsų duomenų. AI tik aprašo radinius — niekada jų neišgalvoja.', en: 'Every number is computed from your data. The AI only narrates findings — it never invents them.' } },
+  { ic: '❖', t: { lt: 'Gyvasis įvykių dvynys', en: 'Live event twin' }, d: { lt: 'Kiekvienas radinys atsekamas iki tikrų sąskaitų, tiekėjų ir prievolių, kurie jį įrodo.', en: 'Every finding traces back to the real invoices, vendors and obligations that prove it.' } },
+  { ic: '§', t: { lt: 'Pagal TAS / ISA', en: 'ISA / TAS-aligned' }, d: { lt: 'Reikšmingumas, žurnalo įrašų testai, Benfordas, MUS atranka ir veiklos tęstinumas.', en: 'Materiality, journal-entry tests, Benford, MUS sampling and going-concern.' } },
+  { ic: '▣', t: { lt: 'Apsaugoti įrodymai', en: 'Tamper-evident evidence' }, d: { lt: 'SHA-256 atspaudai suteikia kiekvienam įkeltam dokumentui nuolatinį audito pėdsaką.', en: 'SHA-256 fingerprints give every uploaded document a permanent audit trail.' } },
+  { ic: '⌂', t: { lt: 'Pritaikyta Lietuvai', en: 'Lithuania-native' }, d: { lt: 'Sukurta aplink VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA ir eSąskaitą.', en: 'Built around VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA and eSąskaita.' } },
+  { ic: '◐', t: { lt: 'Teisminis sukčiavimo skenavimas', en: 'Forensic fraud scan' }, d: { lt: 'Dublikatai, gavėjai be rekvizitų, savaitgalių pikai, apvalių sumų polinkis ir koncentracija.', en: 'Duplicates, ghost payees, weekend spikes, round-number bias and concentration.' } },
+];
+
 function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
   const LT = lang === 'lt';
   const [view, setView] = useState('dash');
@@ -24771,33 +24829,8 @@ function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
     const card = { background: CARD, border: `1px solid ${LINE}`, padding: '15px 16px' };
     const hov = (on) => (e) => { e.currentTarget.style.borderColor = on ? GOLD : LINE; };
     const lbl = (t) => <div style={{ fontSize: 10, letterSpacing: '.14em', color: DIM, fontFamily: MONO, margin: '18px 0 9px' }}>{t}</div>;
-    const steps = [
-      ['01', LT ? 'Prijunkite duomenis' : 'Connect your data', LT ? 'Įkelkite SAF-T failą — jis virsta gyvuoju įvykių dvyniu su tais pačiais subjektais kaip E-Buhalteryje.' : 'Upload a SAF-T file — it becomes a live event twin sharing the same entities as E-Accountant.', 'tx'],
-      ['02', LT ? 'Simuliuokite ir skenuokite' : 'Simulate & scan', LT ? 'Paleiskite audito simuliaciją (VMI, išorinis, vidaus, sukčiavimas) — gausite tikrus radinius su rizikos suma €.' : 'Run an audit simulation (VMI, external, internal, fraud) — get real findings with a € exposure.', 'sim'],
-      ['03', LT ? 'Taisykite, įrodykite, atsiskaitykite' : 'Fix, prove & report', LT ? 'Kurkite veiksmus, kaupkite įrodymus su SHA-256 atspaudais ir generuokite valdybos ataskaitą.' : 'Create actions, collect SHA-256-stamped evidence, and generate a board report.', 'rep'],
-    ];
-    const edge = [
-      ['◆', LT ? 'Deterministika iš principo' : 'Deterministic by design', LT ? 'Kiekvienas skaičius apskaičiuotas iš jūsų duomenų. AI tik aprašo radinius — niekada jų neišgalvoja.' : 'Every number is computed from your data. The AI only narrates findings — it never invents them.'],
-      ['❖', LT ? 'Gyvasis įvykių dvynys' : 'Live event twin', LT ? 'Kiekvienas radinys atsekamas iki tikrų sąskaitų, tiekėjų ir prievolių, kurie jį įrodo.' : 'Every finding traces back to the real invoices, vendors and obligations that prove it.'],
-      ['§', LT ? 'Pagal TAS / ISA' : 'ISA / TAS-aligned', LT ? 'Reikšmingumas, žurnalo įrašų testai, Benfordas, MUS atranka ir veiklos tęstinumas.' : 'Materiality, journal-entry tests, Benford, MUS sampling and going-concern.'],
-      ['▣', LT ? 'Apsaugoti įrodymai' : 'Tamper-evident evidence', LT ? 'SHA-256 atspaudai suteikia kiekvienam įkeltam dokumentui nuolatinį audito pėdsaką.' : 'SHA-256 fingerprints give every uploaded document a permanent audit trail.'],
-      ['⌂', LT ? 'Pritaikyta Lietuvai' : 'Lithuania-native', LT ? 'Sukurta aplink VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA ir eSąskaitą.' : 'Built around VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA and eSąskaita.'],
-      ['◐', LT ? 'Teisminis sukčiavimo skenavimas' : 'Forensic fraud scan', LT ? 'Dublikatai, gavėjai be rekvizitų, savaitgalių pikai, apvalių sumų polinkis ir koncentracija.' : 'Duplicates, ghost payees, weekend spikes, round-number bias and concentration.'],
-    ];
-    const feat = [
-      ['dash', '▦', LT ? 'Apžvalga' : 'Dashboard', LT ? 'Audito parengtis vienu žvilgsniu — balas, radiniai, rizikos suma, atviri veiksmai.' : 'Live audit-readiness at a glance — score, findings, exposure, open actions.'],
-      ['sim', '⛨', LT ? 'Audito simuliacija' : 'Audit Simulation', LT ? 'Prognozuokite, ką rastų auditorius — penki įsitraukimo tipai, deterministiškai.' : 'Predict what an auditor would find — five engagement types, deterministically.'],
-      ['fraud', '◐', LT ? 'Sukčiavimo tyrimas' : 'Fraud Detection', LT ? 'Teisminė anomalijų aptiktis — dublikatai, gavėjai be rekvizitų, Benfordas, koncentracija.' : 'Forensic anomaly detection — duplicates, ghost payees, Benford, concentration.'],
-      ['find', '△', LT ? 'Radiniai' : 'Findings', LT ? 'Kiekvienas radinys su priežastimi, rekomendacija ir įrodymų nuorodomis.' : 'Every finding with root cause, recommendation and evidence references.'],
-      ['risk', '◉', LT ? 'Rizikos' : 'Risks', LT ? 'Tikimybės × poveikio žemėlapis iš radinių ir rankinių rizikų.' : 'Likelihood × impact heat map from findings plus manual risks.'],
-      ['comp', '§', LT ? 'Atitiktis' : 'Compliance', LT ? 'Nuolatinės patikros — vertinamos iš duomenų, patvirtinamos rankiniu būdu, kur reikia.' : 'Continuous checks — scored from data, attested where manual.'],
-      ['lt', '⌂', LT ? 'Lietuvos modulis' : 'Lithuania Module', LT ? 'Lietuvos sistemų būklė — VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA, eSąskaita.' : 'Lithuanian systems status — VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA, eSąskaita.'],
-      ['tx', '❖', LT ? 'Operacijos' : 'Transactions', LT ? 'Naršykite operacijas, slypinčias už kiekvieno signalo.' : 'Browse the transactions behind every signal.'],
-      ['ev', '▣', LT ? 'Įrodymų saugykla' : 'Evidence Vault', LT ? 'Įrodymų saugykla su SHA-256 atspaudais ir nuolatiniu audito pėdsaku.' : 'Tamper-evident evidence vault with SHA-256 fingerprints.'],
-      ['rep', '▤', LT ? 'Valdybos ataskaitos' : 'Board Reports', LT ? 'Valdybai paruošta ataskaita — deterministiniai skaičiai, AI rašo naratyvą.' : 'Board-ready report — deterministic numbers, the AI writes the narrative.'],
-      ['act', '☰', LT ? 'Veiksmai' : 'Actions', LT ? 'Taisymo užduotys, sugeneruotos iš radinių, sekamos iki pabaigos.' : 'Remediation tasks generated from findings, tracked to done.'],
-      ['ai', '◈', LT ? 'AI Kopilotas' : 'AI Copilot', LT ? 'Klauskite apie rizikos būklę — atsakymai iš jūsų realių duomenų.' : 'Ask anything about your risk posture — answered from your real data.'],
-    ];
+    const tr = (o) => (LT ? o.lt : o.en);
+    const feat = EA_MODULES.filter((m) => m.id !== 'guide');
     return <>
       <H t={LT ? 'Gidas' : 'Guide'} sub={LT ? 'Viskas, ką daro E-Auditorius — paprastai' : 'Everything E-Auditor does, in plain language'}
         right={<Btn primary onClick={() => setView('dash')}>{LT ? 'Į apžvalgą →' : 'Go to dashboard →'}</Btn>} />
@@ -24810,38 +24843,38 @@ function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
       </div>
       {lbl(LT ? 'KAIP TAI VEIKIA — 3 ŽINGSNIAI' : 'HOW IT WORKS — 3 STEPS')}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10 }}>
-        {steps.map(([n, t, d, go]) => (
+        {EA_STEPS.map(({ n, t, d, go }) => (
           <button key={n} onClick={() => setView(go)} onMouseEnter={hov(true)} onMouseLeave={hov(false)}
             style={{ ...card, textAlign: 'left', cursor: 'pointer', color: TXT, transition: 'border-color .15s' }}>
             <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 800, color: GOLD }}>{n}</div>
-            <div style={{ fontWeight: 700, fontSize: 13.5, marginTop: 6 }}>{t}</div>
-            <div style={{ fontSize: 12, color: DIM, marginTop: 5, lineHeight: 1.55 }}>{d}</div>
+            <div style={{ fontWeight: 700, fontSize: 13.5, marginTop: 6 }}>{tr(t)}</div>
+            <div style={{ fontSize: 12, color: DIM, marginTop: 5, lineHeight: 1.55 }}>{tr(d)}</div>
           </button>
         ))}
       </div>
       {lbl(LT ? 'KODĖL TAI PAŽANGU' : 'WHAT MAKES IT STATE-OF-THE-ART')}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
-        {edge.map(([ic, t, d]) => (
-          <div key={t} style={{ ...card }}>
+        {EA_EDGE.map(({ ic, t, d }) => (
+          <div key={t.en} style={{ ...card }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <span style={{ width: 26, height: 26, border: `1px solid ${GOLD}`, color: GOLD, display: 'grid', placeItems: 'center', fontSize: 13, flexShrink: 0 }}>{ic}</span>
-              <b style={{ fontSize: 12.5 }}>{t}</b>
+              <b style={{ fontSize: 12.5 }}>{tr(t)}</b>
             </div>
-            <div style={{ fontSize: 12, color: DIM, marginTop: 7, lineHeight: 1.55 }}>{d}</div>
+            <div style={{ fontSize: 12, color: DIM, marginTop: 7, lineHeight: 1.55 }}>{tr(d)}</div>
           </div>
         ))}
       </div>
       {lbl(LT ? 'VISOS FUNKCIJOS — SPUSTELĖKITE, KAD ATIDARYTUMĖTE' : 'ALL FEATURES — CLICK ANY TO OPEN')}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
-        {feat.map(([id, ic, t, d]) => (
-          <button key={id} onClick={() => setView(id)} onMouseEnter={hov(true)} onMouseLeave={hov(false)}
+        {feat.map((m) => (
+          <button key={m.id} onClick={() => setView(m.id)} onMouseEnter={hov(true)} onMouseLeave={hov(false)}
             style={{ ...card, textAlign: 'left', cursor: 'pointer', color: TXT, transition: 'border-color .15s' }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <span style={{ width: 24, textAlign: 'center', color: DIM, fontSize: 14 }}>{ic}</span>
-              <b style={{ flex: 1, fontSize: 12.5 }}>{t}</b>
+              <span style={{ width: 24, textAlign: 'center', color: DIM, fontSize: 14 }}>{m.ic}</span>
+              <b style={{ flex: 1, fontSize: 12.5 }}>{tr(m.label)}</b>
               <span style={{ color: DIM }}>›</span>
             </div>
-            <div style={{ fontSize: 12, color: DIM, marginTop: 6, lineHeight: 1.55, paddingLeft: 34 }}>{d}</div>
+            <div style={{ fontSize: 12, color: DIM, marginTop: 6, lineHeight: 1.55, paddingLeft: 34 }}>{tr(m.desc)}</div>
           </button>
         ))}
       </div>
@@ -24852,26 +24885,8 @@ function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
   };
 
   // ════════════════════════════ SHELL ════════════════════════════
-  const NAVI = [
-    ['guide', LT ? 'Gidas' : 'Guide', '✦'],
-    ['dash', LT ? 'Apžvalga' : 'Dashboard', '▦'], ['sim', LT ? 'Audito simuliacija' : 'Audit Simulation', '⛨'],
-    ['fraud', LT ? 'Sukčiavimo tyrimas' : 'Fraud Detection', '◐'], ['find', LT ? 'Radiniai' : 'Findings', '△'],
-    ['risk', LT ? 'Rizikos' : 'Risks', '◉'], ['comp', LT ? 'Atitiktis' : 'Compliance', '§'],
-    ['lt', LT ? 'Lietuvos modulis' : 'Lithuania Module', '⌂'], ['tx', LT ? 'Operacijos' : 'Transactions', '❖'],
-    ['ev', LT ? 'Įrodymų saugykla' : 'Evidence Vault', '▣'], ['rep', LT ? 'Valdybos ataskaitos' : 'Board Reports', '▤'],
-    ['act', LT ? 'Veiksmai' : 'Actions', '☰'], ['ai', 'AI Copilot', '◈'],
-  ];
-  const navHint = LT ? {
-    guide: 'Greitas turas — ką daro kiekviena funkcija', dash: 'Audito parengtis vienu žvilgsniu', sim: 'Prognozuokite radinius prieš jiems įvykstant',
-    fraud: 'Anomalijų ir įtartinų operacijų aptiktis', find: 'Radiniai su priežastimi ir rekomendacija', risk: 'Tikimybės × poveikio žemėlapis',
-    comp: 'Reguliacinės atitikties patikros', lt: 'Lietuvos sistemų būklė (VMI, i.MAS, i.SAF…)', tx: 'Operacijos už kiekvieno signalo',
-    ev: 'Įrodymai su SHA-256 atspaudais', rep: 'Valdybai paruošta ataskaita', act: 'Taisymo užduotys', ai: 'Klauskite apie rizikos būklę',
-  } : {
-    guide: 'Quick tour — what each feature does', dash: 'Audit readiness at a glance', sim: 'Predict findings before they happen',
-    fraud: 'Detect anomalies and suspicious transactions', find: 'Findings with root cause and recommendation', risk: 'Likelihood × impact heat map',
-    comp: 'Regulatory compliance checks', lt: 'Lithuanian systems status (VMI, i.MAS, i.SAF…)', tx: 'The transactions behind each signal',
-    ev: 'Evidence with SHA-256 fingerprints', rep: 'Board-ready report', act: 'Remediation tasks', ai: 'Ask about your risk posture',
-  };
+  const NAVI = EA_MODULES.map((m) => [m.id, LT ? m.label.lt : m.label.en, m.ic]);
+  const navHint = Object.fromEntries(EA_MODULES.map((m) => [m.id, LT ? m.hint.lt : m.hint.en]));
   return (
     <div style={{ display: 'flex', border: `1px solid ${LINE}`, minHeight: '78vh', color: TXT, background: 'transparent' }}>
       <aside style={{ width: 212, background: CARD, borderRight: `1px solid ${LINE}`, padding: '14px 8px', flexShrink: 0 }}>
