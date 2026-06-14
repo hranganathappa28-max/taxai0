@@ -14427,6 +14427,37 @@ function explainFinding(f, lang) {
                  : (lt ? "Rekomenduojama peržiūrėti" : "Recommended review") };
 }
 
+// ── Remediation confidence (deterministic) ──────────────────────────────────
+// How confident the engine is that a finding is a true positive needing action.
+// Driven by the rule family: schema (XSD), structural (SCHEMA), duplicate-key
+// (DUBL) and classifier (CLS) checks are deterministic and near-certain;
+// indicative tax-risk "signals" are lower and invite a sample review. The
+// volume of hits nudges the score. No AI — fully reproducible.
+function findingConfidence(f) {
+  const m = (f && f.ruleMeta) || {};
+  const fam = String(m.family || "").toUpperCase();
+  const kind = String(m.kind || "").toLowerCase();
+  const hits = (f && Array.isArray(f.evidence)) ? f.evidence.length : 0;
+  let base, basisEn, basisLt;
+  if (fam === "XSD") { base = 97; basisEn = "Schema (XSD) check — deterministic, near-certain."; basisLt = "Schemos (XSD) patikra — deterministinė, beveik tikra."; }
+  else if (fam === "SCHEMA") { base = 96; basisEn = "Structural requirement — deterministic."; basisLt = "Struktūrinis reikalavimas — deterministinis."; }
+  else if (fam === "DUBL") { base = 91; basisEn = "Duplicate-key match — deterministic."; basisLt = "Pasikartojančio rakto atitiktis — deterministinė."; }
+  else if (fam === "CLS") { base = 90; basisEn = "Official VMI classifier lookup — deterministic."; basisLt = "Oficialaus VMI klasifikatoriaus patikra — deterministinė."; }
+  else if (kind === "signal") { base = 74; basisEn = "Indicative tax-risk signal — verify the flagged sample."; basisLt = "Indikatyvus mokestinės rizikos signalas — patikrinkite pažymėtą imtį."; }
+  else if (typeof isAutoFixableRule === "function" && isAutoFixableRule(f && f.rule_id)) { base = 90; basisEn = "Deterministic, auto-fixable rule."; basisLt = "Deterministinė, automatiškai taisoma taisyklė."; }
+  else { base = 82; basisEn = "Deterministic rule check."; basisLt = "Deterministinė taisyklės patikra."; }
+  if (hits >= 5) base += 3; else if (hits <= 1 && kind === "signal") base -= 6;
+  if ((f && f.severity) === "Critical" && base < 90) base += 2;
+  const score = Math.max(40, Math.min(99, Math.round(base)));
+  const band = score >= 90 ? "high" : score >= 70 ? "medium" : "low";
+  return { score, band, basisEn, basisLt };
+}
+const CONF_COLOR = { high: "#69db7c", medium: "#ffd43b", low: "#ffa94d" };
+function confBandLabel(band, lang) {
+  const lt = lang === "lt";
+  return band === "high" ? (lt ? "aukštas" : "high") : band === "medium" ? (lt ? "vidutinis" : "medium") : (lt ? "žemas" : "low");
+}
+
 // Stable identifier for a finding (rule + the specific evidence line).
 function findingKey(f) {
   if (!f) return "";
@@ -14855,6 +14886,8 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
   const PL_LINE = "rgba(255,255,255,0.12)", PL_SOFT = "rgba(255,255,255,0.06)";
   const L = (en, lt) => (lang === "lt" ? lt : en);
   const m = finding.ruleMeta || {};
+  const CONF = findingConfidence(finding);
+  const CONFc = CONF_COLOR[CONF.band];
   const SCc = { Critical: "#ff6b6b", High: "#ffa94d", Medium: "#ffd43b", Low: "#69db7c" }[finding.severity] || "#aaa";
   const [accord, setAccord] = useState(note?.disposition === "accordance");
   const [notAccord, setNotAccord] = useState(note?.disposition === "not");
@@ -14876,7 +14909,8 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
       company ? `Entity: ${company}` : "", period ? `Period: ${period}` : "", "",
       `Rule: ${lang === "lt" ? m.titleLt : m.titleEn}`,
       `Severity: ${finding.severity}    Category: ${finding.category}    Refers to: ${m.refType || "—"}`,
-      `Legal basis: ${m.legal || "—"}`, "",
+      `Legal basis: ${m.legal || "—"}`,
+      `Confidence: ${CONF.score}% (${CONF.band}) — ${lang === "lt" ? CONF.basisLt : CONF.basisEn}`, "",
       `What the rule checks:`, (lang === "lt" ? m.descriptionLt : (m.descriptionEn || m.descriptionLt || "")) || "(see rule description)", "",
       `Flagged record:`, ...fields.map(([k, v]) => `  ${k} = ${v}`), "",
       `How to fix:`, ...(fixSteps(lang === "lt" ? (m.fixLt || m.fixEn) : (m.fixEn || m.fixLt)).map((s, ix) => `  ${ix + 1}. ${s}`)), "",
@@ -14907,6 +14941,7 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
         <Field label={L("Category", "Kategorija")}>{finding.category}</Field>
         <Field label={L("Refers to", "Susiję su")}>{m.refType || "—"}</Field>
         <Field label={L("Data types", "Duomenų tipai")}>{m.dataTypes || "—"}</Field>
+        <Field label={L("Confidence", "Pasitikėjimas")}><span style={{ color: CONFc, fontWeight: 700 }}>{CONF.score}%</span> <span style={{ color: "#8c8c88", fontSize: 11 }}>· {confBandLabel(CONF.band, lang)}</span></Field>
       </div>
 
       {/* what the rule checks */}
@@ -14924,12 +14959,26 @@ function FindingDetail({ finding, lang, note, onSave, onBack, company, period })
             <div style={{ fontSize: 14, color: "#fff", fontFamily: "var(--m)", wordBreak: "break-word" }}>{String(v)}</div>
           </div>)}
         </div>
+        {finding.evidence && finding.evidence.length > 1 && <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 9.5, color: "#8c8c88", fontFamily: "var(--m)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 8 }}>{L("Affected records — drill down", "Pažymėti įrašai — detalizacija")} · {finding.evidence.length}</div>
+          <div style={{ border: `1px solid ${PL_SOFT}`, background: "#000", maxHeight: 280, overflowY: "auto" }}>
+            {finding.evidence.slice(0, 60).map((ev, i) => <div key={i} style={{ padding: "7px 12px", borderBottom: `1px solid ${PL_SOFT}`, fontFamily: "var(--m)", fontSize: 11, color: "#bcbcb8", lineHeight: 1.6, wordBreak: "break-word" }}>{typeof ev === "string" ? ev : JSON.stringify(ev)}</div>)}
+          </div>
+          {finding.evidence.length > 60 && <div style={{ fontSize: 10.5, color: "#8c8c88", fontFamily: "var(--m)", marginTop: 6 }}>{L(`+ ${finding.evidence.length - 60} more`, `+ dar ${finding.evidence.length - 60}`)}</div>}
+        </div>}
       </Section>
 
       {/* how to fix — clear numbered steps, severity-aware */}
       <Section title={L("How to fix it", "Kaip ištaisyti")} accent="#7cc4ff">
         {(() => { const ex = explainFinding(finding, lang); return <>
           <div style={{ display: "inline-block", padding: "4px 10px", marginBottom: 12, border: `1px solid ${ex.urgent ? "#ff8a8a" : "#69db7c"}`, color: ex.urgent ? "#ff8a8a" : "#69db7c", fontFamily: "var(--m)", fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>{ex.lead}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "8px 12px", border: `1px solid ${PL_LINE}`, background: "#000", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--m)", fontSize: 10, color: "#8c8c88", letterSpacing: ".08em", textTransform: "uppercase" }}>{L("Confidence", "Pasitikėjimas")}</span>
+            <span style={{ fontFamily: "var(--m)", fontSize: 13, fontWeight: 700, color: CONFc }}>{CONF.score}%</span>
+            <div style={{ flex: 1, minWidth: 120, height: 4, background: "rgba(255,255,255,0.08)" }}><div style={{ height: 4, width: `${CONF.score}%`, background: CONFc }} /></div>
+            <span style={{ fontFamily: "var(--s)", fontSize: 11.5, color: "#9f9f9b", flexBasis: "100%" }}>{lang === "lt" ? CONF.basisLt : CONF.basisEn}</span>
+          </div>
+          {m.legal && <div style={{ fontSize: 11.5, color: "#9ae6a4", fontFamily: "var(--m)", marginBottom: 12 }}>§ {L("Reference", "Nuoroda")}: {m.legal}</div>}
           {ex.how.length === 1
             ? <p style={{ fontSize: 13.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.7, margin: 0 }}>{ex.how[0]}</p>
             : <ol style={{ margin: 0, paddingLeft: 22 }}>{ex.how.map((s, i) => <li key={i} style={{ fontSize: 13.5, color: "#e6e6e2", fontFamily: "var(--s)", lineHeight: 1.7, marginBottom: 6 }}>{s}</li>)}</ol>}
@@ -26403,12 +26452,6 @@ function TAXAI({ onExit, initialView } = {}) {
                   { id: "legalsearch", grpLt: "Analizė", grpEn: "Intelligence", en: "Legal Search", lt: "Teisinė paieška" },
                   { id: "docqa", grpLt: "Analizė", grpEn: "Intelligence", en: "Doc Q&A", lt: "Dok. klausimai" },
                   { id: "compliance", grpLt: "Atitiktis", grpEn: "Compliance", en: "Live Submissions", lt: "Pateikimai VMI" },
-                  { id: "auditlifecycle", grpLt: "Auditas", grpEn: "Assurance", en: "Audit Lifecycle", lt: "Audito ciklas" },
-                  { id: "workspace", grpLt: "Auditas", grpEn: "Assurance", en: "Collaborative Workspace", lt: "Bendra darbo erdvė" },
-                  { id: "advcaats", grpLt: "Auditas", grpEn: "Assurance", en: "Advanced CAATs", lt: "Pažangūs CAAT" },
-                  { id: "automations", grpLt: "Auditas", grpEn: "Assurance", en: "Audit Automations", lt: "Automatizavimas" },
-                  { id: "pillartwo", grpLt: "Strategija", grpEn: "Strategy", en: "Pillar Two GloBE", lt: "Antrasis ramstis" },
-                  { id: "transferpricing", grpLt: "Strategija", grpEn: "Strategy", en: "Transfer Pricing", lt: "Sandorių kainodara" },
                 ].flatMap((tab, ti, arr) => [(ti === 0 || arr[ti - 1].grpLt !== tab.grpLt) && <span key={"g-" + tab.id} style={{ alignSelf: "stretch", display: "inline-flex", alignItems: "center", padding: "0 10px 0 16px", fontFamily: "var(--m)", fontSize: 9, fontWeight: 700, letterSpacing: ".14em", color: "#6b6b66", textTransform: "uppercase", borderLeft: ti === 0 ? "none" : `1px solid ${PL_LINE}`, marginLeft: ti === 0 ? 0 : 10 }}>{lang === "lt" ? tab.grpLt : tab.grpEn}</span>,
                   <button key={tab.id} onClick={() => {
                     setSaftTab(tab.id);
@@ -26418,6 +26461,40 @@ function TAXAI({ onExit, initialView } = {}) {
                     if (tab.id === "enterprise" && !enterpriseResult) runEnterpriseAuditCallback();
                   }} style={{ ...tabStyle(saftTab === tab.id), borderLeft: "none" }}>{lang === "lt" ? tab.lt : tab.en}</button>])}
               </div>
+
+              {/* ── COMMAND OVERVIEW — mission-control strip, visible on every tab ── */}
+              {fileData?.parsed && runResult && (() => {
+                const gate = simulateAcceptanceGate(fileData.parsed, findings);
+                const risk = computeRiskScore(findings);
+                const sev = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+                findings.forEach((f) => { if (sev[f.severity] != null) sev[f.severity]++; });
+                const fixable = findings.filter((f) => isAutoFixableRule(f.rule_id)).length;
+                const confs = findings.map((f) => findingConfidence(f).score);
+                const avgConf = confs.length ? Math.round(confs.reduce((a, b) => a + b, 0) / confs.length) : 100;
+                const GC = { rejected: "#ff6b6b", warnings: "#ffd43b", clean: "#69db7c" }[gate.verdict] || "#69db7c";
+                const BC = { clean: "#69db7c", low: "#69db7c", elevated: "#ffd43b", high: "#ff6b6b" }[risk.band] || "#69db7c";
+                const ACC = avgConf >= 90 ? "#69db7c" : avgConf >= 70 ? "#ffd43b" : "#ffa94d";
+                const runAllAI = () => { [runAI, runSmart, runSmartAnalysisCallback, runEnterpriseAuditCallback].forEach((fn) => { try { fn && fn(); } catch (e) {} }); setToast && setToast(lang === "lt" ? "Paleisti visi AI varikliai" : "All AI engines launched"); };
+                const Cell = ({ label, children, color, onClick, title }) => (
+                  <button onClick={onClick} title={title} style={{ flex: "0 0 auto", textAlign: "left", background: "transparent", border: "none", borderRight: `1px solid ${PL_LINE}`, padding: "9px 18px", cursor: onClick ? "pointer" : "default", color: "#fff", fontFamily: "var(--m)" }}>
+                    <div style={{ fontSize: 8.5, color: "#8c8c88", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 14.5, fontWeight: 700, color: color || "#fff", whiteSpace: "nowrap" }}>{children}</div>
+                  </button>
+                );
+                return <div style={{ display: "flex", alignItems: "stretch", flexWrap: "wrap", border: `1px solid ${PL_LINE}`, background: "var(--bg2)", marginBottom: 22, overflowX: "auto" }}>
+                  <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8, padding: "9px 16px", borderRight: `1px solid ${PL_LINE}` }}>
+                    <span style={{ width: 8, height: 8, background: GC }} />
+                    <span style={{ fontFamily: "var(--m)", fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase", color: "#8c8c88" }}>{lang === "lt" ? "Vadavietė" : "Command"}</span>
+                  </div>
+                  <Cell label={lang === "lt" ? "Priėmimas" : "Acceptance"} color={GC} onClick={() => setSaftTab("tests")} title={lang === "lt" ? gate.label[1] : gate.label[0]}>{gate.verdict === "rejected" ? "✕ " : gate.verdict === "warnings" ? "⚠ " : "✓ "}{lang === "lt" ? gate.label[1] : gate.label[0]}</Cell>
+                  <Cell label={lang === "lt" ? "VMI rizika" : "VMI risk"} color={BC} onClick={() => setSaftTab("tests")}>{risk.score} <span style={{ fontSize: 10, color: BC }}>{lang === "lt" ? risk.bandLabel[1] : risk.bandLabel[0]}</span></Cell>
+                  <Cell label={lang === "lt" ? "Radiniai" : "Findings"} onClick={() => setSaftTab("tests")}>{findings.length} <span style={{ fontSize: 10, color: "#8c8c88" }}>C{sev.Critical}·H{sev.High}·M{sev.Medium}·L{sev.Low}</span></Cell>
+                  <Cell label={lang === "lt" ? "Auto-taisoma" : "Auto-fixable"} color={fixable ? "#7cc4ff" : "#69db7c"} onClick={() => setSaftTab("fix")}>{fixable}</Cell>
+                  <Cell label={lang === "lt" ? "Vid. pasitikėjimas" : "Avg confidence"} color={ACC} title={lang === "lt" ? "Vidutinis radinių pasitikėjimo balas" : "Average finding confidence"}>{avgConf}%</Cell>
+                  <div style={{ flex: 1, minWidth: 8 }} />
+                  <button onClick={runAllAI} title={lang === "lt" ? "Paleisti visus AI variklius vienu paspaudimu" : "Run every AI engine in one click"} style={{ flex: "0 0 auto", alignSelf: "center", margin: "0 12px", padding: "8px 16px", background: "#fff", color: "#000", border: "none", fontFamily: "var(--m)", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>⚡ {lang === "lt" ? "Paleisti visą AI" : "Run all AI"}</button>
+                </div>;
+              })()}
 
               {/* ── TESTS ── */}
               {saftTab === "tests" && <div>
@@ -26534,6 +26611,7 @@ function TAXAI({ onExit, initialView } = {}) {
                         <span style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${PL_LINE}`, color: "#fff", fontFamily: "var(--m)", fontWeight: 600 }}>{f.rule_id || `L${f.level}`}</span>
                         <span style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${PL_LINE}`, color: "#8c8c88", fontFamily: "var(--m)" }}>{f.typeName || f.type || "—"}: {f.category}</span>
                         {isAutoFixableRule(f.rule_id) && <span style={{ fontSize: 10, padding: "3px 8px", border: "1px solid #7cc4ff", color: "#7cc4ff", fontFamily: "var(--m)", fontWeight: 600 }}>⚙ {lang === "lt" ? "Auto-taisoma" : "Auto-fixable"}</span>}
+                        {(() => { const c = findingConfidence(f); const cc = CONF_COLOR[c.band]; return <span title={lang === "lt" ? c.basisLt : c.basisEn} style={{ fontSize: 10, padding: "3px 8px", border: `1px solid ${cc}`, color: cc, fontFamily: "var(--m)", fontWeight: 600 }}>◆ {c.score}%</span>; })()}
                         {disp && <span style={{ fontSize: 10, padding: "3px 8px", color: disp === "accordance" ? "#69db7c" : "#ff8a8a", border: `1px solid ${disp === "accordance" ? "#69db7c" : "#ff8a8a"}`, fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{disp === "accordance" ? (lang === "lt" ? "✓ Atitinka" : "✓ In accordance") : (lang === "lt" ? "✕ Reikia veiksmų" : "✕ Needs action")}</span>}
                         {!disp && fnote?.justification && <span style={{ fontSize: 10, padding: "3px 8px", color: "#ffd43b", border: "1px solid #ffd43b", fontFamily: "var(--m)", fontWeight: 600, textTransform: "uppercase" }}>{lang === "lt" ? "✎ Peržiūrėta" : "✎ Reviewed"}</span>}
                       </div>
@@ -26585,18 +26663,6 @@ function TAXAI({ onExit, initialView } = {}) {
               {saftTab === "legalsearch" && <div style={panel}><LegalSearchPanel lang={lang} /></div>}
 
               {saftTab === "docqa" && <div style={panel}><DocQAPanel lang={lang} /></div>}
-
-              {saftTab === "transferpricing" && <div style={panel}><TransferPricingPanel lang={lang} /></div>}
-
-              {saftTab === "pillartwo" && <div style={panel}><PillarTwoPanel lang={lang} /></div>}
-
-              {saftTab === "automations" && <div style={panel}><AuditAutomationsPanel parsed={fileData?.parsed} findings={findings} risk={computeRiskScore(findings)} gate={fileData?.parsed ? simulateAcceptanceGate(fileData.parsed, findings) : null} lang={lang} /></div>}
-
-              {saftTab === "advcaats" && <div style={panel}><AdvCAATsPanel parsed={fileData?.parsed} lang={lang} /></div>}
-
-              {saftTab === "workspace" && <div style={panel}><WorkspacePanel parsed={fileData?.parsed} findings={findings} lang={lang} /></div>}
-
-              {saftTab === "auditlifecycle" && <div style={panel}><AuditLifecyclePanel parsed={fileData?.parsed} findings={findings} gate={fileData?.parsed ? simulateAcceptanceGate(fileData.parsed, findings) : null} risk={computeRiskScore(findings)} lang={lang} /></div>}
 
               {saftTab === "compliance" && <div style={panel}><ComplianceDashboard apiBase={COMPLIANCE_API} tenantId={fileData?.parsed?.header?.company?.registrationNumber || ""} lang={lang} /></div>}
 
