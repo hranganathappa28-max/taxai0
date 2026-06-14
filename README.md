@@ -88,6 +88,46 @@ Key functions: `buildMetricRegistry`, `evalCondition`, `evaluateGeneratedRule`,
 
 ---
 
+## E-Auditor — Audit Readiness Platform
+
+The **E-Auditor** is a self-contained, audit-readiness cockpit (open it from the
+sidebar — `E-Auditor / E-Auditorius`). It turns the uploaded SAF-T data into a
+**live event twin** and then, *deterministically*, predicts what a VMI tax
+inspection or an external auditor would find — before they do — and helps you
+fix it and prove it.
+
+New here? The in-app **Guide** (`✦ Guide / Gidas`, the first sidebar item)
+explains every feature in plain language — a 3-step workflow, a
+"what-makes-it-state-of-the-art" panel, and a clickable catalog that jumps
+straight to any module. The Dashboard also shows a one-line orientation banner
+and a plain-language read on your readiness score.
+
+What it does, module by module:
+
+| Module | What it does |
+| --- | --- |
+| **Dashboard** | Live audit-readiness at a glance — score, findings, exposure, open actions. |
+| **Audit Simulation** | Predicts findings for five engagement types (VMI, external, internal, fraud, compliance). |
+| **Fraud Detection** | Forensic anomaly scan — duplicates, ghost payees, Benford, weekend spikes, concentration. |
+| **Findings** | Every finding with root cause, recommendation and evidence references. |
+| **Risks** | Likelihood × impact heat map from findings plus manual risks. |
+| **Compliance** | Continuous regulatory checks — scored from data, attested where manual. |
+| **Lithuania Module** | Status across VMI, i.MAS, i.SAF, i.VAZ, SAF-T, SODRA, eSąskaita. |
+| **Evidence Vault** | Tamper-evident document store with SHA-256 fingerprints. |
+| **Board Reports** | Board-ready report — deterministic numbers, the AI writes the narrative. |
+| **Actions** | Remediation tasks generated from findings, tracked to done. |
+| **AI Copilot** | Ask anything about your risk posture — answered from your real data. |
+
+**Why it's state-of-the-art:** every number is a reproducible computation from
+your data — the AI *never* invents figures, it only narrates. Findings trace
+back to the real invoices, vendors and obligations that prove them; the engine
+is ISA/TAS-aligned (materiality, journal-entry tests, Benford, MUS sampling,
+going-concern); evidence is tamper-evident (SHA-256); and the whole thing is
+Lithuania-native and bilingual (LT/EN). Key code: `EAuditorView` and the
+`auditor.js` engine block in `TaxAI.jsx`.
+
+---
+
 ## Production build & deploy
 
 ### Build the static front end
