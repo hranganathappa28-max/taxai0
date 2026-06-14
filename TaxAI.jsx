@@ -23689,60 +23689,10 @@ const Kpi = ({ l, v, c, sub }) => (
 const Dot = ({ c }) => <span style={{ display: 'inline-block', width: 8, height: 8, background: c, marginRight: 8, flexShrink: 0 }} />;
 const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 10 }}>{children}</div>;
 
-function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
-  const LT = lang === 'lt';
-  const [view, setView] = useState('cmd');
-  const [, force] = useState(0);
 
-  // ── One live twin, shared with E-Auditor through the same storage key ──
-  const clientId = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || 'default';
-  const twin = useMemo(() => {
-    const a = createLocalStorageAdapter(clientId);
-    try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
-    return createTwin({ clientId });
-  }, [clientId]);
-  const inbox = useMemo(() => createInbox(twin, { forecast: (t) => { try { return buildForecast(t); } catch (e) { return null; } } }), [twin]);
-  useEffect(() => {
-    let tm = null;
-    const u = twin.subscribe(() => { force((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { saveTwin(twin, createLocalStorageAdapter(clientId)); } catch (e) {} }, 800); });
-    if (parsed && typeof ftIngestSaft === 'function') { try { ftIngestSaft(twin, parsed); } catch (e) {} }
-    return () => { clearTimeout(tm); u(); inbox.destroy && inbox.destroy(); };
-  }, [twin, inbox, clientId, parsed]);
-
-  // ── Persisted UI state (company profile, settings) per client ──
-  const SKEY = `eacc_os_${clientId}`;
-  const [st, setSt] = useState(() => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { return {}; } });
-  const up = (patch) => setSt((p) => { const n = { ...p, ...patch }; try { localStorage.setItem(SKEY, JSON.stringify(n)); } catch (e) {} return n; });
-
-  const ext = useMemo(() => {
-    const e = {};
-    const rr = external && external.runResult;
-    if (rr) { const errs = rr.errors || rr.schemaErrors || rr.xsdErrors; const ok = rr.ok != null ? !!rr.ok : Array.isArray(errs) ? errs.length === 0 : rr.errorCount != null ? rr.errorCount === 0 : null; if (ok != null) { e.xsdOk = ok; e.xsdDetail = ok ? 'Schema atitinka' : `${(Array.isArray(errs) ? errs.length : rr.errorCount) || ''} klaidos`; } }
-    const rc = external && external.recon; if (rc) { const d = rc.delta != null ? rc.delta : rc.netDelta != null ? rc.netDelta : rc.diff; if (typeof d === 'number') e.isafDelta = d; }
-    if (external && external.einv) e.einvOk = true;
-    return e;
-  }, [external]);
-
-  // ── Live engine computations ──
-  const tick = twin.eventCount();
-  const snap = useMemo(() => { try { return twin.getSnapshot({}); } catch (e) { return null; } }, [twin, tick]);
-  const fc = useMemo(() => { try { return buildForecast(twin); } catch (e) { return null; } }, [twin, tick]);
-  const tre = useMemo(() => { try { return buildCashView(twin, { forecast: fc }); } catch (e) { return null; } }, [twin, fc, tick]);
-  const fraud = useMemo(() => { try { return scanFraud(twin, { inbox }); } catch (e) { return { items: [] }; } }, [twin, inbox, tick]);
-  const close = useMemo(() => { try { return closeReadiness(twin, { inbox, external: ext }); } catch (e) { return null; } }, [twin, inbox, ext, tick]);
-  const sumVals = (o) => Object.values(o || {}).reduce((a, b) => a + (b || 0), 0);
-  const totRev = snap ? sumVals(snap.revenueByMonth) : 0;
-  const totExp = snap ? sumVals(snap.expensesByMonth) : 0;
-
-  // ── Global ask bar (quick copilot) — uncontrolled so typing doesn't re-render
-  //    the whole shell (which would remount and reset the active view) ──
-  const askRef = useRef(null);
-  const [askR, setAskR] = useState(null);
-  const runAsk = (q) => { if (!q.trim()) return; setAskR({ q, r: askCopilot(twin, q, { inbox, forecast: fc, treasury: tre }) }); };
-  const aiFallback = async (q, r, set) => { try { const text = await onAi('Tu esi CFO copilot. Naudok TIK pateiktus faktus.', JSON.stringify(buildCopilotContext(twin, q, { inbox, forecast: fc, treasury: tre })).slice(0, 27000)); set(text); } catch (e) { setToast && setToast('AI: ' + e.message); } };
-
-  // ════════════════════════════ VIEWS ════════════════════════════
-  const Cmd = () => {
+// ── E-Accountant sub-views: hoisted to stable scope so they never remount;
+//    per-render state is passed in via the `vm` prop. ────────────────────
+  const Cmd = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const now = new Date().toISOString().slice(0, 10);
     const obls = twin.listEntities('obligation') || [];
     const deadlines = obls.filter((o) => o.status === 'open').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')).slice(0, 3);
@@ -23813,7 +23763,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Agents = () => {
+  const Agents = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const pending = inbox.list({ open: true });
     const ctx = { tx: twin.listEntities('payment').length, inv: twin.listEntities('invoice').length, pendingTx: pending.length, fraud: (fraud.items || []).length, overdue: twin.listEntities('invoice').filter((i) => i.dueDate && daysBetween(new Date().toISOString().slice(0, 10), i.dueDate) < 0 && i.status !== 'paid').length };
     const decide = (id, decision) => { try { inbox.decide(id, decision, 'cfo', decision === 'dismiss' ? (LT ? 'Atmesta CFO' : 'Rejected by CFO') : ''); setToast && setToast(decision === 'approve' ? (LT ? 'Patvirtinta' : 'Approved') : (LT ? 'Atmesta' : 'Rejected')); } catch (e) { setToast && setToast(e.message); } };
@@ -23850,7 +23800,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Graph = () => {
+  const Graph = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const g = useMemo(() => { try { return buildGraphView(twin, {}); } catch (e) { return { nodes: [], edges: [] }; } }, [twin, tick]);
     const nodes = g.nodes || []; const edges = g.edges || [];
     const W = 760, Hh = 460, cx = W / 2, cy = Hh / 2, R = Math.min(cx, cy) - 60;
@@ -23873,7 +23823,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Forecast = () => {
+  const Forecast = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const rows = (fc && fc.rows) || [];
     const chartData = rows.map((r, i) => { const rev = r.revenue ?? r.rev ?? 0, exp = r.expenses ?? r.costs ?? r.exp ?? 0; return { name: r.month || r.label || r.period || ('M' + (i + 1)), revenue: rev, expenses: exp, net: r.net ?? round2(rev - exp) }; });
     return <>
@@ -23909,7 +23859,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Treasury = () => {
+  const Treasury = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const weeks = (tre && tre.weeks) || [];
     const cashData = weeks.map((w) => ({ name: w.label, cum: w.cum }));
     return <>
@@ -23938,7 +23888,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Payroll = () => {
+  const Payroll = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const pe = useMemo(() => createPayrollEngine(PARAMS_2026), []);
     const emps = twin.listEntities('employee').filter((e) => e.status !== 'terminated');
     const lines = emps.map((e) => { try { return pe.calcEmployee({ employeeId: e.id, name: e.name, gross: e.gross || 0 }); } catch (x) { return null; } }).filter(Boolean);
@@ -23960,7 +23910,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Close = () => {
+  const Close = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const tb = useMemo(() => { try { return twin.trialBalance(); } catch (e) { return null; } }, [twin, tick]);
     return <>
       <H t={LT ? 'Periodo uždarymas' : 'Period Close'} sub={LT ? 'Nuolatinis uždarymas — kliūtys ir parengtis' : 'Continuous close — blockers and readiness'} />
@@ -23976,7 +23926,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Compliance = () => {
+  const Compliance = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const a = ltAssessment(twin, { external: ext });
     const now = new Date().toISOString().slice(0, 10);
     const obls = twin.listEntities('obligation') || [];
@@ -24010,7 +23960,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Advisor = () => {
+  const Advisor = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const [q, setQ] = useState('');
     const [thread, setThread] = useState([]);
     const sugg = [...COPILOT_SUGGESTIONS, ...AUDITOR_QUESTIONS.filter((x) => ['vmi', 'taxrisk', 'sodra'].includes(x.id))];
@@ -24037,7 +23987,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Company = () => {
+  const Company = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const c = st.company || {};
     const [f, setF] = useState({ name: c.name || (clientId !== 'default' ? clientId : ''), code: c.code || '', vat: c.vat || '', legalForm: c.legalForm || 'UAB', industry: c.industry || '', address: c.address || '', city: c.city || '', country: c.country || 'Lithuania', standard: c.standard || 'Lithuanian GAAP', vatPeriod: c.vatPeriod || 'Monthly', employees: c.employees || '', revenue: c.revenue || '' });
     const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -24068,7 +24018,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Integrations = () => {
+  const Integrations = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const has = (type) => twin.listEntities(type).length > 0;
     const ROWS = [
       { name: LT ? 'Bankas (PSD2)' : 'Bank (PSD2)', on: has('bankAccount'), note: has('bankAccount') ? (LT ? 'sąskaitos iš SAF-T' : 'accounts from SAF-T') : (LT ? 'neprijungta' : 'not connected') },
@@ -24086,7 +24036,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Saft = () => {
+  const Saft = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const counts = { sales: twin.listEntities('invoice').filter((i) => i.kind === 'sales').length, purchases: twin.listEntities('invoice').filter((i) => i.kind === 'purchase').length };
     return <>
       <H t={LT ? 'SAF-T importas' : 'SAF-T Import'} sub={LT ? 'Failas tampa įvykiais dvyniui — pakartotinis importas idempotentiškas' : 'The file becomes events for the twin — re-import is idempotent'}
@@ -24104,7 +24054,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
-  const Settings = () => {
+  const Settings = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const [diag, setDiag] = useState(null);
     const runDiag = () => {
       const checks = [
@@ -24143,6 +24093,60 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
     </>;
   };
 
+
+function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi, initialView }) {
+  const LT = lang === 'lt';
+  const [view, setView] = useState(initialView || 'cmd');
+  const [, force] = useState(0);
+
+  // ── One live twin, shared with E-Auditor through the same storage key ──
+  const clientId = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || 'default';
+  const twin = useMemo(() => {
+    const a = createLocalStorageAdapter(clientId);
+    try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
+    return createTwin({ clientId });
+  }, [clientId]);
+  const inbox = useMemo(() => createInbox(twin, { forecast: (t) => { try { return buildForecast(t); } catch (e) { return null; } } }), [twin]);
+  useEffect(() => {
+    let tm = null;
+    const u = twin.subscribe(() => { force((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { saveTwin(twin, createLocalStorageAdapter(clientId)); } catch (e) {} }, 800); });
+    if (parsed && typeof ftIngestSaft === 'function') { try { ftIngestSaft(twin, parsed); } catch (e) {} }
+    return () => { clearTimeout(tm); u(); inbox.destroy && inbox.destroy(); };
+  }, [twin, inbox, clientId, parsed]);
+
+  // ── Persisted UI state (company profile, settings) per client ──
+  const SKEY = `eacc_os_${clientId}`;
+  const [st, setSt] = useState(() => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { return {}; } });
+  const up = (patch) => setSt((p) => { const n = { ...p, ...patch }; try { localStorage.setItem(SKEY, JSON.stringify(n)); } catch (e) {} return n; });
+
+  const ext = useMemo(() => {
+    const e = {};
+    const rr = external && external.runResult;
+    if (rr) { const errs = rr.errors || rr.schemaErrors || rr.xsdErrors; const ok = rr.ok != null ? !!rr.ok : Array.isArray(errs) ? errs.length === 0 : rr.errorCount != null ? rr.errorCount === 0 : null; if (ok != null) { e.xsdOk = ok; e.xsdDetail = ok ? 'Schema atitinka' : `${(Array.isArray(errs) ? errs.length : rr.errorCount) || ''} klaidos`; } }
+    const rc = external && external.recon; if (rc) { const d = rc.delta != null ? rc.delta : rc.netDelta != null ? rc.netDelta : rc.diff; if (typeof d === 'number') e.isafDelta = d; }
+    if (external && external.einv) e.einvOk = true;
+    return e;
+  }, [external]);
+
+  // ── Live engine computations ──
+  const tick = twin.eventCount();
+  const snap = useMemo(() => { try { return twin.getSnapshot({}); } catch (e) { return null; } }, [twin, tick]);
+  const fc = useMemo(() => { try { return buildForecast(twin); } catch (e) { return null; } }, [twin, tick]);
+  const tre = useMemo(() => { try { return buildCashView(twin, { forecast: fc }); } catch (e) { return null; } }, [twin, fc, tick]);
+  const fraud = useMemo(() => { try { return scanFraud(twin, { inbox }); } catch (e) { return { items: [] }; } }, [twin, inbox, tick]);
+  const close = useMemo(() => { try { return closeReadiness(twin, { inbox, external: ext }); } catch (e) { return null; } }, [twin, inbox, ext, tick]);
+  const sumVals = (o) => Object.values(o || {}).reduce((a, b) => a + (b || 0), 0);
+  const totRev = snap ? sumVals(snap.revenueByMonth) : 0;
+  const totExp = snap ? sumVals(snap.expensesByMonth) : 0;
+
+  // ── Global ask bar (quick copilot) — uncontrolled so typing doesn't re-render
+  //    the whole shell (which would remount and reset the active view) ──
+  const askRef = useRef(null);
+  const [askR, setAskR] = useState(null);
+  const runAsk = (q) => { if (!q.trim()) return; setAskR({ q, r: askCopilot(twin, q, { inbox, forecast: fc, treasury: tre }) }); };
+  const aiFallback = async (q, r, set) => { try { const text = await onAi('Tu esi CFO copilot. Naudok TIK pateiktus faktus.', JSON.stringify(buildCopilotContext(twin, q, { inbox, forecast: fc, treasury: tre })).slice(0, 27000)); set(text); } catch (e) { setToast && setToast('AI: ' + e.message); } };
+
+  const vm = { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force };
   // ════════════════════════════ SHELL ════════════════════════════
   const NAVI = [
     ['cmd', LT ? 'Komandų centras' : 'Command Center', '▦'], ['agents', LT ? 'AI agentai' : 'AI Agents', '◉'],
@@ -24202,22 +24206,22 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi }) {
           {askR.r.needsLlm && onAi && <div style={{ marginTop: 8 }}><Btn small onClick={() => aiFallback(askR.q, askR.r, (text) => setAskR((p) => ({ q: p.q, r: { ...p.r, answer: text, needsLlm: false, intent: 'AI' } })))}>◆ {LT ? 'Klausti AI (su faktais)' : 'Ask AI (with facts)'}</Btn></div>}
         </div>}
         <div style={{ flex: 1, minWidth: 0, padding: '18px 22px', overflowX: 'hidden' }}>
-          {view === 'cmd' && <Cmd />}
-          {view === 'agents' && <Agents />}
+          {view === 'cmd' && <Cmd {...vm} />}
+          {view === 'agents' && <Agents {...vm} />}
           {view === 'tx' && (typeof TransactionsDesk === 'function' ? <TransactionsDesk twin={twin} inbox={inbox} lang={lang} actor="buhalterė" /> : <div style={{ color: DIM }}>Transactions desk unavailable.</div>)}
           {view === 'inv' && (typeof InvoiceDesk === 'function' ? <InvoiceDesk twin={twin} inbox={inbox} lang={lang} /> : <div style={{ color: DIM }}>Invoice desk unavailable.</div>)}
-          {view === 'graph' && <Graph />}
+          {view === 'graph' && <Graph {...vm} />}
           {view === 'twin' && (typeof ScenarioLab === 'function' ? <ScenarioLab twin={twin} lang={lang} onAiTranslate={(txt) => onAi('Konvertuok verslo scenarijų į JSON parametrus. Atsakyk TIK grynu JSON: {"revMul":n,"costMul":n,"wageMul":n,"hires":n,"hireGross":n,"vatRate":n,"loseTop":n,"monthlyCostDelta":n}. Praleisk neminimus raktus.', 'SCENARIJUS: ' + txt)} /> : <div style={{ color: DIM }}>Scenario lab unavailable.</div>)}
-          {view === 'fc' && <Forecast />}
-          {view === 'tre' && <Treasury />}
-          {view === 'pay' && <Payroll />}
-          {view === 'close' && <Close />}
-          {view === 'comp' && <Compliance />}
-          {view === 'advisor' && <Advisor />}
-          {view === 'company' && <Company />}
-          {view === 'integrations' && <Integrations />}
-          {view === 'saft' && <Saft />}
-          {view === 'settings' && <Settings />}
+          {view === 'fc' && <Forecast {...vm} />}
+          {view === 'tre' && <Treasury {...vm} />}
+          {view === 'pay' && <Payroll {...vm} />}
+          {view === 'close' && <Close {...vm} />}
+          {view === 'comp' && <Compliance {...vm} />}
+          {view === 'advisor' && <Advisor {...vm} />}
+          {view === 'company' && <Company {...vm} />}
+          {view === 'integrations' && <Integrations {...vm} />}
+          {view === 'saft' && <Saft {...vm} />}
+          {view === 'settings' && <Settings {...vm} />}
         </div>
       </main>
     </div>
@@ -26982,7 +26986,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
