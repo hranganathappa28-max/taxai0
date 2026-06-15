@@ -1,7 +1,7 @@
 // Engine-hardening tests — lock in the correctness/robustness fixes to the
 // E-Auditor ML layer and the E-Accountant tax engines so they can't regress.
 import { describe, it, expect } from 'vitest';
-import { MLIntel, TaxCalc, FinTwin } from '../TaxAI.jsx';
+import { MLIntel, TaxCalc, FinTwin, findingConfidence } from '../TaxAI.jsx';
 const { vatLooksStandard } = FinTwin;
 
 // A small but realistic parsed SAF-T fixture (balanced GL + sales + purchases).
@@ -96,6 +96,24 @@ describe('vatLooksStandard — period-aware (9% abolished 2026-01-01)', () => {
   });
   it('uses a relative tolerance so large invoices are not mislabeled', () => {
     expect(vatLooksStandard(1000000, 210000.5)).toBe(true);
+  });
+});
+
+describe('findingConfidence is evidence-aware (not a flat lookup)', () => {
+  it('more corroborating evidence does not lower confidence', () => {
+    const few = findingConfidence({ rule_id: 'R', ruleMeta: { family: 'DUBL' }, severity: 'High', evidence: ['a'] });
+    const many = findingConfidence({ rule_id: 'R', ruleMeta: { family: 'DUBL' }, severity: 'High', evidence: ['a', 'b', 'c', 'd', 'e', 'f'] });
+    expect(many.score).toBeGreaterThanOrEqual(few.score);
+  });
+  it('a signal with a large measured deviation scores higher than a bare signal', () => {
+    const bare = findingConfidence({ rule_id: 'S', ruleMeta: { kind: 'signal' }, severity: 'Medium', evidence: ['x'] });
+    const sharp = findingConfidence({ rule_id: 'S', ruleMeta: { kind: 'signal' }, severity: 'Medium', evidence: ['x', 'y', 'z'], z: 4 });
+    expect(sharp.score).toBeGreaterThan(bare.score);
+  });
+  it('still clamps to the 40–99 band', () => {
+    const c = findingConfidence({ rule_id: 'S', ruleMeta: { kind: 'signal' }, severity: 'Critical', evidence: Array(50).fill('x'), z: 99 });
+    expect(c.score).toBeGreaterThanOrEqual(40);
+    expect(c.score).toBeLessThanOrEqual(99);
   });
 });
 

@@ -650,7 +650,7 @@ const LEGAL_DB = [
 {id:"pm-51",law:"PM",article:"51 str.",text:"Metinė pelno mokesčio deklaracija (PLN204 forma) turi būti pateikta ne vėliau kaip iki kitų metų birželio 15 dienos.",textEn:"Annual CIT return (PLN204 form) must be submitted no later than June 15 of the following year.",keywords:"pln204 deklaracija cit return deadline birzelio june 15",category:"filing",penalty:"MAĮ 139 str.: bauda"},
 // ── GPM ──
 {id:"gpm-6-2026",law:"GPM",article:"6 str. (2026)",text:"Nuo 2026 taikoma nauja trijų pakopų GPM sistema: 20% — metinės pajamos iki €82,962 (36 VDU); 25% — nuo €82,962 iki €138,270 (36-60 VDU); 32% — virš €138,270 (virš 60 VDU).",textEn:"From 2026, new three-tier PIT system: 20% — annual income up to €82,962 (36 AW); 25% — from €82,962 to €138,270 (36-60 AW); 32% — above €138,270 (above 60 AW).",keywords:"gpm pit pajamu mokestis 20% 25% 32% triju pakopu three tier darbo pajamos employment income",category:"rates",penalty:null},
-{id:"gpm-npd-2026",law:"GPM",article:"20 str. (2026)",text:"Neapmokestinamasis pajamų dydis (NPD) 2026 metais — iki €747 per mėnesį mažiausias pajamas gaunantiems darbuotojams.",textEn:"Tax-exempt amount (NPD) in 2026 — up to €747 per month for lowest-earning employees.",keywords:"npd neapmokestinamasis tax exempt amount 747",category:"rates",penalty:null},
+{id:"gpm-npd-2026",law:"GPM",article:"20 str. (2026)",text:"Neapmokestinamasis pajamų dydis (NPD) 2026 m. — iki €747/mėn. Mažėja didėjant atlyginimui: NPD = max(0; 747 − 0,49 × (bruto − 1153)). Skaičiuojama nuo BRUTO darbo užmokesčio (ne po Sodros).",textEn:"Tax-exempt amount (NPD), 2026 — up to €747/mo. Tapers with pay: NPD = max(0, 747 − 0.49 × (gross − 1153)). Computed on GROSS wages (not after Sodra).",keywords:"npd neapmokestinamasis tax exempt amount 747 0.49 1153 taper formule bruto gross",category:"rates",penalty:null},
 {id:"gpm-dividends",law:"GPM",article:"6 str.",text:"Dividendų pajamoms taikomas 15 procentų GPM tarifas. Dividendai neįtraukiami į progresinę skalę.",textEn:"Dividend income is taxed at 15% PIT rate. Dividends are not included in progressive scale.",keywords:"dividendai dividends 15% gpm",category:"rates",penalty:null},
 {id:"gpm-24",law:"GPM",article:"24 str.",text:"Metinė GPM deklaracija (FR0573 forma) turi būti pateikta ne vėliau kaip iki kitų metų gegužės 1 dienos.",textEn:"Annual PIT return (FR0573 form) must be submitted no later than May 1 of the following year.",keywords:"fr0573 gpm deklaracija pit return gegužės may 1",category:"filing",penalty:null},
 // ── SODRA ──
@@ -13102,7 +13102,17 @@ function findingConfidence(f) {
   else if (kind === "signal") { base = 74; basisEn = "Indicative tax-risk signal — verify the flagged sample."; basisLt = "Indikatyvus mokestinės rizikos signalas — patikrinkite pažymėtą imtį."; }
   else if (typeof isAutoFixableRule === "function" && isAutoFixableRule(f && f.rule_id)) { base = 90; basisEn = "Deterministic, auto-fixable rule."; basisLt = "Deterministinė, automatiškai taisoma taisyklė."; }
   else { base = 82; basisEn = "Deterministic rule check."; basisLt = "Deterministinė taisyklės patikra."; }
-  if (hits >= 5) base += 3; else if (hits <= 1 && kind === "signal") base -= 6;
+  // Evidence-aware modulation (graduated, not a binary cliff): corroborating
+  // evidence lifts a deterministic check a little; an indicative signal scales
+  // with how far its metric deviates and loses confidence on a single hit.
+  const evBonus = hits > 0 ? Math.min(6, Math.round(Math.log2(hits + 1) * 1.7)) : 0;
+  if (kind === "signal") {
+    const dev = Math.abs((f && (f.z != null ? f.z : f.deviation)) || 0);
+    base += Math.min(evBonus, 4) + (dev ? Math.min(8, Math.round(dev * 2)) : 0);
+    if (hits <= 1 && !dev) base -= 6;
+  } else {
+    base += evBonus;
+  }
   if ((f && f.severity) === "Critical" && base < 90) base += 2;
   const score = Math.max(40, Math.min(99, Math.round(base)));
   const band = score >= 90 ? "high" : score >= 70 ? "medium" : "low";
@@ -18617,14 +18627,19 @@ function buildForecast(twin, opts = {}) {
   const rows = [];
   const revMul = S.revMul != null ? S.revMul : 1;
   const costMul = S.costMul != null ? S.costMul : 1;
+  // Prediction interval that WIDENS with the horizon, not a flat ±1σ:
+  // se = σ·√(1 + 1/n + (x−x̄)²/Sxx) for evenly-spaced months (x = n−1+i).
+  const nF = active.length, xbar = (nF - 1) / 2, Sxx = nF > 1 ? (nF * (nF * nF - 1)) / 12 : 1;
+  const predSE = (f, i) => { if (!f) return 0; const dx = (nF - 1 + i) - xbar; return f.sd * Math.sqrt(1 + 1 / nF + (dx * dx) / Sxx); };
   for (let i = 1; i <= H; i++) {
     const revenue = Math.max(0, project(fR, i)) * revMul;
     const expenses = Math.max(0, project(fE, i)) * costMul;
+    const seR = predSE(fR, i) * Math.abs(revMul);
     rows.push({
       ym: addMonths(lastYm, i),
       revenue: round2(revenue),
-      revenueBest: round2(Math.max(0, revenue + (fR ? fR.sd : 0))),
-      revenueWorst: round2(Math.max(0, revenue - (fR ? fR.sd : 0))),
+      revenueBest: round2(Math.max(0, revenue + seR)),
+      revenueWorst: round2(Math.max(0, revenue - seR)),
       expenses: round2(expenses),
       netVat: round2(project(fV, i) * revMul),
       net: round2(revenue - expenses),
@@ -18663,8 +18678,8 @@ function buildForecast(twin, opts = {}) {
     nextNetVat: rows[0].netVat,
     monthlyBurn,
     burnBasis: hasCash ? 'cash (payments)' : 'accrual proxy (expenses − revenue)',
-    basisLt: `OLS tendencija per ${active.length} aktyvių mėn.; juostos = ±1σ liekamoji paklaida; tikslumas — 3 mėn. backtest (MAPE).`,
-    basisEn: `OLS trend over ${active.length} active months; bands = ±1σ residual error; accuracy — 3-month backtest (MAPE).`,
+    basisLt: `OLS tendencija per ${active.length} aktyvių mėn.; juostos = OLS prognozės intervalas (platėja su horizontu); tikslumas — 3 mėn. backtest (MAPE).`,
+    basisEn: `OLS trend over ${active.length} active months; bands = OLS prediction interval (widens with horizon); accuracy — 3-month backtest (MAPE).`,
   };
 }
 
@@ -19086,7 +19101,7 @@ function scanFraud(twin, opts = {}) {
   let benford = { n: amounts.length, mad: null, verdict: 'insufficient' };
   if (amounts.length >= minSample) {
     const counts = Array(9).fill(0);
-    for (const v of amounts) counts[Number(String(Math.abs(v)).replace(/[^1-9]*/, '')[0]) - 1] += 1;
+    for (const v of amounts) { const fd = (String(Math.abs(v)).match(/[1-9]/) || [])[0]; if (fd) counts[Number(fd) - 1] += 1; }
     const mad = counts.reduce((s, c, i) => s + Math.abs(c / amounts.length - BENFORD[i]), 0) / 9;
     const verdict = mad <= 0.006 ? 'close' : mad <= 0.012 ? 'acceptable' : mad <= 0.015 ? 'marginal' : 'nonconformity';
     benford = { n: amounts.length, mad: round2(mad * 1000) / 1000, verdict };
@@ -21675,7 +21690,7 @@ function EAuditorView({ lang = 'lt', parsed, external, setToast, onAi }) {
   const [, force] = useState(0);
 
   // ── One live twin, shared with E-Accountant via the same storage key ──
-  const clientId = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || 'default';
+  const clientId = (parsed && parsed.header && ((parsed.header.company && (parsed.header.company.registrationNumber || parsed.header.company.name)) || parsed.header.registrationNumber)) || 'default';
   const twin = useMemo(() => {
     const a = createLocalStorageAdapter(clientId);
     try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
@@ -22729,7 +22744,7 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi, initia
   const [, force] = useState(0);
 
   // ── One live twin, shared with E-Auditor through the same storage key ──
-  const clientId = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || 'default';
+  const clientId = (parsed && parsed.header && ((parsed.header.company && (parsed.header.company.registrationNumber || parsed.header.company.name)) || parsed.header.registrationNumber)) || 'default';
   const twin = useMemo(() => {
     const a = createLocalStorageAdapter(clientId);
     try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
