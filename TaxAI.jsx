@@ -17465,13 +17465,17 @@ function reviewEvent(twin, event, opts = {}) {
   const ctx = buildReviewContext(twin, event, opts);
   const opinions = runAgents(ctx);
 
-  const blocks = opinions.filter((o) => o.stance === 'block').length;
-  const flags = opinions.filter((o) => o.stance === 'flag').length;
-  const controller = opinions.find((o) => o.agentId === 'controller');
+  // The CFO opinion is a rollup OF the other agents — count only the independent
+  // panel votes for the consensus, otherwise the CFO's own summary is counted as
+  // an extra vote (double-counting flags/blocks and over-penalising confidence).
+  const panel = opinions.filter((o) => o.agentId !== 'cfo');
+  const blocks = panel.filter((o) => o.stance === 'block').length;
+  const flags = panel.filter((o) => o.stance === 'flag').length;
+  const controller = panel.find((o) => o.agentId === 'controller');
   const policy = (controller && controller.policy) || 'single';
 
   const verdict = blocks ? 'block' : flags >= 2 ? 'review' : policy === 'auto' ? 'auto' : 'review';
-  const avg = opinions.reduce((s, o) => s + o.confidence, 0) / opinions.length;
+  const avg = panel.reduce((s, o) => s + o.confidence, 0) / (panel.length || 1);
   const confidence = Math.round(Math.max(0.4, round2(avg - 0.06 * flags - 0.15 * blocks)) * 100);
   const severity = blocks ? 'Critical' : flags >= 2 ? 'High' : flags === 1 ? 'Medium' : 'Low';
 
