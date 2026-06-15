@@ -1,7 +1,7 @@
 // Engine-hardening tests — lock in the correctness/robustness fixes to the
 // E-Auditor ML layer and the E-Accountant tax engines so they can't regress.
 import { describe, it, expect } from 'vitest';
-import { MLIntel, TaxCalc, FinTwin, findingConfidence } from '../TaxAI.jsx';
+import { MLIntel, TaxCalc, FinTwin, findingConfidence, mlPeriodHistory } from '../TaxAI.jsx';
 const { vatLooksStandard } = FinTwin;
 
 // A small but realistic parsed SAF-T fixture (balanced GL + sales + purchases).
@@ -114,6 +114,18 @@ describe('findingConfidence is evidence-aware (not a flat lookup)', () => {
     const c = findingConfidence({ rule_id: 'S', ruleMeta: { kind: 'signal' }, severity: 'Critical', evidence: Array(50).fill('x'), z: 99 });
     expect(c.score).toBeGreaterThanOrEqual(40);
     expect(c.score).toBeLessThanOrEqual(99);
+  });
+});
+
+describe('cross-period history (activates the dead Trends engine)', () => {
+  it('accumulates prior periods per company and returns them as priors', () => {
+    const reg = 'TREG' + Math.random().toString(36).slice(2);
+    const mk = (period) => ({ header: { company: { registrationNumber: reg }, periodStart: period } });
+    expect(mlPeriodHistory(mk('2026-01-01'), { metrics: { revenue: 100 } }).length).toBe(0);
+    const p2 = mlPeriodHistory(mk('2026-02-01'), { metrics: { revenue: 120 } });
+    expect(p2.length).toBe(1);
+    expect(p2[0].metrics.revenue).toBe(100);
+    expect(mlPeriodHistory(mk('2026-03-01'), { metrics: { revenue: 140 } }).length).toBe(2);
   });
 });
 

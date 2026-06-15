@@ -287,6 +287,25 @@ const MLIntel = (function () {
 })();
 const IntelligencePanel = MLIntel.Panel;
 const _mlIntelCache = new Map();
+// Cross-period history: persist each period's metrics per company (localStorage)
+// and return the OTHER periods, so the Trends engine has real priors to compare
+// against instead of always receiving an empty []. Fully guarded — never throws.
+function mlPeriodHistory(parsed, currentSummary) {
+  try {
+    const h = (parsed && parsed.header) || {};
+    const reg = (h.company && h.company.registrationNumber) || h.registrationNumber || 'default';
+    const period = h.periodStart || h.periodEnd || h.fileDate || '';
+    if (!period) return [];
+    const key = 'taxai_ml_periods_' + reg;
+    let store = {};
+    try { store = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) { store = {}; }
+    if (currentSummary && currentSummary.metrics) {
+      store[period] = { metrics: currentSummary.metrics };
+      try { localStorage.setItem(key, JSON.stringify(store)); } catch (e) { /* quota/SSR */ }
+    }
+    return Object.keys(store).filter((p) => p !== period).sort().map((p) => ({ metrics: store[p].metrics }));
+  } catch (e) { return []; }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  ML PLUS LAYER  —  semantic legal search · document Q&A · deterministic NER
@@ -24081,7 +24100,8 @@ function TAXAI({ onExit, initialView } = {}) {
                 if (!mc) { try { mc = { gl: MLIntel.glAnomalyScore(parsed, lang), ae: MLIntel.invoiceAnomalyScore(parsed, lang), cur: MLIntel.summarizePeriod(parsed) }; } catch (e) { mc = { gl: [], ae: [], cur: { metrics: {} } }; } _mlIntelCache.set(ck, mc); }
                 let g = null, rk = null; try { g = simulateAcceptanceGate(parsed, findings); rk = computeRiskScore(findings); } catch (e) { }
                 const fused = MLIntel.fuseAnomalies(mc.gl, mc.ae); const recs = MLPlus.recommendActions({ gate: g, risk: rk, fused: fused, lang: lang });
-                return (<div><MLPlus.NextActions recs={recs} lang={lang} audit={audit} onGo={(tb) => setSaftTab(tb)} /><IntelligencePanel glScored={mc.gl} aeScored={mc.ae} findings={findings} priorSummaries={[]} currentSummary={mc.cur} gate={g} risk={rk} lang={lang} audit={audit} /></div>);
+                const priors = mlPeriodHistory(parsed, mc.cur);
+                return (<div><MLPlus.NextActions recs={recs} lang={lang} audit={audit} onGo={(tb) => setSaftTab(tb)} /><IntelligencePanel glScored={mc.gl} aeScored={mc.ae} findings={findings} priorSummaries={priors} currentSummary={mc.cur} gate={g} risk={rk} lang={lang} audit={audit} /></div>);
               })()}
 
               {saftTab === "legalsearch" && <div style={panel}><LegalSearchPanel lang={lang} /></div>}
@@ -25657,7 +25677,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
