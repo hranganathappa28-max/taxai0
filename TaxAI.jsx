@@ -15916,6 +15916,7 @@ const DEFAULT_ACCOUNTS = {
   ACC_DEPRECIATION: '1208',    // Sukauptas nusidėvėjimas (-)
   AR: '2410',                  // Pirkėjų skolos
   VAT_RECEIVABLE: '2441',      // Gautinas PVM
+  ADVANCES_PAID: '2044',       // Iš anksto sumokėti avansai tiekėjams (turtas)
   BANK: '2710',                // Pinigai banke
   OPENING_EQUITY: '3900',      // Likučių perkėlimas / pradiniai likučiai
   AP: '4430',                  // Skolos tiekėjams
@@ -15923,6 +15924,7 @@ const DEFAULT_ACCOUNTS = {
   VAT_PAYABLE: '4480',         // Mokėtinas PVM
   GPM_PAYABLE: '4483',         // Mokėtinas GPM
   SODRA_PAYABLE: '4484',       // Mokėtinos Sodros įmokos
+  ADVANCES_RECEIVED: '4492',   // Gauti avansai iš pirkėjų (įsipareigojimas)
   REVENUE: '5000',             // Pardavimo pajamos
   PURCHASES: '6001',           // Pirkimų / veiklos sąnaudos
   WAGE_EXPENSE: '6304',        // Darbo užmokesčio sąnaudos
@@ -15935,6 +15937,7 @@ const ACCOUNT_NAMES_LT = {
   '1208': 'Sukauptas nusidėvėjimas',
   '2410': 'Pirkėjų skolos',
   '2441': 'Gautinas PVM',
+  '2044': 'Iš anksto sumokėti avansai',
   '2710': 'Pinigai banke',
   '3900': 'Likučių perkėlimas',
   '4430': 'Skolos tiekėjams',
@@ -15942,6 +15945,7 @@ const ACCOUNT_NAMES_LT = {
   '4480': 'Mokėtinas PVM',
   '4483': 'Mokėtinas GPM',
   '4484': 'Mokėtinos Sodros įmokos',
+  '4492': 'Gauti avansai',
   '5000': 'Pardavimo pajamos',
   '6001': 'Pirkimų / veiklos sąnaudos',
   '6304': 'Darbo užmokesčio sąnaudos',
@@ -16067,13 +16071,21 @@ function generateEntriesForEvent(event, state, accounts) {
       const notes = [];
       let confidence = 0.95;
       const payment = state.entities.get('payment')?.get(p.paymentId);
-      if (payment && payment.unallocated > 0.005) {
+      const unalloc = payment ? round2(Math.max(0, payment.unallocated)) : 0;
+      const allocated = round2(p.amount - unalloc);
+      if (unalloc > 0.005) {
         confidence = 0.8;
-        notes.push(`Nepaskirstyta suma: €${payment.unallocated} — priskirkite sąskaitai.`);
+        notes.push(`Nepaskirstyta suma: €${unalloc} — apskaityta kaip gautas avansas (priskirkite sąskaitai).`);
       }
+      // Reduce AR only by the part that actually settled invoices; the remainder
+      // is a customer advance, so the AR control account stays equal to the open
+      // sales-invoice subledger.
+      const lines = [line(A.BANK, p.amount, 0)];
+      if (allocated > 0.005) lines.push(line(A.AR, 0, allocated));
+      if (unalloc > 0.005) lines.push(line(A.ADVANCES_RECEIVED, 0, unalloc));
+      if (lines.length === 1) lines.push(line(A.AR, 0, p.amount)); // no allocation info → legacy posting
       entries.push(makeEntry({
-        event, index: 0, date: p.date,
-        lines: [line(A.BANK, p.amount, 0), line(A.AR, 0, p.amount)],
+        event, index: 0, date: p.date, lines,
         lt: `Gautas mokėjimas ${p.paymentId}`,
         en: `Payment received ${p.paymentId}`,
         confidence, notes,
@@ -16084,24 +16096,35 @@ function generateEntriesForEvent(event, state, accounts) {
     case 'payment.sent': {
       const notes = [];
       let confidence = 0.95;
-      let debitAccount = A.AP;
       let ltWhat = 'tiekėjui';
+      const lines = [line(A.BANK, 0, p.amount)];
       if (p.obligationId) {
         const obl = state.entities.get('obligation')?.get(p.obligationId);
         const taxType = obl?.taxType || '';
-        debitAccount = taxType === 'VAT' ? A.VAT_PAYABLE
+        const debitAccount = taxType === 'VAT' ? A.VAT_PAYABLE
           : taxType === 'GPM' ? A.GPM_PAYABLE
           : taxType === 'SODRA' ? A.SODRA_PAYABLE
           : A.AP;
         ltWhat = taxType ? `(${taxType})` : 'prievolei';
         if (!obl) { confidence = 0.7; notes.push('Prievolė nerasta dvynyje — patikrinkite ID.'); }
-      } else if (!p.invoiceIds || !p.invoiceIds.length) {
-        confidence = 0.7;
-        notes.push('Mokėjimas be priskirtos sąskaitos ar prievolės — numatyta skola tiekėjams.');
+        lines.unshift(line(debitAccount, p.amount, 0));
+      } else {
+        // Reduce AP only by the allocated part; an unallocated outflow is a
+        // supplier advance (asset), so AP stays equal to the open purchase
+        // subledger instead of going negative.
+        const payment = state.entities.get('payment')?.get(p.paymentId);
+        const unalloc = payment ? round2(Math.max(0, payment.unallocated)) : 0;
+        const allocated = round2(p.amount - unalloc);
+        if (unalloc > 0.005) {
+          confidence = 0.7;
+          notes.push(`Nepaskirstyta suma: €${unalloc} — apskaityta kaip sumokėtas avansas tiekėjui.`);
+        }
+        if (allocated > 0.005) lines.unshift(line(A.AP, allocated, 0));
+        if (unalloc > 0.005) lines.unshift(line(A.ADVANCES_PAID, unalloc, 0));
+        if (lines.length === 1) lines.unshift(line(A.AP, p.amount, 0)); // no allocation info → legacy posting
       }
       entries.push(makeEntry({
-        event, index: 0, date: p.date,
-        lines: [line(debitAccount, p.amount, 0), line(A.BANK, 0, p.amount)],
+        event, index: 0, date: p.date, lines,
         lt: `Atliktas mokėjimas ${p.paymentId} ${ltWhat}`,
         en: `Payment sent ${p.paymentId}`,
         confidence, notes,

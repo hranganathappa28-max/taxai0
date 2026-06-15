@@ -125,4 +125,47 @@ describe('FinTwin ledger integrity', () => {
     expect(tb.balanced).toBe(true);
     expect(tb.difference).toBe(0);
   });
+
+  const bal = (tb, acct) => { const r = tb.rows.find((x) => x.account === acct); return r ? r.balance : 0; };
+
+  it('AR control reconciles to the open sales subledger after a partial payment', () => {
+    const twin = FinTwin.createTwin({ clientId: 'rec-ar' });
+    twin.ingest('sales.invoice.issued', { invoiceId: 'S1', customer: { name: 'Acme', code: 'C1' }, net: 1000, vat: 210, total: 1210, date: '2026-03-01' });
+    twin.ingest('payment.received', { paymentId: 'PR1', amount: 500, date: '2026-03-10', invoiceIds: ['S1'] });
+    const tb = twin.trialBalance();
+    const inv = twin.getEntity('invoice', 'S1');
+    expect(tb.balanced).toBe(true);
+    expect(bal(tb, '2410')).toBeCloseTo(710, 2);                  // AR control
+    expect(bal(tb, '2410')).toBeCloseTo(inv.total - inv.paid, 2); // == open subledger
+  });
+
+  it('an over-payment posts the excess to customer advances (AR not driven negative)', () => {
+    const twin = FinTwin.createTwin({ clientId: 'rec-adv' });
+    twin.ingest('sales.invoice.issued', { invoiceId: 'S2', customer: { name: 'B', code: 'C2' }, net: 100, vat: 21, total: 121, date: '2026-03-01' });
+    twin.ingest('payment.received', { paymentId: 'PR2', amount: 200, date: '2026-03-05', invoiceIds: ['S2'] });
+    const tb = twin.trialBalance();
+    expect(tb.balanced).toBe(true);
+    expect(bal(tb, '2410')).toBeCloseTo(0, 2);   // AR settled, not negative
+    expect(bal(tb, '4492')).toBeCloseTo(-79, 2); // advances received (credit) = excess
+  });
+
+  it('a supplier over-payment posts the excess to supplier advances (AP not negative)', () => {
+    const twin = FinTwin.createTwin({ clientId: 'rec-ap' });
+    twin.ingest('purchase.invoice.received', { invoiceId: 'P1', vendor: { name: 'Sup', code: 'V1' }, net: 100, vat: 21, total: 121, date: '2026-03-01' });
+    twin.ingest('payment.sent', { paymentId: 'PS1', amount: 200, date: '2026-03-05', invoiceIds: ['P1'] });
+    const tb = twin.trialBalance();
+    expect(tb.balanced).toBe(true);
+    expect(bal(tb, '4430')).toBeCloseTo(0, 2);  // AP settled
+    expect(bal(tb, '2044')).toBeCloseTo(79, 2); // advances paid (debit asset) = excess
+  });
+
+  it('a normal full payment leaves no advance and balances', () => {
+    const twin = FinTwin.createTwin({ clientId: 'rec-full' });
+    twin.ingest('sales.invoice.issued', { invoiceId: 'S3', customer: { name: 'D', code: 'C3' }, net: 100, vat: 21, total: 121, date: '2026-03-01' });
+    twin.ingest('payment.received', { paymentId: 'PR3', amount: 121, date: '2026-03-09', invoiceIds: ['S3'] });
+    const tb = twin.trialBalance();
+    expect(tb.balanced).toBe(true);
+    expect(bal(tb, '2410')).toBeCloseTo(0, 2);
+    expect(bal(tb, '4492')).toBeCloseTo(0, 2); // no advance created
+  });
 });
