@@ -21097,7 +21097,7 @@ function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
   });
 
   const snap = twin.getSnapshot({ now: today });
-  const flagged = rows.filter((r) => r.item && r.item.review && r.item.review.verdict !== 'auto').length;
+  const flagged = rows.filter((r) => r.item && r.item.verdict !== 'auto').length;
   const KPIS = [
     [LT ? 'GAUTINOS SUMOS' : 'OUTSTANDING RECEIVABLE', eur(snap.receivables), GREEN],
     [LT ? 'MOKĖTINOS SUMOS' : 'OUTSTANDING PAYABLE', eur(snap.payables), TXT],
@@ -21184,8 +21184,8 @@ function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
               <div style={{ textAlign: 'right', fontWeight: 700 }}>{eur(r.total)}</div>
               <div style={{ color: r.overdue ? RED : DIM, fontFamily: "var(--m, ui-monospace, monospace)", fontSize: 12 }}>{r.dueDate || '—'}</div>
               <div><Pill k={r.status} lang={lang} /></div>
-              <div style={{ fontSize: 12, color: r.item ? (r.item.review.verdict === 'auto' ? GREEN : r.item.review.verdict === 'block' ? RED : AMBER) : DIM }}>
-                {r.item ? `${r.item.review.confidence} %` : '—'}
+              <div style={{ fontSize: 12, color: r.item ? (r.item.verdict === 'auto' ? GREEN : r.item.verdict === 'block' ? RED : AMBER) : DIM }}>
+                {r.item ? `${r.item.confidence} %` : '—'}
               </div>
               <div style={{ color: DIM }}>👁</div>
             </div>
@@ -21196,7 +21196,7 @@ function InvoiceDesk({ twin, inbox, lang = 'lt', now }) {
                 </div>
                 {r.item && (
                   <div style={{ display: 'grid', gap: 4 }}>
-                    {r.item.review.opinions.map((o) => (
+                    {r.item.opinions.map((o) => (
                       <div key={o.agentId} style={{ color: o.stance === 'approve' ? GREEN : o.stance === 'block' ? RED : AMBER }}>
                         {o.agentId} · {o.stance} — <span style={{ color: TXT }}>{LT ? o.noteLt : o.noteEn}</span>
                       </div>
@@ -21283,8 +21283,8 @@ function TransactionsDesk({ twin, inbox, lang = 'lt', now, actor = 'buhalterė' 
       desc: `${eventLabel(e.type, lang)}${p.invoiceId ? ' · ' + p.invoiceId : p.paymentId ? ' · ' + p.paymentId : p.period ? ' · ' + p.period : ''}`,
       party, amt, sign: NEG.has(e.type) ? -1 : 1,
       category: acct ? `${acct} ${ACCOUNT_NAMES_LT[acct] || ''}`.trim() : '—',
-      status, item, conf: item ? item.review.confidence : null,
-      flagged: blocked || (item && item.review.verdict === 'block'),
+      status, item, conf: item ? item.confidence : null,
+      flagged: blocked || (item && item.verdict === 'block'),
     };
   }).reverse(), [twin, inbox, entryByEvent, lang, twin.eventCount()]);
 
@@ -25677,7 +25677,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk };
 
 export default function App() {
   const [entered, setEntered] = useState(false);

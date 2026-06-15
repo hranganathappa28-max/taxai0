@@ -4,7 +4,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { EAccountantView } from '../TaxAI.jsx';
-
 const VIEWS = [
   'cmd', 'agents', 'tx', 'inv', 'graph', 'twin', 'fc', 'tre',
   'pay', 'close', 'comp', 'advisor', 'company', 'integrations', 'saft', 'settings',
