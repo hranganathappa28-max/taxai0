@@ -21156,6 +21156,31 @@ function applyBankMatches(matches, twin, opts = {}) {
   return posted;
 }
 
+// One-click realistic sample dataset so every E-Accountant tab is usable from
+// first open (onboarding) without a real SAF-T file. Deterministic; the caller
+// only seeds an empty twin (re-seeding would duplicate events).
+function seedSampleTwin(twin) {
+  if (!twin || !twin.ingest) return 0;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  let n = 0;
+  const ing = (type, payload) => { try { twin.ingest(type, payload, { source: 'sample' }); n++; } catch (e) {} };
+  ing('employee.hired', { employeeId: 'E1', name: 'Jonas Petraitis', position: 'Pardavimų vadybininkas', grossSalary: 2500, startDate: '2026-01-02' });
+  ing('employee.hired', { employeeId: 'E2', name: 'Rasa Kazlauskė', position: 'Buhalterė', grossSalary: 3200, startDate: '2026-01-02' });
+  ing('asset.acquired', { assetId: 'A1', name: 'Nešiojamas kompiuteris Dell', cost: 1800, usefulLifeMonths: 36, date: '2026-01-15' });
+  const customers = [{ name: 'UAB Vilniaus prekyba', code: 'C1' }, { name: 'MB Kauno logistika', code: 'C2' }, { name: 'UAB Baltic Foods', code: 'C3' }];
+  const vendors = [{ name: 'UAB Office IT', code: 'V1' }, { name: 'AB Energijos tiekimas', code: 'V2' }];
+  const months = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'];
+  let si = 0, pi = 0;
+  months.forEach((m, idx) => {
+    for (let k = 0; k < 2; k++) { const net = 1200 + idx * 160 + k * 450, vat = r2(net * 0.21); ing('sales.invoice.issued', { invoiceId: `SF-${m.replace('-', '')}-${k + 1}`, customer: customers[si % customers.length], net, vat, total: r2(net + vat), date: `${m}-${String(3 + k * 2).padStart(2, '0')}`, dueDate: `${m}-${String(18 + k).padStart(2, '0')}` }); si++; }
+    for (let k = 0; k < 2; k++) { const net = 480 + idx * 70 + k * 220, vat = r2(net * 0.21); ing('purchase.invoice.received', { invoiceId: `PIRK-${m.replace('-', '')}-${k + 1}`, vendor: vendors[pi % vendors.length], net, vat, total: r2(net + vat), date: `${m}-${String(4 + k * 2).padStart(2, '0')}`, dueDate: `${m}-${String(19 + k).padStart(2, '0')}` }); pi++; }
+  });
+  ing('payment.received', { paymentId: 'PR-1', amount: r2(1200 * 1.21), date: '2026-01-22', invoiceIds: ['SF-202601-1'] });
+  ing('payment.received', { paymentId: 'PR-2', amount: r2(1360 * 1.21), date: '2026-02-24', invoiceIds: ['SF-202602-1'] });
+  ing('payment.sent', { paymentId: 'PS-1', amount: r2(480 * 1.21), date: '2026-01-25', invoiceIds: ['PIRK-202601-1'] });
+  return n;
+}
+
 /* ── Twin UI · InvoiceDesk (Wave reference component) ── */
 const InvoiceDesk = (() => {
   const { round2, daysBetween } = FinTwin;
@@ -22747,7 +22772,7 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
   const Payroll = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const pe = useMemo(() => createPayrollEngine(PARAMS_2026), []);
     const emps = twin.listEntities('employee').filter((e) => e.status !== 'terminated');
-    const lines = emps.map((e) => { try { return pe.calcEmployee({ employeeId: e.id, name: e.name, gross: e.gross || 0 }); } catch (x) { return null; } }).filter(Boolean);
+    const lines = emps.map((e) => { try { return pe.calcEmployee({ employeeId: e.id, name: e.name, gross: e.grossSalary || e.gross || 0 }); } catch (x) { return null; } }).filter(Boolean);
     const tot = lines.reduce((a, l) => ({ gross: a.gross + l.gross, net: a.net + l.net, gpm: a.gpm + l.gpm, cost: a.cost + l.employerCost }), { gross: 0, net: 0, gpm: 0, cost: 0 });
     return <>
       <H t={LT ? 'Darbo užmokestis' : 'Payroll'} sub={LT ? 'GPM + Sodra aritmetika pagal 2026 m. parametrus' : 'GPM + Sodra arithmetic on 2026 parameters'} />
@@ -22904,8 +22929,11 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
         <Kpi l={LT ? 'Pirkimo SF' : 'Purchase invoices'} v={counts.purchases} />
       </Grid>
       <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, marginTop: 12, fontSize: 12.5 }}>
-        {parsed ? <div style={{ color: GREEN }}>✓ {LT ? 'SAF-T failas įkeltas ir sinchronizuotas su gyvuoju dvyniu. Tie patys subjektai matomi E-Auditoriuje.' : 'SAF-T file loaded and synced to the live twin. The same entities appear in E-Auditor.'}</div>
-          : <div style={{ color: DIM }}>{LT ? 'SAF-T failas dar neįkeltas. Įkelkite jį per kairę įrankių juostą (failo įkėlimas) — duomenys automatiškai pasieks šį vaizdą.' : 'No SAF-T file yet. Upload one via the left toolbar — data flows here automatically.'}</div>}
+        {(parsed || twin.eventCount() > 0) ? <div style={{ color: GREEN }}>✓ {LT ? 'Duomenys įkelti į gyvąjį dvynį. Tie patys subjektai matomi visuose skirtukuose ir E-Auditoriuje.' : 'Data loaded into the live twin. The same entities appear across every tab and in E-Auditor.'}</div>
+          : <div>
+            <div style={{ color: DIM, marginBottom: 12 }}>{LT ? 'SAF-T failas dar neįkeltas. Įkelkite jį per kairę įrankių juostą — arba užkraukite pavyzdinius duomenis ir iškart pamatykite visą sistemą veikiant.' : 'No SAF-T file yet. Upload one via the left toolbar — or load sample data to see the whole system working immediately.'}</div>
+            <Btn primary onClick={() => { if (twin.eventCount() > 0) { setToast && setToast(LT ? 'Dvynyje jau yra duomenų' : 'Twin already has data'); return; } const k = seedSampleTwin(twin); setToast && setToast(LT ? `Užkrauti pavyzdiniai duomenys (${k} įvykiai)` : `Sample data loaded (${k} events)`); force && force((x) => x + 1); }}>▸ {LT ? 'Užkrauti pavyzdinius duomenis' : 'Load sample data'}</Btn>
+          </div>}
       </div>
     </>;
   };
@@ -25843,7 +25871,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
