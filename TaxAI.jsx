@@ -15970,6 +15970,7 @@ const DEFAULT_ACCOUNTS = {
   AP: '4430',                  // Skolos tiekėjams
   WAGES_PAYABLE: '4460',       // Mokėtinas darbo užmokestis
   VAT_PAYABLE: '4480',         // Mokėtinas PVM
+  VAT_SETTLEMENT: '4481',      // Mokėtinas (užskaitytas) PVM — mokėjimui
   GPM_PAYABLE: '4483',         // Mokėtinas GPM
   SODRA_PAYABLE: '4484',       // Mokėtinos Sodros įmokos
   ADVANCES_RECEIVED: '4492',   // Gauti avansai iš pirkėjų (įsipareigojimas)
@@ -15991,6 +15992,7 @@ const ACCOUNT_NAMES_LT = {
   '4430': 'Skolos tiekėjams',
   '4460': 'Mokėtinas darbo užmokestis',
   '4480': 'Mokėtinas PVM',
+  '4481': 'Mokėtinas PVM (užskaitytas)',
   '4483': 'Mokėtinas GPM',
   '4484': 'Mokėtinos Sodros įmokos',
   '4492': 'Gauti avansai',
@@ -16149,7 +16151,7 @@ function generateEntriesForEvent(event, state, accounts) {
       if (p.obligationId) {
         const obl = state.entities.get('obligation')?.get(p.obligationId);
         const taxType = obl?.taxType || '';
-        const debitAccount = taxType === 'VAT' ? A.VAT_PAYABLE
+        const debitAccount = taxType === 'VAT' ? A.VAT_SETTLEMENT
           : taxType === 'GPM' ? A.GPM_PAYABLE
           : taxType === 'SODRA' ? A.SODRA_PAYABLE
           : A.AP;
@@ -16241,9 +16243,28 @@ function generateEntriesForEvent(event, state, accounts) {
       break;
     }
 
-    // tax.obligation.created produces NO entry on purpose: the liability is
-    // already on the books from the invoices / payroll that created it. The
-    // obligation entity is the compliance tracker (deadline), not a posting.
+    case 'tax.obligation.created': {
+      // VAT: reclassify the period's output/input VAT into a single net
+      // settlement liability, so VAT_PAYABLE / VAT_RECEIVABLE clear to zero and
+      // the trial balance shows one payable line (which the payment then clears).
+      if (p.taxType === 'VAT' && p.output != null && p.input != null) {
+        const output = round2(p.output), input = round2(p.input), net = round2(output - input);
+        const lines = [line(A.VAT_PAYABLE, output, 0)];
+        if (input > 0.005) lines.push(line(A.VAT_RECEIVABLE, 0, input));
+        if (net > 0.005) lines.push(line(A.VAT_SETTLEMENT, 0, net));
+        if (lines.length > 1 && Math.abs(sum(lines, 'debit') - sum(lines, 'credit')) <= 0.005) {
+          entries.push(makeEntry({
+            event, index: 0, date: p.dueDate || event.ts.slice(0, 10), lines,
+            lt: `PVM užskaita už ${p.period} — mokėtina €${net}`, en: `VAT reclass for ${p.period} — payable €${net}`,
+            confidence: 0.97, notes: [],
+          }));
+        }
+      }
+      break;
+    }
+
+    // Other events (employee.hired, contract.signed, …) produce no journal
+    // entry: the liability is already on the books, or there is nothing to post.
     default:
       break;
   }
@@ -17096,6 +17117,8 @@ function createTwin(opts = {}) {
       taxType: 'VAT',
       period,
       amount: net,
+      output: round2(v.output),
+      input: round2(v.input),
       dueDate,
       source: 'vat-position',
     }, { id: eventId, source: 'twin' });
@@ -23075,6 +23098,7 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
     const runDiag = () => {
       const checks = [
         ['Snapshot', () => twin.getSnapshot({})],
+        [LT ? 'Įvykių vientisumas (hash)' : 'Event integrity (hash)', () => { const r = twin.verifyIntegrity(); if (!r.valid) throw new Error((r.reason || 'broken') + ' @' + (r.brokenAtSeq || '?')); return r; }],
         ['Forecast', () => buildForecast(twin)],
         [LT ? 'Iždas (13 sav.)' : 'Treasury (13-week)', () => buildCashView(twin, {})],
         [LT ? 'Uždarymo parengtis' : 'Close readiness', () => closeReadiness(twin, { inbox, external: ext })],
