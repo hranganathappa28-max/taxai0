@@ -21320,6 +21320,47 @@ function printReport(html) {
   try { const w = window.open('', '_blank'); if (!w) return false; w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { try { w.print(); } catch (e) {} }, 300); return true; } catch (e) { return false; }
 }
 
+// Transmission layer (VMI i.SAF). Default 'dry-run' validates the document with
+// the existing engine — real pre-filing value — and a real VMI endpoint plugs in
+// via opts.transport with retry/backoff. Going live needs Mano VMI credentials.
+async function submitISaf(xml, opts = {}) {
+  const result = { kind: 'isaf', status: 'pending', attempts: [], summary: null };
+  const parsed = parseISAF(xml);
+  if (!parsed || parsed._parseError) { result.status = 'rejected'; result.message = 'Invalid i.SAF XML: ' + ((parsed && parsed._parseError) || 'parse error'); return result; }
+  result.summary = { sales: (parsed.sales || []).length, purchases: (parsed.purchases || []).length };
+  if (result.summary.sales + result.summary.purchases === 0) { result.status = 'rejected'; result.message = 'Not a valid i.SAF (no invoices found)'; return result; }
+  const transport = opts.transport;
+  if (typeof transport !== 'function') { result.status = 'validated'; result.dryRun = true; result.message = `i.SAF valid (${result.summary.sales} sales, ${result.summary.purchases} purchases). Configure a VMI endpoint to file.`; return result; }
+  const max = opts.maxAttempts || 4; let delay = opts.baseDelayMs != null ? opts.baseDelayMs : 500;
+  for (let a = 1; a <= max; a++) {
+    try {
+      const r = await transport(xml, { ...opts, attempt: a });
+      result.attempts.push({ attempt: a, ok: !!(r && r.ok), code: r && r.code, message: r && r.message });
+      if (r && r.ok) { result.status = 'accepted'; result.acceptedAt = new Date().toISOString(); result.code = r.code; result.message = r.message; return result; }
+      if (r && r.retryable === false) { result.status = 'rejected'; result.code = r.code; result.message = r.message; return result; }
+    } catch (e) { result.attempts.push({ attempt: a, ok: false, error: String((e && e.message) || e) }); }
+    if (a < max && delay > 0) { await new Promise((res) => setTimeout(res, delay)); delay *= 2; }
+  }
+  result.status = 'failed'; result.message = `No acceptance after ${max} attempts`; return result;
+}
+
+// Sync layer: push/pull a client's twin to a remote backend. Ships local-only
+// (no adapter); a real adapter implementing { push(clientId, snapshot),
+// pull(clientId) } — e.g. Supabase/REST — plugs in unchanged. The twin
+// serialises via twin.serialize(); restore via FinTwin.restoreTwin.
+function createSyncManager(opts = {}) {
+  const adapter = opts.adapter || null;
+  return {
+    enabled: !!adapter,
+    async push(clientId, twin) {
+      if (!adapter) return { ok: false, reason: 'local-only (no backend adapter configured)' };
+      try { await adapter.push(clientId, twin && twin.serialize ? twin.serialize() : twin); return { ok: true, at: Date.now() }; }
+      catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+    },
+    async pull(clientId) { if (!adapter) return null; try { return await adapter.pull(clientId); } catch (e) { return null; } },
+  };
+}
+
 /* ── Twin UI · InvoiceDesk (Wave reference component) ── */
 const InvoiceDesk = (() => {
   const { round2, daysBetween } = FinTwin;
@@ -23075,6 +23116,7 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
       <H t={LT ? 'SAF-T importas' : 'SAF-T Import'} sub={LT ? 'Failas tampa įvykiais dvyniui — pakartotinis importas idempotentiškas' : 'The file becomes events for the twin — re-import is idempotent'}
         right={(parsed || twin.eventCount() > 0) ? <span style={{ display: 'flex', gap: 8 }}>
           <Btn small onClick={() => { try { const xml = buildISafFromTwin(twin, null, { regNo: clientId }); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], { type: 'application/xml' })); a.download = `isaf_${clientId || 'export'}.xml`; a.click(); setToast && setToast(LT ? 'i.SAF XML eksportuota' : 'i.SAF XML exported'); } catch (e) { setToast && setToast('i.SAF: ' + String((e && e.message) || e).slice(0, 80)); } }}>⬇ i.SAF XML</Btn>
+          <Btn small onClick={async () => { try { const xml = buildISafFromTwin(twin, null, { regNo: clientId }); const r = await submitISaf(xml); setToast && setToast((LT ? 'VMI (bandomasis): ' : 'VMI (dry-run): ') + (r.message || r.status)); } catch (e) { setToast && setToast('VMI: ' + String((e && e.message) || e).slice(0, 80)); } }}>↗ {LT ? 'Teikti VMI' : 'Submit to VMI'}</Btn>
           {parsed && <Btn primary onClick={() => { if (typeof ftIngestSaft === 'function') { const r = ftIngestSaft(twin, parsed); setToast && setToast(LT ? `Sinchronizuota: +${r.sales + r.purchases} SF` : `Synced: +${r.sales + r.purchases} invoices`); } }}>↺ {LT ? 'Sinchronizuoti iš naujo' : 'Re-sync'}</Btn>}
         </span> : null} />
       <Grid>
@@ -26029,7 +26071,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
