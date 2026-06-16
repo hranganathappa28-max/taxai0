@@ -21210,6 +21210,26 @@ function seedSampleTwin(twin) {
   return n;
 }
 
+// Bureau mode: a durable registry (localStorage) of the clients this browser
+// has worked on, so an accountant can see and switch between many clients. The
+// twin data already persists per-client via createLocalStorageAdapter; this just
+// indexes them. Full multi-user / multi-device sync needs a backend.
+const CLIENT_REGISTRY_KEY = 'taxai_clients';
+const clientRegistry = {
+  list() { try { const m = JSON.parse(localStorage.getItem(CLIENT_REGISTRY_KEY) || '{}') || {}; return Object.values(m).sort((a, b) => (b.seen || 0) - (a.seen || 0)); } catch (e) { return []; } },
+  register(id, meta = {}) {
+    if (!id || id === 'default') return;
+    try {
+      const m = JSON.parse(localStorage.getItem(CLIENT_REGISTRY_KEY) || '{}') || {};
+      m[id] = { id, name: meta.name || (m[id] && m[id].name) || id, events: meta.events != null ? meta.events : (m[id] && m[id].events) || 0, seen: Date.now() };
+      localStorage.setItem(CLIENT_REGISTRY_KEY, JSON.stringify(m));
+    } catch (e) {}
+  },
+  remove(id) { try { const m = JSON.parse(localStorage.getItem(CLIENT_REGISTRY_KEY) || '{}') || {}; delete m[id]; localStorage.setItem(CLIENT_REGISTRY_KEY, JSON.stringify(m)); } catch (e) {} },
+  active() { try { return localStorage.getItem('taxai_active_client') || ''; } catch (e) { return ''; } },
+  setActive(id) { try { if (id) localStorage.setItem('taxai_active_client', id); else localStorage.removeItem('taxai_active_client'); } catch (e) {} },
+};
+
 /* ── Twin UI · InvoiceDesk (Wave reference component) ── */
 const InvoiceDesk = (() => {
   const { round2, daysBetween } = FinTwin;
@@ -22925,6 +22945,18 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
           <Field k="employees" label={LT ? 'Darbuotojų skaičius' : 'Employee count'} type="number" /><Field k="revenue" label={LT ? 'Metinės pajamos (EUR)' : 'Annual revenue (EUR)'} type="number" />
         </div>
       </div>
+      <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18, marginTop: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', marginBottom: 6 }}>⬡ {LT ? 'Klientai (biuro režimas)' : 'Clients (bureau mode)'}</div>
+        <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>{LT ? 'Šioje naršyklėje išsaugoti klientai — perjunkite tarp jų be pakartotinio įkėlimo. (Daugiavartotojiškas sinchronizavimas reikalauja serverio.)' : 'Clients saved in this browser — switch between them without re-uploading. (Multi-user sync needs a backend.)'}</div>
+        {(() => { const clients = clientRegistry.list(); return clients.length ? clients.map((cl) => (
+          <div key={cl.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderTop: `1px solid ${LINE}` }}>
+            <Dot c={cl.id === clientId ? GREEN : DIM} />
+            <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, color: TXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cl.name}</div><div style={{ fontSize: 10.5, color: DIM, fontFamily: MONO }}>{cl.id} · {cl.events || 0} {LT ? 'įvykių' : 'events'}</div></div>
+            {cl.id === clientId ? <span style={{ fontSize: 10, color: GREEN, fontFamily: MONO }}>{LT ? 'AKTYVUS' : 'ACTIVE'}</span>
+              : <Btn small onClick={() => { clientRegistry.setActive(cl.id); if (typeof window !== 'undefined' && window.location && window.location.reload) window.location.reload(); }}>{LT ? 'Perjungti' : 'Switch'}</Btn>}
+          </div>
+        )) : <div style={{ fontSize: 12, color: DIM }}>{LT ? 'Dar nėra išsaugotų klientų — įkelkite SAF-T arba pavyzdinius duomenis.' : 'No saved clients yet — load a SAF-T or sample data.'}</div>; })()}
+      </div>
     </>;
   };
 
@@ -23016,7 +23048,8 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi, initia
   const [, force] = useState(0);
 
   // ── One live twin, shared with E-Auditor through the same storage key ──
-  const clientId = (parsed && parsed.header && ((parsed.header.company && (parsed.header.company.registrationNumber || parsed.header.company.name)) || parsed.header.registrationNumber)) || 'default';
+  const clientId = (parsed && parsed.header && ((parsed.header.company && (parsed.header.company.registrationNumber || parsed.header.company.name)) || parsed.header.registrationNumber)) || clientRegistry.active() || 'default';
+  const clientName = (parsed && parsed.header && parsed.header.company && parsed.header.company.name) || clientId;
   const twin = useMemo(() => {
     const a = createLocalStorageAdapter(clientId);
     try { const l = loadTwin(a, createTwin); if (l) return l; } catch (e) {}
@@ -23025,8 +23058,9 @@ function EAccountantView({ lang = 'lt', parsed, external, setToast, onAi, initia
   const inbox = useMemo(() => createInbox(twin, { forecast: (t) => { try { return buildForecast(t); } catch (e) { return null; } } }), [twin]);
   useEffect(() => {
     let tm = null;
-    const u = twin.subscribe(() => { force((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { saveTwin(twin, createLocalStorageAdapter(clientId)); } catch (e) {} }, 800); });
+    const u = twin.subscribe(() => { force((n) => n + 1); clearTimeout(tm); tm = setTimeout(() => { try { saveTwin(twin, createLocalStorageAdapter(clientId)); clientRegistry.register(clientId, { name: clientName, events: twin.eventCount() }); } catch (e) {} }, 800); });
     if (parsed && typeof ftIngestSaft === 'function') { try { ftIngestSaft(twin, parsed); } catch (e) {} }
+    clientRegistry.register(clientId, { name: clientName, events: twin.eventCount() });
     return () => { clearTimeout(tm); u(); inbox.destroy && inbox.destroy(); };
   }, [twin, inbox, clientId, parsed]);
 
@@ -25903,7 +25937,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
