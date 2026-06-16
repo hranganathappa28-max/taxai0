@@ -11597,6 +11597,35 @@ function buildISafXml(profile, outbox, inbox) {
 </iSAFFile>`;
 }
 
+// Build the monthly i.SAF VAT-register XML from the TWIN's own invoices (the
+// accountant's real ledger), filing-grade for VMI. period = 'YYYY-MM' (or null
+// for all). Round-trips through parseISAF; the VAT totals tie back to the twin.
+function buildISafFromTwin(twin, period, opts = {}) {
+  const fmt = (x) => (Math.round((Number(x) || 0) * 100) / 100).toFixed(2);
+  const esc = (s) => String(s == null ? '' : s).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
+  const regNo = opts.regNo || (twin && twin.config && twin.config.clientId) || '';
+  const invs = (twin && twin.listEntities ? twin.listEntities('invoice') : [])
+    .filter((inv) => inv.date && (!period || String(inv.date).slice(0, 7) === period));
+  const sales = invs.filter((i) => i.kind === 'sales'), purch = invs.filter((i) => i.kind === 'purchase');
+  const pctOf = (inv) => inv.net > 0 ? Math.round((inv.vat / inv.net) * 100) : 0;
+  const vatCode = (p) => (p === 21 ? 'PVM1' : p === 12 ? 'PVM2' : p === 5 ? 'PVM3' : p === 0 ? 'PVM5' : 'PVM1');
+  const invXml = (inv, side) => {
+    const party = twin.getEntity && twin.getEntity(inv.kind === 'sales' ? 'customer' : 'vendor', inv.counterpartyId);
+    const tag = side === 'S' ? 'CustomerInfo' : 'SupplierInfo';
+    const p = pctOf(inv);
+    return `<Invoice><InvoiceNo>${esc(inv.id)}</InvoiceNo><${tag}><Name>${esc((party && party.name) || inv.counterpartyId)}</Name><RegistrationNumber>${esc((party && party.code) || '')}</RegistrationNumber><VATRegistrationNumber>${esc((party && party.vatCode) || '')}</VATRegistrationNumber><Country>LT</Country></${tag}><InvoiceDate>${esc(inv.date)}</InvoiceDate><InvoiceType>SF</InvoiceType><SpecialTaxation></SpecialTaxation><DocumentTotals><VATDetail><TaxableValue>${fmt(inv.net)}</TaxableValue><TaxAmount>${fmt(inv.vat)}</TaxAmount><VATCode>${vatCode(p)}</VATCode><TaxPercentage>${fmt(p)}</TaxPercentage></VATDetail></DocumentTotals></Invoice>`;
+  };
+  const dates = invs.map((i) => i.date).filter(Boolean).sort();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<iSAFFile xmlns="http://www.vmi.lt/cms/imas/isaf">
+<Header><FileDescription><FileVersion>iSAF1.2</FileVersion><FileDateCreated>${new Date().toISOString()}</FileDateCreated><DataType>F</DataType><SoftwareCompanyName>TAXAI</SoftwareCompanyName><SoftwareName>TAXAI-EACC</SoftwareName><SoftwareVersion>10</SoftwareVersion><RegistrationNumber>${esc(regNo)}</RegistrationNumber><NumberOfParts>1</NumberOfParts><PartNumber>1</PartNumber><SelectionStartDate>${dates[0] || (period ? period + '-01' : '')}</SelectionStartDate><SelectionEndDate>${dates[dates.length - 1] || ''}</SelectionEndDate></FileDescription></Header>
+<SourceDocuments>
+<SalesInvoices>${sales.map((i) => invXml(i, 'S')).join('\n')}</SalesInvoices>
+<PurchaseInvoices>${purch.map((i) => invXml(i, 'P')).join('\n')}</PurchaseInvoices>
+</SourceDocuments>
+</iSAFFile>`;
+}
+
 // UBL 2.1 ApplicationResponse (Peppol Invoice Message Response): AB=accepted, RE=rejected.
 function buildApplicationResponse(inv, status, reason) {
   const d = new Date().toISOString().slice(0, 10);
@@ -22921,7 +22950,10 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
     const counts = { sales: twin.listEntities('invoice').filter((i) => i.kind === 'sales').length, purchases: twin.listEntities('invoice').filter((i) => i.kind === 'purchase').length };
     return <>
       <H t={LT ? 'SAF-T importas' : 'SAF-T Import'} sub={LT ? 'Failas tampa įvykiais dvyniui — pakartotinis importas idempotentiškas' : 'The file becomes events for the twin — re-import is idempotent'}
-        right={parsed && <Btn primary onClick={() => { if (typeof ftIngestSaft === 'function') { const r = ftIngestSaft(twin, parsed); setToast && setToast(LT ? `Sinchronizuota: +${r.sales + r.purchases} SF` : `Synced: +${r.sales + r.purchases} invoices`); } }}>↺ {LT ? 'Sinchronizuoti iš naujo' : 'Re-sync'}</Btn>} />
+        right={(parsed || twin.eventCount() > 0) ? <span style={{ display: 'flex', gap: 8 }}>
+          <Btn small onClick={() => { try { const xml = buildISafFromTwin(twin, null, { regNo: clientId }); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], { type: 'application/xml' })); a.download = `isaf_${clientId || 'export'}.xml`; a.click(); setToast && setToast(LT ? 'i.SAF XML eksportuota' : 'i.SAF XML exported'); } catch (e) { setToast && setToast('i.SAF: ' + String((e && e.message) || e).slice(0, 80)); } }}>⬇ i.SAF XML</Btn>
+          {parsed && <Btn primary onClick={() => { if (typeof ftIngestSaft === 'function') { const r = ftIngestSaft(twin, parsed); setToast && setToast(LT ? `Sinchronizuota: +${r.sales + r.purchases} SF` : `Synced: +${r.sales + r.purchases} invoices`); } }}>↺ {LT ? 'Sinchronizuoti iš naujo' : 'Re-sync'}</Btn>}
+        </span> : null} />
       <Grid>
         <Kpi l={LT ? 'Įmonė' : 'Company'} v={clientId} />
         <Kpi l={LT ? 'Įvykiai' : 'Events'} v={twin.eventCount()} c={GOLD} />
@@ -25871,7 +25903,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
