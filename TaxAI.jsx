@@ -11626,6 +11626,35 @@ function buildISafFromTwin(twin, period, opts = {}) {
 </iSAFFile>`;
 }
 
+// The ledger ("books") side for reconcileISAF, built from the twin's own
+// invoices. This is the inverse of buildISafFromTwin (which emits the
+// declaration): it lets a firm keeping live books in the twin reconcile an
+// externally-declared i.SAF against those books — driving the same close gates.
+function buildSaftLikeFromTwin(twin, opts = {}) {
+  const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+  const regNo = opts.regNo || (twin && twin.config && twin.config.clientId) || '';
+  const invs = (twin && twin.listEntities ? twin.listEntities('invoice') : [])
+    .filter((inv) => inv.date && (!opts.period || String(inv.date).slice(0, 7) === opts.period));
+  const item = (inv) => {
+    const party = twin.getEntity && twin.getEntity(inv.kind === 'sales' ? 'customer' : 'vendor', inv.counterpartyId);
+    return {
+      invoiceNo: inv.id,
+      date: inv.date,
+      counterpartyName: (party && party.name) || inv.counterpartyId || '',
+      counterpartyVat: (party && party.vatCode) || '',
+      counterpartyReg: (party && party.code) || '',
+      documentTotals: { netTotal: r2(inv.net), taxPayable: r2(inv.vat), grossTotal: r2(inv.net + inv.vat) },
+    };
+  };
+  const dates = invs.map((i) => i.date).filter(Boolean).sort();
+  return {
+    header: { registrationNumber: regNo, company: { name: opts.name || regNo, registrationNumber: regNo }, fiscalYearFrom: dates[0] || '', fiscalYearTo: dates[dates.length - 1] || '' },
+    sales: { items: invs.filter((i) => i.kind === 'sales').map(item) },
+    purchases: { items: invs.filter((i) => i.kind === 'purchase').map(item) },
+    taxCodes: [], payments: [], transactions: [],
+  };
+}
+
 // UBL 2.1 ApplicationResponse (Peppol Invoice Message Response): AB=accepted, RE=rejected.
 function buildApplicationResponse(inv, status, reason) {
   const d = new Date().toISOString().slice(0, 10);
@@ -26105,7 +26134,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager, createHttpTransport, createSupabaseSyncAdapter };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager, createHttpTransport, createSupabaseSyncAdapter, buildSaftLikeFromTwin, reconcileISAF };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
