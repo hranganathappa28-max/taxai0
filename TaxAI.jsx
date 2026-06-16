@@ -21028,6 +21028,134 @@ function KnowledgeGraph({ twin, lang = 'lt', now, initialFocus = 'company:self' 
   return KnowledgeGraph;
 })();
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  BANK RECONCILIATION ENGINE — camt.053 / CSV statement → match open invoices
+//  → post payment events into the twin (which feed the AR/AP control accounts).
+//  Deterministic, no network. Parsers are defensive: real bank files are messy
+//  (namespaces, comma decimals, separate debit/credit columns, varied headers).
+// ═══════════════════════════════════════════════════════════════════════════
+function bankR2(x) { return Math.round((Number(x) || 0) * 100) / 100; }
+function parseBankNum(s) {
+  if (typeof s === 'number') return s;
+  let t = String(s || '').replace(/\s/g, '').replace(/[^\d.,-]/g, '');
+  if (t.indexOf(',') > -1 && t.indexOf('.') > -1) t = t.replace(/\./g, '').replace(',', '.'); // 1.234,56
+  else if (t.indexOf(',') > -1) t = t.replace(',', '.');                                       // 1234,56
+  return Number(t) || 0;
+}
+function normBankDate(s) {
+  if (!s) return '';
+  const a = String(s).match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if (a) return `${a[1]}-${String(a[2]).padStart(2, '0')}-${String(a[3]).padStart(2, '0')}`;
+  const b = String(s).match(/(\d{1,2})[-./](\d{1,2})[-./](\d{4})/);
+  if (b) return `${b[3]}-${String(b[2]).padStart(2, '0')}-${String(b[1]).padStart(2, '0')}`;
+  return String(s).slice(0, 10);
+}
+
+/** Parse an ISO 20022 camt.053 bank statement into normalised entries. */
+function parseCamt053(xml) {
+  const out = [];
+  if (typeof xml !== 'string' || !xml.trim()) return out;
+  let doc;
+  try { doc = new DOMParser().parseFromString(xml, 'application/xml'); } catch (e) { return out; }
+  if (!doc || doc.getElementsByTagName('parsererror').length) return out;
+  const byTag = (el, tag) => el.getElementsByTagNameNS('*', tag);            // namespace-agnostic
+  const txt = (el, tag) => { const n = byTag(el, tag)[0]; return n ? (n.textContent || '').trim() : ''; };
+  const entries = byTag(doc, 'Ntry');
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const amount = bankR2(txt(e, 'Amt'));
+    const cd = txt(e, 'CdtDbtInd');                                          // CRDT | DBIT
+    const bd = byTag(e, 'BookgDt')[0] || byTag(e, 'ValDt')[0];
+    const date = normBankDate(bd ? (txt(bd, 'Dt') || txt(bd, 'DtTm') || bd.textContent) : '');
+    let ref = ''; const us = byTag(e, 'Ustrd'); for (let j = 0; j < us.length; j++) ref += ' ' + (us[j].textContent || '');
+    if (!ref.trim()) ref = txt(e, 'AddtlNtryInf');
+    const nm = byTag(e, 'Nm'); const party = nm.length ? (nm[0].textContent || '').trim() : '';
+    if (amount > 0 && (cd === 'CRDT' || cd === 'DBIT')) out.push({ date, amount, direction: cd === 'CRDT' ? 'in' : 'out', ref: ref.trim(), party });
+  }
+  return out;
+}
+
+/** Parse a bank CSV export (Swedbank/SEB/Luminor variants) into the same shape. */
+function parseBankCsv(text) {
+  const out = [];
+  if (typeof text !== 'string' || !text.trim()) return out;
+  const rows = text.replace(/\r/g, '').split('\n').filter((l) => l.trim());
+  if (rows.length < 2) return out;
+  const delim = (rows[0].match(/;/g) || []).length >= (rows[0].match(/,/g) || []).length ? ';' : ',';
+  const split = (l) => l.split(delim).map((c) => c.replace(/^"|"$/g, '').trim());
+  const header = split(rows[0]).map((h) => h.toLowerCase());
+  const find = (...keys) => header.findIndex((h) => keys.some((k) => h.includes(k)));
+  const ci = {
+    date: find('date', 'data', 'dat'),
+    amount: find('amount', 'suma', 'sum'),
+    debit: find('debit', 'debetas'), credit: find('credit', 'kreditas'),
+    dc: find('d/c', 'debit/credit', 'k/d', 'type', 'tipas'),
+    ref: find('description', 'paskirtis', 'reference', 'mokėjimo paskirtis', 'details', 'narrative', 'purpose'),
+    party: find('counterparty', 'mokėtojas', 'gavėjas', 'payer', 'beneficiary', 'name', 'pavadinimas'),
+  };
+  if (ci.date < 0 || (ci.amount < 0 && ci.credit < 0 && ci.debit < 0)) return out; // unrecognised layout
+  for (let i = 1; i < rows.length; i++) {
+    const c = split(rows[i]); if (c.length < 2) continue;
+    let amount = 0, direction = 'in';
+    if (ci.amount >= 0 && c[ci.amount]) {
+      const v = parseBankNum(c[ci.amount]); amount = Math.abs(v); direction = v < 0 ? 'out' : 'in';
+      if (ci.dc >= 0 && /^(d|debit|debetas|i[šs]|out)/i.test(c[ci.dc] || '')) direction = 'out';
+    } else {
+      const cr = ci.credit >= 0 ? parseBankNum(c[ci.credit]) : 0, db = ci.debit >= 0 ? parseBankNum(c[ci.debit]) : 0;
+      if (cr > 0) { amount = cr; direction = 'in'; } else if (db > 0) { amount = db; direction = 'out'; }
+    }
+    if (amount > 0) out.push({ date: normBankDate(ci.date >= 0 ? c[ci.date] : ''), amount: bankR2(amount), direction, ref: ci.ref >= 0 ? (c[ci.ref] || '') : '', party: ci.party >= 0 ? (c[ci.party] || '') : '' });
+  }
+  return out;
+}
+
+/** Match each statement entry to the best open invoice in the twin. */
+function reconcileBankStatement(entries, twin, opts = {}) {
+  const daysBetween = (FinTwin && FinTwin.daysBetween) || (() => 0);
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const invoices = (twin && twin.listEntities ? twin.listEntities('invoice') : [])
+    .map((inv) => ({ inv, open: bankR2(inv.total - inv.paid) })).filter((x) => x.open > 0.005);
+  return (entries || []).map((entry) => {
+    const wantKind = entry.direction === 'in' ? 'sales' : 'purchase';
+    const refN = norm(entry.ref), partyN = norm(entry.party);
+    let best = null, bestScore = 0, bestBasis = [];
+    for (const { inv, open } of invoices) {
+      if (inv.kind !== wantKind) continue;
+      const party = twin.getEntity && twin.getEntity(inv.kind === 'sales' ? 'customer' : 'vendor', inv.counterpartyId);
+      const invName = norm((party && party.name) || inv.counterpartyId);
+      let score = 0; const basis = [];
+      if (refN && norm(inv.id) && refN.includes(norm(inv.id))) { score += 0.55; basis.push('ref'); }
+      if (Math.abs(entry.amount - open) <= 0.02) { score += 0.3; basis.push('amount=open'); }
+      else if (Math.abs(entry.amount - inv.total) <= 0.02) { score += 0.25; basis.push('amount=total'); }
+      else if (entry.amount <= open + 0.02) { score += 0.1; basis.push('partial'); }
+      if (invName && partyN && (partyN.includes(invName) || invName.includes(partyN))) { score += 0.2; basis.push('party'); }
+      if (inv.date && entry.date && entry.date >= inv.date) { try { if (daysBetween(inv.date, entry.date) <= 120) { score += 0.1; basis.push('date'); } } catch (e) {} }
+      if (score > bestScore) { bestScore = score; best = inv; bestBasis = basis; }
+    }
+    return {
+      entry, invoiceId: best ? best.id : null, kind: wantKind,
+      confidence: Math.round(Math.min(0.99, bestScore) * 100),
+      auto: !!best && bestBasis.includes('ref') && (bestBasis.includes('amount=open') || bestBasis.includes('amount=total')),
+      basis: bestBasis,
+    };
+  });
+}
+
+/** Post accepted matches as payment events (feeds AR/AP via the projectors). */
+function applyBankMatches(matches, twin, opts = {}) {
+  let posted = 0;
+  (matches || []).forEach((m, i) => {
+    if (!m || !m.invoiceId || !twin || !twin.ingest) return;
+    const e = m.entry, type = e.direction === 'in' ? 'payment.received' : 'payment.sent';
+    twin.ingest(type, {
+      paymentId: `${opts.idPrefix || 'BANK'}-${(e.date || '').replace(/-/g, '')}-${i}`,
+      amount: e.amount, date: e.date, invoiceIds: [m.invoiceId], accountId: opts.accountId || 'BANK', ref: e.ref,
+    }, { source: 'bank-reconciliation' });
+    posted++;
+  });
+  return posted;
+}
+
 /* ── Twin UI · InvoiceDesk (Wave reference component) ── */
 const InvoiceDesk = (() => {
   const { round2, daysBetween } = FinTwin;
@@ -22549,6 +22677,43 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
     </>;
   };
 
+  const BankPanel = ({ twin, setToast, force, LT }) => {
+    const [raw, setRaw] = useState('');
+    const [matches, setMatches] = useState(null);
+    const [err, setErr] = useState('');
+    const analyze = (text) => {
+      const t = (text || '').trim();
+      if (!t) { setMatches(null); setErr(''); return; }
+      let entries = [];
+      try { entries = t[0] === '<' ? parseCamt053(t) : parseBankCsv(t); } catch (e) { entries = []; }
+      if (!entries.length) { setErr(LT ? 'Neatpažintas išrašas (camt.053 XML arba CSV).' : 'Unrecognised statement (camt.053 XML or CSV).'); setMatches(null); return; }
+      setErr(''); setMatches(reconcileBankStatement(entries, twin));
+    };
+    const onFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = (ev) => { const t = String(ev.target.result || ''); setRaw(t); analyze(t); }; r.readAsText(f); e.target.value = ''; };
+    const matched = (matches || []).filter((m) => m.invoiceId);
+    const post = () => { const n = applyBankMatches(matched, twin); setToast && setToast(LT ? `Užregistruota ${n} mokėjimų` : `Posted ${n} payments`); setMatches(null); setRaw(''); force && force((x) => x + 1); };
+    return <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 16, marginTop: 12 }}>
+      <div style={{ fontSize: 10, letterSpacing: '.12em', color: DIM, fontFamily: MONO, marginBottom: 10 }}>{LT ? 'BANKO SUTIKRINIMAS (camt.053 / CSV)' : 'BANK RECONCILIATION (camt.053 / CSV)'}</div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <label style={{ border: `1px solid ${LINE}`, color: TXT, padding: '7px 12px', fontFamily: MONO, fontSize: 11, cursor: 'pointer' }}>{LT ? 'Įkelti išrašą' : 'Upload statement'}<input type="file" accept=".xml,.csv,.txt" onChange={onFile} style={{ display: 'none' }} /></label>
+        <Btn small onClick={() => analyze(raw)}>{LT ? 'Analizuoti įklijuotą' : 'Analyze pasted'}</Btn>
+        {matched.length > 0 && <Btn primary small onClick={post}>{LT ? `Registruoti ${matched.length} mokėjimus` : `Post ${matched.length} payments`}</Btn>}
+      </div>
+      <textarea value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={LT ? 'arba įklijuokite camt.053 XML / CSV čia…' : 'or paste camt.053 XML / CSV here…'} style={{ width: '100%', minHeight: 56, background: 'var(--bg)', color: TXT, border: `1px solid ${LINE}`, fontFamily: MONO, fontSize: 11, padding: 8, boxSizing: 'border-box' }} />
+      {err && <div style={{ color: RED, fontSize: 12, marginTop: 8 }}>{err}</div>}
+      {matches && <div style={{ marginTop: 10 }}>
+        {matches.map((m, i) => <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 0', borderTop: i ? `1px solid ${LINE}` : 'none', fontSize: 12 }}>
+          <span style={{ fontFamily: MONO, color: DIM, width: 88 }}>{m.entry.date}</span>
+          <span style={{ color: m.entry.direction === 'in' ? GREEN : TXT, width: 92, textAlign: 'right', fontFamily: MONO }}>{m.entry.direction === 'in' ? '+' : '−'}{eur(m.entry.amount)}</span>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: DIM }}>{m.entry.party || m.entry.ref || '—'}</span>
+          <span style={{ width: 120, color: m.invoiceId ? TXT : DIM, fontFamily: MONO }}>{m.invoiceId ? `→ ${m.invoiceId}` : (LT ? 'nėra atitikmens' : 'no match')}</span>
+          <span style={{ width: 54, textAlign: 'right', fontFamily: MONO, color: m.confidence >= 80 ? GREEN : m.confidence >= 50 ? GOLD : DIM }}>{m.invoiceId ? m.confidence + '%' : ''}</span>
+        </div>)}
+        {matched.length === 0 && <div style={{ color: DIM, fontSize: 12, marginTop: 6 }}>{LT ? 'Atitikmenų nerasta — patikrinkite, ar yra atvirų sąskaitų.' : 'No matches — check there are open invoices.'}</div>}
+      </div>}
+    </div>;
+  };
+
   const Treasury = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const weeks = (tre && tre.weeks) || [];
     const cashData = weeks.map((w) => ({ name: w.label, cum: w.cum }));
@@ -22575,6 +22740,7 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
         {tre && tre.breachWeek && <div style={{ color: RED, fontSize: 12, marginTop: 10 }}>⚠ {LT ? `Pinigai neigiami nuo ${tre.breachWeek}` : `Cash turns negative at week ${tre.breachWeek}`}</div>}
         {!weeks.length && <div style={{ color: DIM, fontSize: 12.5 }}>{LT ? 'Nėra pinigų srautų duomenų.' : 'No cash-flow data.'}</div>}
       </div>
+      <BankPanel twin={twin} setToast={setToast} force={force} LT={LT} />
     </>;
   };
 
@@ -25677,7 +25843,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
