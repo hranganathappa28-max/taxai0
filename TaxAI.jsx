@@ -21361,6 +21361,40 @@ function createSyncManager(opts = {}) {
   };
 }
 
+// Generic HTTP transport for submitISaf (or any e-invoice/Peppol gateway):
+// POSTs the document to a configured URL. Map your gateway's response shape via
+// opts.mapResponse. Drop-in: submitISaf(xml, { transport: createHttpTransport(URL, { headers }) }).
+function createHttpTransport(url, opts = {}) {
+  const headers = { 'Content-Type': 'application/xml', ...(opts.headers || {}) };
+  const map = opts.mapResponse || ((status, body) => ({ ok: status >= 200 && status < 300, code: String(status), message: String(body || '').slice(0, 200), retryable: status >= 500 || status === 429 }));
+  return async (xml) => {
+    const res = await fetch(url, { method: opts.method || 'POST', headers, body: xml });
+    let body = ''; try { body = await res.text(); } catch (e) {}
+    return map(res.status, body, res);
+  };
+}
+
+// Drop-in Supabase (PostgREST) adapter for createSyncManager. Create the table
+// in docs/SUPABASE.md, then: createSyncManager({ adapter: createSupabaseSyncAdapter({ url, key }) }).
+function createSupabaseSyncAdapter(config = {}) {
+  const { url, key, table = 'twins' } = config;
+  if (!url || !key) throw new Error('createSupabaseSyncAdapter: url and key are required');
+  const base = `${String(url).replace(/\/$/, '')}/rest/v1/${table}`;
+  const headers = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  return {
+    async push(clientId, snapshot) {
+      const res = await fetch(base, { method: 'POST', headers: { ...headers, Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify([{ client_id: clientId, snapshot, updated_at: new Date().toISOString() }]) });
+      if (!res.ok) throw new Error('supabase push ' + res.status);
+    },
+    async pull(clientId) {
+      const res = await fetch(`${base}?client_id=eq.${encodeURIComponent(clientId)}&select=snapshot`, { headers });
+      if (!res.ok) throw new Error('supabase pull ' + res.status);
+      const rows = await res.json();
+      return rows && rows[0] ? rows[0].snapshot : null;
+    },
+  };
+}
+
 /* ── Twin UI · InvoiceDesk (Wave reference component) ── */
 const InvoiceDesk = (() => {
   const { round2, daysBetween } = FinTwin;
@@ -26071,7 +26105,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager, createHttpTransport, createSupabaseSyncAdapter };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
