@@ -21230,6 +21230,73 @@ const clientRegistry = {
   setActive(id) { try { if (id) localStorage.setItem('taxai_active_client', id); else localStorage.removeItem('taxai_active_client'); } catch (e) {} },
 };
 
+// Audit-grade, deterministic close report built from the twin — a printable
+// working paper an accountant can hand to a client or attach to a filing.
+// Returns a self-contained HTML string (print to PDF via the browser).
+function buildEAccountantReportHtml(twin, opts = {}) {
+  const LT = opts.lang !== 'en';
+  const L = (lt, en) => (LT ? lt : en);
+  const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+  const eur = (v) => '€' + r2(v).toLocaleString('lt-LT');
+  const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const safe = (fn, d) => { try { return fn(); } catch (e) { return d; } };
+  const period = opts.period || '';
+  let invoices = safe(() => twin.listEntities('invoice'), []);
+  if (period) invoices = invoices.filter((i) => i.date && String(i.date).slice(0, 7) === period);
+  const sales = invoices.filter((i) => i.kind === 'sales'), purch = invoices.filter((i) => i.kind === 'purchase');
+  const sum = (a, f) => a.reduce((s, x) => s + (f(x) || 0), 0);
+  const salesNet = r2(sum(sales, (i) => i.net)), salesVat = r2(sum(sales, (i) => i.vat));
+  const purchNet = r2(sum(purch, (i) => i.net)), purchVat = r2(sum(purch, (i) => i.vat));
+  const netVat = r2(salesVat - purchVat);
+  const recv = r2(sum(sales, (i) => i.total - i.paid)), pay = r2(sum(purch, (i) => i.total - i.paid));
+  const tb = safe(() => twin.trialBalance(), { balanced: true, difference: 0, rows: [] });
+  const close = safe(() => FinTwin.closeReadiness(twin, {}), null);
+  const fraud = safe(() => FinTwin.scanFraud(twin, {}), null);
+  const fc = safe(() => FinTwin.buildForecast(twin), null);
+  const company = opts.company || (twin && twin.config && twin.config.clientId) || '—';
+  const events = safe(() => twin.eventCount(), 0);
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const row = (k, v, strong) => `<tr><td>${esc(k)}</td><td style="text-align:right${strong ? ';font-weight:700' : ''}">${esc(v)}</td></tr>`;
+  const closeItems = safe(() => (close && (close.checks || close.items) || []).map((c) => `<tr><td>${esc(c.lt && LT ? c.lt : (c.en || c.label || c.id))}</td><td style="text-align:right">${typeof c.score === 'number' ? c.score + '%' : (c.ok ? '✓' : '—')}</td></tr>`).join(''), '');
+  const findings = safe(() => (fraud && fraud.findings || []).slice(0, 8).map((f) => `<tr><td>${esc((LT ? f.lt : f.en) || f.title || f.id || '')}</td><td style="text-align:right">${esc(f.severity || '')}</td></tr>`).join(''), '');
+  return `<!doctype html><html lang="${LT ? 'lt' : 'en'}"><head><meta charset="utf-8"><title>${L('Periodo uždarymo ataskaita', 'Period close report')} — ${esc(company)}</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  * { box-sizing: border-box; } body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #16181d; font-size: 12px; line-height: 1.5; margin: 0; }
+  h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin: 22px 0 8px; }
+  .sub { color: #666; font-size: 11px; } .kpis { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+  .kpi { border: 1px solid #e2e2e2; padding: 10px 14px; min-width: 150px; flex: 1; } .kpi .l { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: #777; } .kpi .v { font-size: 18px; font-weight: 700; margin-top: 3px; }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0; } td { padding: 5px 8px; border-bottom: 1px solid #eee; }
+  .foot { margin-top: 26px; border-top: 1px solid #ddd; padding-top: 8px; color: #888; font-size: 10px; }
+  .ok { color: #128a3a; } .bad { color: #c0392b; }
+</style></head><body>
+  <h1>${L('Periodo uždarymo ataskaita', 'Period Close Report')}</h1>
+  <div class="sub">${esc(company)}${period ? ' · ' + esc(period) : ''} · ${L('parengta', 'generated')} ${now} · ${events} ${L('įvykių', 'events')}</div>
+  <h2>${L('Finansinė santrauka', 'Financial summary')}</h2>
+  <div class="kpis">
+    <div class="kpi"><div class="l">${L('Pardavimai (neto)', 'Sales (net)')}</div><div class="v">${eur(salesNet)}</div></div>
+    <div class="kpi"><div class="l">${L('Pirkimai (neto)', 'Purchases (net)')}</div><div class="v">${eur(purchNet)}</div></div>
+    <div class="kpi"><div class="l">${L('Mokėtinas PVM', 'Net VAT payable')}</div><div class="v">${eur(netVat)}</div></div>
+    <div class="kpi"><div class="l">${L('Gautinos sumos', 'Receivables')}</div><div class="v">${eur(recv)}</div></div>
+    <div class="kpi"><div class="l">${L('Mokėtinos sumos', 'Payables')}</div><div class="v">${eur(pay)}</div></div>
+  </div>
+  <h2>${L('PVM pozicija', 'VAT position')}</h2>
+  <table>${row(L('Pardavimo PVM', 'Output VAT'), eur(salesVat))}${row(L('Pirkimo PVM', 'Input VAT'), eur(purchVat))}${row(L('Mokėtinas PVM', 'Net VAT payable'), eur(netVat), true)}</table>
+  <h2>${L('Didžioji knyga', 'General ledger')}</h2>
+  <table>${row(L('Bandomasis balansas', 'Trial balance'), tb.balanced ? `<span class="ok">${L('subalansuotas', 'balanced')}</span>` : `<span class="bad">${L('skirtumas', 'difference')} ${eur(tb.difference)}</span>`)}</table>
+  <h2>${L('Uždarymo parengtis', 'Close readiness')}</h2>
+  <table>${close ? row(L('Bendras balas', 'Overall score'), (close.score != null ? close.score + '%' : '—'), true) + closeItems : `<tr><td>${L('Nėra duomenų', 'No data')}</td><td></td></tr>`}</table>
+  <h2>${L('Rizika ir radiniai', 'Risk & findings')}</h2>
+  <table>${fraud ? row(L('Sukčiavimo balas', 'Fraud score'), (fraud.score != null ? fraud.score + '/100' : '—'), true) + findings : `<tr><td>${L('Nėra duomenų', 'No data')}</td><td></td></tr>`}</table>
+  ${fc ? `<h2>${L('Prognozė (kitas mėn.)', 'Forecast (next month)')}</h2><table>${row(L('Pajamos', 'Revenue'), eur(fc.nextRevenue))}${row(L('Sąnaudos', 'Expenses'), eur(fc.nextExpenses))}${row(L('Tikslumas (backtest)', 'Accuracy (backtest)'), fc.accuracy != null ? fc.accuracy + '%' : '—')}</table>` : ''}
+  <div class="foot">${L('Parengta TAXAI deterministiniu varikliu. Visi skaičiai apskaičiuoti iš įvykių žurnalo (be AI prognozavimo). Patikrinkite prieš teikdami VMI.', 'Generated by the TAXAI deterministic engine. All figures are computed from the event log (no AI guessing). Verify before filing with VMI.')}</div>
+</body></html>`;
+}
+
+function printReport(html) {
+  try { const w = window.open('', '_blank'); if (!w) return false; w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { try { w.print(); } catch (e) {} }, 300); return true; } catch (e) { return false; }
+}
+
 /* ── Twin UI · InvoiceDesk (Wave reference component) ── */
 const InvoiceDesk = (() => {
   const { round2, daysBetween } = FinTwin;
@@ -22843,7 +22910,8 @@ const Grid = ({ min = 170, children }) => <div style={{ display: 'grid', gridTem
   const Close = (vm) => { const { LT, lang, twin, inbox, snap, fc, tre, fraud, close, ext, external, parsed, st, up, setSt, setView, setToast, onAi, aiFallback, totRev, totExp, clientId, SKEY, tick, force } = vm;
     const tb = useMemo(() => { try { return twin.trialBalance(); } catch (e) { return null; } }, [twin, tick]);
     return <>
-      <H t={LT ? 'Periodo uždarymas' : 'Period Close'} sub={LT ? 'Nuolatinis uždarymas — kliūtys ir parengtis' : 'Continuous close — blockers and readiness'} />
+      <H t={LT ? 'Periodo uždarymas' : 'Period Close'} sub={LT ? 'Nuolatinis uždarymas — kliūtys ir parengtis' : 'Continuous close — blockers and readiness'}
+        right={<Btn primary onClick={() => { const html = buildEAccountantReportHtml(twin, { lang, company: (st.company && st.company.name) || clientId }); if (!printReport(html)) setToast && setToast(LT ? 'Leiskite iššokančius langus, kad atspausdintumėte' : 'Allow pop-ups to print the report'); }}>⎙ {LT ? 'Eksportuoti ataskaitą (PDF)' : 'Export report (PDF)'}</Btn>} />
       <div style={{ background: CARD, border: `1px solid ${LINE}`, padding: 18 }}>
         <div style={{ display: 'flex', gap: 18, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 34, fontWeight: 800, color: close && close.score >= (close.target || 95) ? GREEN : AMBER }}>{close ? `${close.score} %` : '—'}</span>
@@ -25937,7 +26005,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
