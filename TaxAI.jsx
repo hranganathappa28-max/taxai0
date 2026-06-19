@@ -26134,7 +26134,7 @@ function LandingPage({ onEnter }) {
 /* ═══ ROOT APP — landing gateway → application ═══ */
 // ── Named exports for the automated test suite (Vitest). These do not affect
 //    the default build, which imports only `App`. ──
-export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager, createHttpTransport, createSupabaseSyncAdapter, buildSaftLikeFromTwin, reconcileISAF };
+export { computeRiskScore, simulateAcceptanceGate, findingConfidence, runAllRules, FinTwin, EAccountantView, MLIntel, TaxCalc, mlPeriodHistory, InvoiceDesk, TransactionsDesk, EInvoicingTab, EInvoiceStudio, parseCamt053, parseBankCsv, reconcileBankStatement, applyBankMatches, seedSampleTwin, buildISafFromTwin, parseISAF, clientRegistry, buildEAccountantReportHtml, submitISaf, createSyncManager, createHttpTransport, createSupabaseSyncAdapter, buildSaftLikeFromTwin, reconcileISAF, computeFr0600 };
 
 export default function App() {
   const [entered, setEntered] = useState(false);
